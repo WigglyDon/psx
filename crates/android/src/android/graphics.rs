@@ -1237,6 +1237,9 @@ fn elide(font: &Text, text: &str, width: f32, size: f32) -> String {
 }
 
 fn wrap(font: &Text, text: &str, width: f32, size: f32) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         let mut line = String::new();
