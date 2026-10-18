@@ -132,12 +132,21 @@ face-button sizes and directional response. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture
 height. The small pause/play, speed, volume and settings toolbar uses a clear
 part of an already excluded top margin when available, avoiding the actual
-camera cutout rectangles. This recovers picture space without placing touch
+camera cutout rectangles. This margin is used only when Android reports no
+system decoration occupying its top edge; a visible status bar keeps the
+toolbar inside safe content. This recovers picture space without placing touch
 targets over the game. Devices without that space reserve it in the controller
 rails or above the picture. Custom toolbar placement is retained. Android requests `fullUser`
 orientation: all four rotations when
 the user permits rotation, respecting their rotation lock.
 [Android orientation contract](https://developer.android.com/guide/topics/manifest/activity-element#screen)
+
+Audio-focus denial before the first frame leaves the play controls visible
+with an interruption message. Play retries focus; it never overrides another
+app's audio ownership. Android's reported
+[system-bar insets](https://developer.android.com/reference/android/view/WindowInsets#getInsets(int))
+determine toolbar placement.
+
 The controller editor selects elements by tap, moves them by dragging, and
 resizes them through corner grips, keeping the opposite corner anchored.
 The game picture keeps its aspect ratio. Reset appears only for a changed

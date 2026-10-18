@@ -336,7 +336,7 @@ impl Graphics {
             screen: [self.width as f32 / density, self.height as f32 / density],
         };
         let volume_popup = menu.is_some_and(|m| m.anchor.is_some());
-        if frame.is_some() && editor.is_none() && (visuals.overlay < 1. || volume_popup) {
+        if visuals.has_game && editor.is_none() && (visuals.overlay < 1. || volume_popup) {
             canvas.opacity = if volume_popup {
                 1.
             } else {
@@ -351,7 +351,7 @@ impl Graphics {
                 );
             }
         }
-        if frame.is_some() && editor.is_none() {
+        if visuals.has_game && editor.is_none() {
             canvas.opacity = 1.;
             canvas.button(layout.pause, "MENU", 0.);
             canvas.button(
@@ -377,6 +377,32 @@ impl Graphics {
                 },
                 0.,
             );
+            if frame.is_none() && menu.is_none() {
+                let (title, detail) = if visuals.audio_blocked {
+                    ("Playback interrupted", "Tap play when audio is available.")
+                } else if visuals.playback_paused {
+                    ("Paused", "Tap play to resume.")
+                } else {
+                    ("Starting game", "")
+                };
+                let picture = layout.game.fit(4. / 3.);
+                let x = picture.x + picture.w / 2.;
+                let y = picture.y + picture.h / 2.;
+                canvas.text(
+                    x - canvas.font.measure(title, 20.) / 2.,
+                    y - 25.,
+                    title,
+                    20.,
+                    [0.88, 0.92, 0.96, 1.],
+                );
+                canvas.text(
+                    x - canvas.font.measure(detail, 14.) / 2.,
+                    y + 7.,
+                    detail,
+                    14.,
+                    [0.57, 0.66, 0.75, 1.],
+                );
+            }
         }
         canvas.opacity = visuals.overlay;
         let mut menu_clip = None;

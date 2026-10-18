@@ -24,6 +24,8 @@ pub struct Visuals {
     pub overlay: f32,
     pub time: f64,
     pub dpad: DpadVisual,
+    pub has_game: bool,
+    pub audio_blocked: bool,
     pub playback_paused: bool,
     pub playback_speed: u8,
     pub muted: bool,

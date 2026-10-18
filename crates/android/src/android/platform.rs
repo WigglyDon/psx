@@ -23,7 +23,7 @@ pub enum Event {
     ScanUnavailable,
     Focus(i32),
     Error(String),
-    Insets([i32; 4], Vec<[i32; 4]>),
+    Insets([i32; 4], Vec<[i32; 4]>, bool),
 }
 static EVENTS: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
 fn post(event: Event) {
@@ -318,6 +318,29 @@ impl Platform {
             if insets.is_null() {
                 return Ok(());
             }
+            let sdk = env
+                .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?
+                .i()?;
+            // A cutout margin is reusable only when no system decoration owns
+            // its top edge. Requested immersive flags alone do not establish
+            // this: Android can keep a call indicator/status bar visible.
+            let top_margin_available = if sdk >= 30 {
+                let bars = env
+                    .call_static_method("android/view/WindowInsets$Type", "systemBars", "()I", &[])?
+                    .i()?;
+                let occupied = env
+                    .call_method(
+                        &insets,
+                        "getInsets",
+                        "(I)Landroid/graphics/Insets;",
+                        &[JValue::Int(bars)],
+                    )?
+                    .l()?;
+                env.get_field(occupied, "top", "I")?.i()? == 0
+            } else {
+                // API 28–29 keep the toolbar inside the safe content area.
+                false
+            };
             let mut edges = [0; 4];
             let mut cutouts = Vec::new();
             for (i, name) in [
@@ -366,7 +389,7 @@ impl Platform {
                     edges[i] = edges[i].max(env.call_method(&cutout, name, "()I", &[])?.i()?);
                 }
             }
-            post(Event::Insets(edges, cutouts));
+            post(Event::Insets(edges, cutouts, top_margin_available));
             Ok(())
         });
     }

@@ -102,6 +102,7 @@ struct Player {
     density: f32,
     insets: [i32; 4],
     cutouts: Vec<[i32; 4]>,
+    top_margin_available: bool,
     screen: Screen,
     menu: Option<Menu>,
     closing_menu: Option<Menu>,
@@ -163,6 +164,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         density: 1.,
         insets: [0; 4],
         cutouts: Vec::new(),
+        top_margin_available: false,
         screen: Screen::Home,
         menu: None,
         closing_menu: None,
@@ -310,7 +312,10 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             player.touches.dpad_feedback(),
         );
         player.last_visual = now;
-        player.visuals.playback_paused = player.activity.user_paused;
+        player.visuals.has_game = player.core.is_some();
+        player.visuals.audio_blocked = !player.activity.audio_focus;
+        player.visuals.playback_paused =
+            player.activity.user_paused || !player.activity.audio_focus;
         player.visuals.playback_speed = player.playback.speed.multiplier();
         player.visuals.muted = player.playback.muted || player.playback.volume == 0;
         player.dirty |= player.visual_animating;
@@ -470,8 +475,14 @@ impl Player {
                 )
             })
             .collect();
-        self.layout
-            .toolbar_in_top_margin(w, h, self.graphics.content.y / self.density, &cutouts);
+        if self.top_margin_available {
+            self.layout.toolbar_in_top_margin(
+                w,
+                h,
+                self.graphics.content.y / self.density,
+                &cutouts,
+            );
+        }
         self.layout.place_game(
             w,
             h,
@@ -763,10 +774,14 @@ impl Player {
                 self.picker = false;
                 self.fail(error);
             }
-            Event::Insets(edges, cutouts) => {
-                if edges != self.insets || cutouts != self.cutouts {
+            Event::Insets(edges, cutouts, top_margin_available) => {
+                if edges != self.insets
+                    || cutouts != self.cutouts
+                    || top_margin_available != self.top_margin_available
+                {
                     self.insets = edges;
                     self.cutouts = cutouts;
+                    self.top_margin_available = top_margin_available;
                     self.touches.cancel();
                     if let Err(error) = self.resize(app) {
                         self.fail(error);
@@ -935,12 +950,13 @@ impl Player {
                 }
             }
             Action::TogglePause => {
-                self.activity.user_paused = !self.activity.user_paused;
-                if self.activity.user_paused {
-                    self.interrupt()?;
-                } else {
+                if self.activity.user_paused || !self.activity.audio_focus {
+                    self.activity.user_paused = false;
                     self.platform.focus(app, true);
                     self.next_frame = Instant::now();
+                } else {
+                    self.activity.user_paused = true;
+                    self.interrupt()?;
                 }
                 self.dirty = true;
                 if self.menu.is_some() {

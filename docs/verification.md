@@ -232,6 +232,19 @@ signature/resource/ABI/alignment checks passing. They have not yet completed
 their device acceptance. A public source checkpoint is not a claim that all
 new modes or release requirements have passed.
 
+## Console controls and interruption follow-up
+
+The console-interface update (`20435d6`, APK SHA-256
+`896a293867c7cf7c85e700b393d1d57c090fbed2734fb4feb08b108594aaae3a`)
+was installed with app data retained. Its library and starting-disc menu
+render on the inner display, retaining eight games and thirteen discs.
+An audio interruption before the first core frame exposed a blank play
+surface; Back still reached settings. The next Rust host change keeps the
+toolbar visible before the first frame, explains the interruption and lets
+Play retry audio focus. It also checks actual system-bar insets before
+reusing the top camera margin. The 37 host tests, host/Android Clippy and
+formatting pass; this follow-up still needs its APK/device check.
+
 ## Store limits
 
 16 KB alignment is verified; 16 KB runtime/performance is not. Physical
