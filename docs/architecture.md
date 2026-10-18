@@ -148,6 +148,9 @@ app's audio ownership. Android's reported
 and [status-bar visibility](https://developer.android.com/reference/android/view/WindowInsets#isVisible(int))
 determine toolbar placement, including transient bars that do not resize the
 content area.
+During audio-focus loss the toolbar stays inside safe content, covering
+persistent call indicators that can remain visible outside the reported
+system-bar insets. Focus transitions cancel touch and recalculate the layout.
 
 The controller editor selects elements by tap, moves them by dragging, and
 resizes them through corner grips, keeping the opposite corner anchored.

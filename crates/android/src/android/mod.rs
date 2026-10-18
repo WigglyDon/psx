@@ -475,7 +475,7 @@ impl Player {
                 )
             })
             .collect();
-        if self.top_margin_available {
+        if self.top_margin_available && self.activity.audio_focus {
             self.layout.toolbar_in_top_margin(
                 w,
                 h,
@@ -756,6 +756,7 @@ impl Player {
                 self.navigate(app, Screen::Access);
             }
             Event::Focus(focus) => {
+                let changed = self.activity.audio_focus != (focus == 1);
                 self.activity.audio_focus = focus == 1;
                 if focus != 1 {
                     if focus == -1
@@ -766,6 +767,15 @@ impl Player {
                         self.activity.user_paused = true;
                     }
                     if let Err(error) = self.interrupt() {
+                        self.fail(error);
+                    }
+                }
+                // Persistent call indicators can remain over the camera
+                // margin despite hidden-bar reports. Keep quick controls in
+                // safe content throughout an audio interruption.
+                if changed {
+                    self.touches.cancel();
+                    if let Err(error) = self.resize(app) {
                         self.fail(error);
                     }
                 }
