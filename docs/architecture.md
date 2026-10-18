@@ -69,6 +69,13 @@ Surface destruction is not an instruction to erase a game session. Handle
 pause, resume, focus, cancellation, orientation and folded/unfolded layouts.
 Release held input on interruption. Preserve intentional user pause.
 
+Touch press transitions come from shared Rust input state. Android provides
+a short virtual-key haptic for a newly engaged direction or button, including
+sliding into another control. Holding a control does not repeat vibration.
+The public [View haptic API](https://developer.android.com/develop/ui/views/haptics/haptic-feedback)
+respects system touch-feedback settings and needs no vibration permission.
+Haptic strength and availability remain platform-owned.
+
 ## iOS route
 
 Use the same Rust session, input and save policies behind thin iOS bindings.

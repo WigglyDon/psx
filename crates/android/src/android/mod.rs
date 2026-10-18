@@ -236,6 +236,15 @@ impl Player {
         Ok(())
     }
     fn resize(&mut self, app: &AndroidApp) -> Result<(), String> {
+        let previous = (
+            self.graphics.width,
+            self.graphics.height,
+            self.graphics.content.x,
+            self.graphics.content.y,
+            self.graphics.content.w,
+            self.graphics.content.h,
+            self.density,
+        );
         self.graphics.resize()?;
         let content = app.content_rect();
         let right = if content.right > 0 {
@@ -264,6 +273,29 @@ impl Player {
             self.graphics.content.w / self.density,
             self.graphics.content.h / self.density,
         );
+        let content = self.graphics.content;
+        if previous
+            != (
+                self.graphics.width,
+                self.graphics.height,
+                content.x,
+                content.y,
+                content.w,
+                content.h,
+                self.density,
+            )
+        {
+            log::info!(
+                "Display resized: surface={}x{} content={}x{} at {},{} density={}",
+                self.graphics.width,
+                self.graphics.height,
+                content.w,
+                content.h,
+                content.x,
+                content.y,
+                self.density
+            );
+        }
         Ok(())
     }
     fn input(&mut self, app: &AndroidApp) {
@@ -273,6 +305,7 @@ impl Player {
         while events.next(|event| match event {
             InputEvent::MotionEvent(motion) => {
                 self.dirty = true;
+                let mut feedback = false;
                 match motion.action() {
                     MotionAction::Cancel => self.touches.cancel(),
                     MotionAction::Up | MotionAction::PointerUp => {
@@ -289,16 +322,22 @@ impl Player {
                             {
                                 self.activity.user_paused = true;
                                 self.touches.cancel();
+                                feedback = true;
                                 if let Err(error) = self.interrupt() {
                                     self.fail(error);
                                 }
                             } else if self.activity.can_run() {
-                                self.touches
-                                    .update(pointer.pointer_id(), self.layout.mask_at(x, y));
+                                feedback |= self
+                                    .touches
+                                    .update(pointer.pointer_id(), self.layout.mask_at(x, y))
+                                    != 0;
                             }
                         }
                     }
                     _ => {}
+                }
+                if feedback {
+                    self.platform.haptic(app);
                 }
                 InputStatus::Handled
             }

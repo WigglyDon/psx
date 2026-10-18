@@ -161,6 +161,21 @@ impl Platform {
         });
     }
 
+    pub fn haptic(&self, app: &AndroidApp) {
+        self.ui(app, |env, activity| {
+            let window = env
+                .call_method(activity, "getWindow", "()Landroid/view/Window;", &[])?
+                .l()?;
+            let view = env
+                .call_method(window, "getDecorView", "()Landroid/view/View;", &[])?
+                .l()?;
+            // VIRTUAL_KEY, with no flags overriding the user's system setting.
+            // View haptics need no vibration permission and degrade to no effect.
+            env.call_method(view, "performHapticFeedback", "(I)Z", &[JValue::Int(1)])?;
+            Ok(())
+        });
+    }
+
     pub fn insets(&self, app: &AndroidApp) {
         self.ui(app, |env, activity| {
             let window = env

@@ -130,8 +130,12 @@ pub struct Touches {
     held: BTreeMap<i32, u16>,
 }
 impl Touches {
-    pub fn update(&mut self, id: i32, mask: u16) {
+    /// Newly pressed controls across all fingers, suitable for a brief haptic.
+    /// Motion within a held control and a second finger on it do not repeat.
+    pub fn update(&mut self, id: i32, mask: u16) -> u16 {
+        let before = self.mask();
         self.held.insert(id, mask);
+        self.mask() & !before
     }
     pub fn release(&mut self, id: i32) {
         self.held.remove(&id);
@@ -147,6 +151,24 @@ impl Touches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn press_feedback_is_discrete_while_controls_remain_held() {
+        let mut touches = Touches::default();
+        let up = 1 << 4;
+        let jump = 1;
+        assert_eq!(touches.update(2, up), up);
+        assert_eq!(touches.update(2, up), 0); // held/moved inside the same target
+        assert_eq!(touches.update(8, jump), jump); // independent second thumb
+        assert_eq!(touches.update(9, jump), 0); // already pressed by another thumb
+        touches.release(8);
+        assert_eq!(touches.update(9, jump), 0);
+        touches.release(9);
+        assert_eq!(touches.update(8, jump), jump); // a fresh press
+        assert_eq!(touches.update(2, up | (1 << 7)), 1 << 7); // slide to a diagonal
+        touches.cancel();
+        assert_eq!(touches.update(2, up), up);
+    }
+
     #[test]
     fn simultaneous_diagonal_and_face_button_release_independently() {
         for (w, h) in [(360., 800.), (673., 840.), (800., 360.)] {

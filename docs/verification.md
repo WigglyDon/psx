@@ -51,10 +51,25 @@ first failure. Rust layout also accounts for system bars and cutout insets.
 - Android ARM64 Clippy and formatting pass after these fixes. Signature,
   ZIP/ELF alignment and required-entry checks pass on the updated APK.
 
-Simultaneous physical touch, real in-game save/restart, fold transitions,
-interruption behavior and a bounded gameplay-speed observation remain under
-test. The phone remains in the explicitly authorized task-wide session.
-Games, saved progress, identifiers, raw logs and captures remain private.
+The owner reports that simultaneous movement/jump/spin controls and the
+requested unfold/resume check work. Direct captures show moving first-level
+gameplay. A 70-second window during owner play measures 59.80–59.84 fps
+(100.0% rounded), 3.53–5.26 ms average core time per frame, zero software
+frames, and no new FIFO underruns or dropped frames. The initial counters
+remain 72 underruns and 787 dropped frames; this observation does not erase
+startup interruptions. Broad compatibility, thermal endurance and other
+devices are not measured.
+
+At the owner's request, discrete press haptics have been added in Rust.
+Seven focused tests, host/Android Clippy, formatting and updated package
+checks pass. Physical haptic feedback is pending installation after the
+current in-game save. The prepared APK SHA-256 is
+`ff04864372124e4849442bb4ba56a797a76d13d695862c9999c7bddddb14a886`.
+
+Real in-game save/restart, interruption behavior and direct inner-display
+layout observation remain under test. The phone remains in the explicitly
+authorized task-wide session. Games, saved progress, identifiers, raw logs
+and captures remain private.
 
 ## Store limits
 
