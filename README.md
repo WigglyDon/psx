@@ -19,7 +19,9 @@ controller layout editing with separate picture/control space by default.
 Corner resizing, contextual reset and layout persistence have run on the
 Fold. The new play surface adds live console-style settings, a top toolbar,
 volume popover, speed cycling and layouts for folded landscape. Those latest
-controls remain under device acceptance.
+toolbar/popover interactions have run on the Fold, including interruption
+before the first game frame. Faster-mode sound/performance and the latest
+layouts across display postures remain under device acceptance.
 The first implementation target is a stock Android foldable.
 The product is intended for eventual Google Play and Apple App Store release.
 Store acceptance and iOS performance have not been established.
