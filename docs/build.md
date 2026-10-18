@@ -24,7 +24,12 @@ cargo test --workspace --locked
 cargo xtask apk
 ```
 
-The result is `build/psx-development.apk`. `cargo xtask verify` repeats its
+The result is `build/psx-development.apk`. The default development build
+includes the all-files scan permission. `PSX_SCOPED_STORAGE=1 cargo xtask apk`
+omits that declaration and compiles without the storage-scan feature, keeping
+document import. The build-generated manifest is ignored. This scoped variant
+is a packaging route, not store approval; broader scanning still needs its
+own policy basis. `cargo xtask verify` repeats its
 signature, ZIP alignment, AArch64 ELF alignment and required-entry checks.
 Raw build logs and APKs stay outside Git. Development signing material stays
 under ignored `.local/signing/`; retain that key to update an installation
@@ -47,7 +52,7 @@ unverified until that environment runs the application.
 ## The Android callback shim
 
 `android-activity` supplies the NativeActivity lifecycle and input callbacks,
-but Android's activity-result, dialog-listener and audio-focus-listener
+but Android's activity-result and audio-focus-listener
 callbacks are Java virtual methods/interfaces. The build generates one small
 `PsxActivity` class, extending NativeActivity and forwarding those signatures
 to exported Rust JNI functions. It contains no picker, UI, file, save, input,
@@ -74,9 +79,10 @@ transaction. Do not select an arbitrary first ADB device or reinstall by
 uninstalling an existing app. Install this APK as `com.machinerhythm.psx` and
 preserve existing data and the signing key across updates.
 
-Use the app's Open game action and Android document picker. A recent game is
-an imported private copy, so reopening does not depend on a provider retaining
-the URI grant. Use the scope and acceptance observations in
+Use Add games to scan storage, select candidates and retain the collection.
+Grant shared-storage access through Android's own settings screen. Optional
+Browse files imports a private copy, independent of later URI grants. Use
+the scope and acceptance observations in
 [FIRST-PLAYABLE-1](https://github.com/WigglyDon/psx/issues/1). Report actual
 gameplay, audible output, simultaneous input, card saving after process
 restart and fold/lifecycle transitions separately from host checks. The

@@ -32,8 +32,11 @@ See [build.md](build.md) for the callback-only platform shim.
 Send nor Sync. A thread-local session callback pointer remains live through
 unload/deinit. Audio callbacks consume a bounded atomic stereo FIFO and never
 enter the core or perform file work. A separate import worker streams user
-documents; it never owns emulation or GL. Native Android dialogs provide
-standard accessible menus and errors; the game and touch controls use GLES.
+documents and discovery; it never owns emulation or GL. Menus, errors,
+licenses, the layout editor and game controls are rendered in Rust through
+the same GLES context. The system document/permission screens remain platform
+UI. Shared menu/input geometry has no Android handles. Native accessibility
+semantics for the custom interface still require release qualification.
 
 The fixed renderer is SwanStation OpenGL ES 3.0 at 1x resolution. The host
 negotiates the exact context version, provides a persistent framebuffer,
@@ -93,7 +96,14 @@ The implemented format/grant/card contract and current limits are in
 an ordinary path. Successfully imported private copies survive provider
 revocation, and recent metadata is updated only for a loaded session.
 
-The ordinary action is to select one game. Android content URIs are access
+The ordinary action is to select a saved game from the local collection.
+Adding games scans platform-authorized shared volumes, validates container
+headers and CUE companions, then stores only selected entries in an atomic
+local manifest. Game compatibility is still determined by the core on open.
+Scanning is explicit, never repeated automatically at launch. See the broad
+storage permission/release gate in [distribution.md](distribution.md).
+
+Android content URIs are access
 handles, not ordinary filesystem paths. Use system document pickers and keep
 their access grants valid. An iOS file selection has its own scoped access
 and persistence rules. Disc sets can require companion files;
@@ -106,8 +116,16 @@ Do not let an old save state silently roll back newer memory-card progress.
 
 ## Everyday use
 
-The first screen offers Open game and, when available, a valid recent game.
-The play screen offers comfortable controls and a clear pause action.
+The first screen offers saved games and Add games. The cog opens embedded
+settings and pauses the session. Controls occupy separate space by default;
+the largest clear 4:3 picture is computed from their rectangular targets.
+The controller editor selects elements by tap, moves them by dragging, and
+resizes them through corner grips, keeping the opposite corner anchored.
+The game picture keeps its aspect ratio. An explicit overlap option and reset
+remain behind controller settings. Tall, square and wide
+profiles are persisted in logical coordinates. A display change cancels an
+unfinished edit; committed profiles survive it. Bluetooth/USB controllers
+will later feed the same logical input state; no transport UI is added yet.
 Choose core defaults in the app. Ask about firmware or missing companion
 files only when the selected game needs them, using an actionable message.
 Keep navigation accessible and usable across display sizes. Treat reliable
@@ -122,6 +140,13 @@ synthetic output is a technical checkpoint.
 Keep this design small. Choose dependencies and implementations based on
 the first playable result. Broad platform abstraction, new emulation work,
 enhancement UI and performance-superiority claims require their own evidence.
+
+Multi-disc entries retain one card identity when discs are appended. The host
+generates a private M3U from selected disc paths, registers the donor's actual
+base/extended disk callbacks and selects the initial image before game load.
+Runtime switching occurs while paused on the single core/GL thread, after a
+card flush: eject, select image, close. Failure attempts to restore the old
+disc and reports the result. The emulated machine is not reset by a swap.
 
 ## Primary references
 

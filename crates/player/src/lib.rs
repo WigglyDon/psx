@@ -1,8 +1,11 @@
+pub mod artwork;
 pub mod audio;
 pub mod files;
 pub mod input;
+pub mod library;
 pub mod retro;
 pub mod saves;
+pub mod ui;
 
 /// User intent survives interruptions. Platform focus alone never unpauses a game.
 #[derive(Debug, Default)]

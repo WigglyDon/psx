@@ -81,12 +81,33 @@ struct GameInfo {
     meta: *const c_char,
 }
 #[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct DiskControl {
+    eject: Option<unsafe extern "C" fn(bool) -> bool>,
+    ejected: Option<unsafe extern "C" fn() -> bool>,
+    index: Option<unsafe extern "C" fn() -> u32>,
+    set_index: Option<unsafe extern "C" fn(u32) -> bool>,
+    count: Option<unsafe extern "C" fn() -> u32>,
+    replace: Option<unsafe extern "C" fn(u32, *const GameInfo) -> bool>,
+    add: Option<unsafe extern "C" fn() -> bool>,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct DiskControlExt {
+    base: DiskControl,
+    initial: Option<unsafe extern "C" fn(u32, *const c_char) -> bool>,
+    path: Option<unsafe extern "C" fn(u32, *mut c_char, usize) -> bool>,
+    label: Option<unsafe extern "C" fn(u32, *mut c_char, usize) -> bool>,
+}
+#[repr(C)]
 struct Message {
     text: *const c_char,
     frames: u32,
 }
 
 pub struct Callbacks {
+    disk: DiskControl,
+    initial_disk: Option<unsafe extern "C" fn(u32, *const c_char) -> bool>,
     system: CString,
     save: CString,
     options: BTreeMap<Vec<u8>, CString>,
@@ -177,6 +198,20 @@ unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
             return false;
         }
         match command {
+            13 => {
+                s.disk = *(data as *const DiskControl);
+                true
+            }
+            57 => {
+                *(data as *mut u32) = 1;
+                true
+            }
+            58 => {
+                let disk = *(data as *const DiskControlExt);
+                s.disk = disk.base;
+                s.initial_disk = disk.initial;
+                true
+            }
             3 => {
                 *(data as *mut bool) = true;
                 true
@@ -317,6 +352,7 @@ pub struct HostConfig<'a> {
     pub framebuffer: usize,
     pub proc_address: Option<ProcAddress>,
     pub jit: bool,
+    pub initial_disc: usize,
 }
 
 impl Core {
@@ -334,6 +370,7 @@ impl Core {
             framebuffer,
             proc_address,
             jit,
+            initial_disc,
         } = config;
         if ACTIVE.with(|a| !a.get().is_null()) {
             return Err("A game is already running.".into());
@@ -373,6 +410,8 @@ impl Core {
             );
         }
         let state = Box::new(Callbacks {
+            disk: DiskControl::default(),
+            initial_disk: None,
             system: CString::new(system.as_os_str().as_encoded_bytes())
                 .map_err(|e| e.to_string())?,
             save: CString::new(save.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?,
@@ -462,6 +501,13 @@ impl Core {
         init();
         let game_path =
             CString::new(game.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
+        if let Some(initial) = core.state.initial_disk {
+            if !initial(initial_disc as u32, game_path.as_ptr()) {
+                return Err("The core could not select the starting disc.".into());
+            }
+        } else if initial_disc != 0 {
+            return Err("The core cannot select a starting disc.".into());
+        }
         let info = GameInfo {
             path: game_path.as_ptr(),
             data: std::ptr::null(),
@@ -474,6 +520,11 @@ impl Core {
         core.loaded = true;
         set_controller(0, 1); // digital PS1 pad for the first playable
         get_av(&mut core.state.av);
+        if let Some((index, count)) = core.disc_status() {
+            if count == 0 || index as usize != initial_disc {
+                return Err("The core did not load the requested starting disc.".into());
+            }
+        }
         if let Some(reset) = core.state.hw.and_then(|h| h.reset) {
             reset();
             core.context_active = true;
@@ -493,6 +544,45 @@ impl Core {
     pub fn run(&mut self) {
         unsafe {
             (self.run_fn)();
+        }
+    }
+    pub fn disc_status(&self) -> Option<(u32, u32)> {
+        unsafe { Some(((self.state.disk.index?)(), (self.state.disk.count?)())) }
+    }
+
+    /// Call while paused on the sole core/GL thread, after flushing the card.
+    /// Follow the donor ABI: open tray, select image, close tray. Try restoring
+    /// the previous image if selection/insertion fails, never reset the machine.
+    pub fn change_disc(&mut self, index: u32) -> Result<()> {
+        let disk = self.state.disk;
+        let (Some(eject), Some(current), Some(select), Some(count)) =
+            (disk.eject, disk.index, disk.set_index, disk.count)
+        else {
+            return Err("This game does not expose disc switching.".into());
+        };
+        unsafe {
+            if index >= count() {
+                return Err(
+                    "That disc is not in this game set. Add it to the library first.".into(),
+                );
+            }
+            let old = current();
+            if old == index && !disk.ejected.is_some_and(|get| get()) {
+                return Ok(());
+            }
+            if !eject(true) {
+                return Err("The game could not open its disc tray.".into());
+            }
+            if select(index) && eject(false) {
+                return Ok(());
+            }
+            let restored = select(old) && eject(false);
+            Err(if restored {
+                "The disc could not be inserted. The previous disc is restored."
+            } else {
+                "The disc could not be inserted and the tray may be open. Choose a disc again."
+            }
+            .into())
         }
     }
     pub fn card_ram(&mut self) -> Result<&mut [u8]> {

@@ -96,10 +96,21 @@ need a signed bundled core and a real EAGL presentation check. There is no
 implemented Metal adapter. These are source findings and an integration
 candidate, not an iOS execution or performance result.
 
-This implementation session has no authorized Mac/Xcode and physical-iOS
-test environment. Non-JIT iOS gameplay/audio and presentation remain
-unverified. No full iOS port, new CPU engine or graphics-backend rewrite is
-authorized by that missing evidence.
+The owner has deferred iPhone work until an Apple computer is available.
+This Linux host has no
+Xcode, Apple SDK, signing/provisioning tools or installed iOS Rust target.
+Apple's supported Xcode/SDK host is macOS; an authorized remote Mac can
+provide it without the owner buying a computer. Device apps need signing
+and provisioning; an iPhone alone does not supply the build toolchain.
+Native Linux-only installation/testing is not established here. No Apple
+account, signing identity, remote host or paid service has been configured.
+[Xcode requirements](https://developer.apple.com/xcode/system-requirements/),
+[device signing](https://help.apple.com/xcode/mac/current/en.lproj/dev5a825a1ca.html),
+[personal device testing](https://developer.apple.com/help/account/basics/about-your-developer-account)
+
+Non-JIT iOS gameplay/audio and presentation remain unverified. Keep the
+shared player independent of Android while the bounded feasibility check
+awaits the required build/signing environment.
 
 The root core license and inherited dependency files are retained unchanged
 in the submodule. The development APK also carries original license files
@@ -114,3 +125,21 @@ target API 36 for new phone apps; Android requires both native alignment and
 runtime testing for 16 KB support. Apple 4.7 addresses emulator apps, while
 Libretro documents its own marketplace-specific upstream approvals. The
 linked guidance above supports keeping these as explicit release gates.
+
+## Requested storage discovery
+
+The owner requests a primary Scan storage flow across accessible shared
+storage, followed by explicit selection and a persistent local game list.
+Android's `MANAGE_EXTERNAL_STORAGE` can expose shared storage and removable
+volumes after a user grant; it still excludes other apps' private storage.
+The interface must state its real coverage, with optional document-based
+navigation and no compatibility promise from file extensions.
+[Android all-files access](https://developer.android.com/training/data-storage/manage-all-files)
+
+Google Play restricts this permission to reviewed eligible core functions or
+exceptions and explicitly identifies file selection as an invalid use.
+This PS1 player's broader-search permission is not approved by that policy
+merely because it can scan files. Preserve a scoped-access packaging path
+and treat broad-scan Play permission as a separate unresolved release gate;
+do not describe the development APK as cleared for Play submission.
+[Google Play permission policy](https://support.google.com/googleplay/android-developer/answer/10467955?hl=en)

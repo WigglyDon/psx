@@ -1,50 +1,86 @@
 # Local files and saved progress
 
-Open game uses Android's document picker. Select one CHD, PBP, ISO or PS-EXE,
-or select one CUE together with **every BIN track it names**. Android's picker
-supports multiple selection by holding a file and then selecting the rest.
-A single document grant gives no access to neighboring files. The host
-validates CUE companions and reports a named missing track before launch.
-For now, CUE companions must be in the same directory with simple filenames;
-paths into other folders are rejected. Matching names ignore case when
-resolving the grant, then preserve the CUE's exact requested filename locally.
+**Add games → Scan storage** checks accessible shared/removable volumes, then
+lets you select games for a persistent local collection. It runs only when
+requested. Android's all-files permission is granted in its system screen;
+protected app data and system areas are not scanned. Results count unreadable
+folders, rejected images and archives; a safety limit is reported if reached.
+No filenames or file contents are uploaded.
 
-The host streams selected documents to private storage using a bounded
-64 KB buffer; it does not load a disc into RAM. Imports require enough free
-space for a private copy. They are committed only after the companions are
-available. The recent-game entry points at that copy. Provider grants are
-retained during copying and released after it, so continued play does not
-depend on a cloud provider or removable storage staying connected.
+CUE tracks must exist alongside the CUE. ISO/raw BIN candidates need a PS1
+volume descriptor. PS-EXE and PS1 PBP signatures are checked. CHD headers are
+recognized as containers; their console/game compatibility is checked only
+when opened. These checks do not prove a disc is undamaged or compatible with
+the donor. Track BINs named by a CUE are not shown as duplicate games.
+ZIP/7z archives require extraction before scanning or import.
 
-ZIP and 7z archives must be extracted before selection. Standalone BINs,
-M3U/multi-disc switching, SBI companion resolution, encrypted PBP files and
-arbitrary subdirectory layouts are not supported by this initial host.
-Formats the borrowed core advertises are not automatically qualified host
-formats. Only the selected acceptance game will have device evidence.
+Scan-selected discs remain at their original paths. Moving/deleting them,
+revoking storage access or removing a volume may require restoring access or
+rescanning. Only selected discs are streamed for content hashes; discovery
+reads bounded headers and CUE text. No whole disc is loaded into RAM. The
+local manifest remembers selections across process restarts.
+
+Library thumbnails use an existing memory-card save icon when available,
+including its small animation. Otherwise a distinct colored disc/initial
+placeholder identifies the entry. These are local thumbnails, not downloaded
+box covers; no artwork database or network lookup is involved.
+
+**Browse files** is optional and uses Android's document picker. Select one
+CHD, PBP, ISO or PS-EXE, or one CUE together with **every BIN track it names**.
+Android's picker supports multiple selection by holding a file, then selecting
+the rest. A document grant gives no access to neighboring files. Missing
+CUE companions are reported before launch. CUE companions currently require
+simple filenames in the same directory; subdirectory paths are rejected.
+Imported track names preserve the CUE's case-sensitive spelling.
+
+The document route streams private copies through a bounded 64 KB buffer.
+It needs enough free space and commits only after companions are available.
+Provider grants are retained during copying and released afterward; this
+route survives provider revocation or removal of the source volume.
+
+The scanner groups common `(Disc N)` / `(Disk N)` filename conventions while
+retaining region/revision labels. This is a filename hint, not a game database.
+Starting disc selection and in-session **Change disc** use a private generated
+M3U and the donor's libretro disk callbacks. Swap when the game requests it.
+All discs in an entry retain one memory card; adding a disc does not rename
+that card. Swapping preserves the emulated machine. Close/reopen a running
+game to incorporate newly added discs. Internal PBP discs, when exposed by
+the donor, are available through Change disc.
+
+External M3U import, SBI companion resolution, encrypted PBP files and
+arbitrary CUE subdirectory layouts are not implemented. Donor-advertised
+formats are not automatically qualified host formats.
 
 The pinned donor contains an MIT-licensed OpenBIOS fallback from PCSX-Redux.
-Its license is retained. This is a compatibility fallback, not a promise that
-every game boots without original firmware. Select PS1 firmware from the
-menu when a game needs a compatible dump; it stays private. The donor checks
-its known firmware hashes and region. No proprietary firmware is bundled or
-downloaded by the app.
+Its license is retained. This does not promise every game boots without
+original firmware. Select PS1 firmware from Settings when a game needs a
+compatible dump; it stays private. The donor checks known hashes and region.
+No proprietary firmware is bundled or downloaded.
 
-Slot 1 uses the core's `Libretro` memory-card interface: a 128 KB card image.
-The Rust owner restores it before the first frame, compares it each second,
-and flushes on pause, focus loss, backgrounding, surface destruction and
-normal closure. Updates use a same-directory temporary file, file sync,
-rename and directory sync. A card with an unexpected length is preserved
-and reported, never silently replaced. Slot 2 is disabled for this milestone.
+Slot 1 uses the core's Libretro interface: a 128 KB card, already inserted.
+Use the game's own save menu or save points. Checkpoints may last only for
+the current session. Opening a game boots its disc; use the game's Load
+option for completed saves. The library does not represent a checkpoint or
+emulator save state.
 
-Save identity is derived from the selected primary file and its companion
-filenames/content hashes, independent of the document URI. Changing a game
-dump or its filenames creates a distinct card. Reopening the same imported
-copy preserves its card. Optional emulator save states and automatic state
-resume are not implemented, so they cannot roll back newer card progress.
-An uncatchable process kill during an unfinished save may lose recent
-unsynced changes; acceptance requires completing an ordinary in-game save
-and verifying it after a fresh app process.
+Rust restores the card before the first frame, compares it each second and
+flushes on pause, focus loss, background, surface destruction and normal
+closure. Updates use a same-directory temporary file, file sync, rename and
+directory sync. An unexpected card length is preserved and reported, never
+silently replaced. Slot 2 is disabled for this milestone.
 
-App-private imported games, firmware, recent metadata and cards are local.
-The application has no Internet or broad storage permission. Removing the
-application deletes that private data; development updates must preserve it.
+Initial identity uses the primary file and companion names/content hashes,
+independent of document URI. A new dump or renamed files can create another
+identity. Reopening the same imported copy preserves its card. A disc set
+keeps its existing card identity when more discs are merged, including discs
+added before the original starting disc. Optional emulator states/automatic
+state resume are not implemented, so cannot roll back newer card progress.
+An uncatchable process kill during an unfinished save may lose unsynced
+changes. Acceptance requires an ordinary save loaded in a fresh process.
+
+Imported games, firmware, collection metadata, controller layouts and cards
+remain local. There is no Internet permission. The default development APK
+requests shared-storage scan access. A scoped build omits that permission
+and retains document import; see [build.md](build.md) and the unresolved
+Play permission gate in [distribution.md](distribution.md). Uninstalling the
+app deletes its private data; development updates must preserve it.

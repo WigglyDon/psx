@@ -1,11 +1,15 @@
-use font8x8::UnicodeFonts;
+mod text;
+
 use glow::HasContext;
 use khronos_egl as egl;
 use psx_player::{
+    artwork::Artwork,
     input::{Layout, Rect},
     retro::ProcAddress,
+    ui::{Editor, Menu, Row, Visuals},
 };
 use std::ffi::{c_char, CStr};
+use text::Text;
 
 const API: egl::Instance<egl::Static> = egl::Instance::new(egl::Static);
 pub struct Graphics {
@@ -21,6 +25,7 @@ pub struct Graphics {
     program: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
+    text: Text,
     pub width: i32,
     pub height: i32,
     pub content: Rect,
@@ -134,8 +139,8 @@ impl Graphics {
         gl.clear(glow::COLOR_BUFFER_BIT);
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         let program = gl.create_program()?;
-        for (kind,source) in [(glow::VERTEX_SHADER,"#version 300 es\nlayout(location=0) in vec2 position; layout(location=1) in vec4 color; out vec4 vcolor; void main(){gl_Position=vec4(position,0.0,1.0);vcolor=color;}"),
-            (glow::FRAGMENT_SHADER,"#version 300 es\nprecision mediump float; in vec4 vcolor; out vec4 outputColor; void main(){outputColor=vcolor;}")] {
+        for (kind,source) in [(glow::VERTEX_SHADER,"#version 300 es\nlayout(location=0) in vec2 position; layout(location=1) in vec4 color; layout(location=2) in vec2 uv; out vec4 vcolor; out vec2 vuv; void main(){gl_Position=vec4(position,0.0,1.0);vcolor=color;vuv=uv;}"),
+            (glow::FRAGMENT_SHADER,"#version 300 es\nprecision mediump float; in vec4 vcolor; in vec2 vuv; uniform sampler2D glyphs; out vec4 outputColor; void main(){float coverage=vuv.x<0.0?1.0:texture(glyphs,vuv).r;outputColor=vec4(vcolor.rgb,vcolor.a*coverage);}")] {
             let shader=gl.create_shader(kind)?;gl.shader_source(shader,source);gl.compile_shader(shader);
             if !gl.get_shader_compile_status(shader) {return Err(gl.get_shader_info_log(shader));}
             gl.attach_shader(program,shader);gl.delete_shader(shader);
@@ -144,14 +149,20 @@ impl Graphics {
         if !gl.get_program_link_status(program) {
             return Err(gl.get_program_info_log(program));
         }
+        gl.use_program(Some(program));
+        gl.uniform_1_i32(gl.get_uniform_location(program, "glyphs").as_ref(), 0);
+        gl.use_program(None);
+        let text = Text::new(&gl)?;
         let vao = gl.create_vertex_array()?;
         let vbo = gl.create_buffer()?;
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
         gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 24, 0);
+        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 32, 0);
         gl.enable_vertex_attrib_array(1);
-        gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, 24, 8);
+        gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, 32, 8);
+        gl.enable_vertex_attrib_array(2);
+        gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, 32, 24);
         gl.bind_vertex_array(None);
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
         Ok(Self {
@@ -167,6 +178,7 @@ impl Graphics {
             program,
             vao,
             vbo,
+            text,
             width: 1,
             height: 1,
             content: Rect::new(0., 0., 1., 1.),
@@ -247,13 +259,21 @@ impl Graphics {
         density: f32,
         layout: &Layout,
         frame: Option<(u32, u32, bool)>,
-        buttons: u16,
-        message: &str,
+        menu: Option<&Menu>,
+        editor: Option<&Editor>,
+        visuals: &Visuals,
     ) -> Result<(), String> {
         if self.surface.is_none() {
             return Ok(());
         }
         let gl = &self.gl;
+        // The donor caches its current program, including across duplicate
+        // frames. Restore the actual program after frontend drawing rather
+        // than invalidating that cache behind its back. A core unloaded while
+        // current may leave a delete-pending program: test after unbinding it.
+        let saved_program =
+            std::num::NonZeroU32::new(gl.get_parameter_i32(glow::CURRENT_PROGRAM) as u32)
+                .map(glow::NativeProgram);
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         gl.viewport(
             self.content.x as i32,
@@ -276,7 +296,7 @@ impl Graphics {
         gl.clear(glow::COLOR_BUFFER_BIT);
         if let Some((w, h, bottom_left)) = frame {
             if w > 0 && h > 0 && w <= 1024 && h <= 1024 {
-                let r = layout.game.fit(4. / 3.);
+                let r = editor.map_or_else(|| layout.game.fit(4. / 3.), |e| e.map(e.layout.game));
                 let x = (self.content.x + r.x * density) as i32;
                 let top = (self.content.y + r.y * density) as i32;
                 let width = (r.w * density) as i32;
@@ -308,30 +328,41 @@ impl Graphics {
             vertices: Vec::with_capacity(20000),
             w,
             h,
+            font: &self.text,
+            opacity: 1.,
         };
-        canvas.text(18., 22., "psx", 2.5, [0.82, 0.92, 1., 1.]);
-        canvas.button(layout.pause, "PAUSE", false);
-        if frame.is_some() {
-            let d = layout.dpad;
-            for (dx, dy, label, bit) in [
-                (1., 0., "^", 4),
-                (0., 1., "<", 6),
-                (2., 1., ">", 7),
-                (1., 2., "v", 5),
-            ] {
+        if frame.is_some() && editor.is_none() && visuals.overlay < 1. {
+            canvas.opacity = 1. - visuals.overlay;
+            canvas.dpad(layout.dpad, &visuals.presses);
+            for c in &layout.controls {
                 canvas.button(
-                    Rect::new(d.x + dx * d.w / 3., d.y + dy * d.h / 3., d.w / 3., d.h / 3.),
-                    label,
-                    buttons & (1 << bit) != 0,
+                    c.bounds,
+                    c.label,
+                    visuals.presses[c.mask.trailing_zeros() as usize],
                 );
             }
-            for c in &layout.controls {
-                canvas.button(c.bounds, c.label, buttons & c.mask != 0);
-            }
-        } else {
-            canvas.wrapped(24., 100., w - 48., message, 2.);
+            canvas.button(layout.pause, "MENU", 0.);
         }
+        canvas.opacity = visuals.overlay;
+        if let Some(menu) = menu {
+            canvas.menu(menu, visuals.time);
+        }
+        if let Some(editor) = editor {
+            canvas.editor(editor);
+        }
+        gl.enable(glow::BLEND);
+        // The core legitimately uses subtractive PS1 blending. Frontend UI
+        // must establish its own equation as well as its blend factors.
+        gl.blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
+        gl.blend_func_separate(
+            glow::SRC_ALPHA,
+            glow::ONE_MINUS_SRC_ALPHA,
+            glow::ONE,
+            glow::ONE_MINUS_SRC_ALPHA,
+        );
         gl.use_program(Some(self.program));
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.text.texture));
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
         let bytes = std::slice::from_raw_parts(
@@ -339,12 +370,21 @@ impl Graphics {
             canvas.vertices.len() * 4,
         );
         gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
-        gl.draw_arrays(glow::TRIANGLES, 0, (canvas.vertices.len() / 6) as i32);
+        gl.draw_arrays(glow::TRIANGLES, 0, (canvas.vertices.len() / 8) as i32);
         gl.bind_vertex_array(None);
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
-        gl.use_program(None);
+        gl.use_program(saved_program.filter(|program| gl.is_program(*program)));
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        gl.disable(glow::BLEND);
         API.swap_buffers(self.display, self.surface.unwrap())
             .map_err(|e| format!("Display changed: {e}"))
+    }
+
+    pub fn text_rows(&self, body: &str, width: f32) -> Vec<Row> {
+        wrap(&self.text, body, width, 22.)
+            .into_iter()
+            .map(Row::text)
+            .collect()
     }
 }
 
@@ -358,6 +398,7 @@ impl Drop for Graphics {
             self.gl.delete_program(self.program);
             self.gl.delete_vertex_array(self.vao);
             self.gl.delete_buffer(self.vbo);
+            self.gl.delete_texture(self.text.texture);
             let _ = API.make_current(self.display, None, None, None);
             let _ = API.destroy_surface(self.display, self.pbuffer);
             let _ = API.destroy_context(self.display, self.context);
@@ -366,85 +407,546 @@ impl Drop for Graphics {
     }
 }
 
-struct Canvas {
+struct Canvas<'a> {
     vertices: Vec<f32>,
     w: f32,
     h: f32,
+    font: &'a Text,
+    opacity: f32,
 }
-impl Canvas {
-    fn rect(&mut self, r: Rect, c: [f32; 4]) {
-        for (x, y) in [
-            (r.x, r.y),
-            (r.x + r.w, r.y),
-            (r.x, r.y + r.h),
-            (r.x, r.y + r.h),
-            (r.x + r.w, r.y),
-            (r.x + r.w, r.y + r.h),
-        ] {
-            self.vertices.extend_from_slice(&[
-                x / self.w * 2. - 1.,
-                1. - y / self.h * 2.,
-                c[0],
-                c[1],
-                c[2],
-                c[3],
-            ]);
-        }
-    }
-    fn text(&mut self, x: f32, y: f32, text: &str, scale: f32, c: [f32; 4]) {
-        for (i, ch) in text.chars().enumerate() {
-            if let Some(glyph) = font8x8::BASIC_FONTS.get(ch) {
-                for (row, bits) in glyph.iter().enumerate() {
-                    for column in 0..8 {
-                        if bits & (1 << column) != 0 {
-                            self.rect(
-                                Rect::new(
-                                    x + (i * 9 + column) as f32 * scale,
-                                    y + row as f32 * scale,
-                                    scale,
-                                    scale,
-                                ),
-                                c,
+impl Canvas<'_> {
+    fn artwork(&mut self, r: Rect, artwork: &Artwork, time: f64) {
+        let [red, green, blue] = artwork.color;
+        self.rounded(r, [red * 0.55, green * 0.55, blue * 0.55, 1.]);
+        if let Some(icon) = &artwork.icon {
+            let period = if icon.frames.len() == 2 { 0.32 } else { 0.22 };
+            if let Some(frame) = icon
+                .frames
+                .get((time / period) as usize % icon.frames.len().max(1))
+            {
+                for y in 0..16 {
+                    let mut x = 0;
+                    while x < 16 {
+                        let color = frame[y * 16 + x];
+                        let start = x;
+                        x += 1;
+                        while x < 16 && frame[y * 16 + x] == color {
+                            x += 1;
+                        }
+                        if color[3] != 0 {
+                            let left = r.x + start as f32 * r.w / 16.;
+                            let right = r.x + x as f32 * r.w / 16.;
+                            let top = r.y + y as f32 * r.h / 16.;
+                            let bottom = top + r.h / 16.;
+                            self.polygon(
+                                &[(left, top), (right, top), (right, bottom), (left, bottom)],
+                                color.map(|v| v as f32 / 255.),
                             );
                         }
                     }
                 }
             }
+        } else {
+            let x = r.x + r.w / 2.;
+            let y = r.y + r.h / 2.;
+            self.disc(x, y, r.w * 0.40, [red, green, blue, 1.]);
+            self.ring(x, y, r.w * 0.40, 1.5, [0.8, 0.91, 1., 0.45]);
+            self.disc(x, y, r.w * 0.24, [red * 0.6, green * 0.6, blue * 0.6, 1.]);
+            let initial = artwork.initial.to_string();
+            self.text(
+                x - self.font.measure(&initial, 29.) / 2.,
+                y - 15.,
+                &initial,
+                29.,
+                [0.94, 0.97, 1., 1.],
+            );
         }
     }
-    fn wrapped(&mut self, x: f32, y: f32, width: f32, text: &str, scale: f32) {
-        let columns = (width / (9. * scale)) as usize;
+    fn editor(&mut self, editor: &Editor) {
+        let preview = editor.preview();
+        self.rounded(preview, [0.04, 0.06, 0.085, 0.9]);
+        let game = editor.map(editor.layout.game);
+        self.rounded(game, [0.1, 0.20, 0.24, 1.]);
+        if game.w > 100. {
+            self.text(
+                game.x + 8.,
+                game.y + 8.,
+                "Game picture",
+                22.,
+                [0.7, 0.89, 0.91, 1.],
+            );
+        }
+        self.dpad(editor.map(editor.layout.dpad), &[0.; 16]);
+        for c in &editor.layout.controls {
+            self.button(editor.map(c.bounds), c.label, 0.);
+        }
+        self.button(editor.map(editor.layout.pause), "MENU", 0.);
+        let selected = if editor.selected < editor.layout.element_count() {
+            editor.map(editor.layout.element(editor.selected))
+        } else {
+            game
+        };
+        for (a, b) in [
+            (
+                (selected.x, selected.y),
+                (selected.x + selected.w, selected.y),
+            ),
+            (
+                (selected.x + selected.w, selected.y),
+                (selected.x + selected.w, selected.y + selected.h),
+            ),
+            (
+                (selected.x + selected.w, selected.y + selected.h),
+                (selected.x, selected.y + selected.h),
+            ),
+            (
+                (selected.x, selected.y + selected.h),
+                (selected.x, selected.y),
+            ),
+        ] {
+            self.line(a, b, 2., [0.22, 0.95, 0.73, 1.]);
+        }
+        for (x, y) in editor.handles() {
+            self.disc(x, y, 8., [0.22, 0.95, 0.73, 1.]);
+            self.disc(x, y, 3.5, [0.04, 0.13, 0.15, 1.]);
+        }
+        self.text(16., 16., "Controller layout", 28., [0.94, 0.97, 1., 1.]);
+        self.text(
+            16.,
+            56.,
+            &elide(self.font, editor.selected_name(), self.w - 32., 23.),
+            23.,
+            [0.64, 0.76, 0.83, 1.],
+        );
+        self.text(
+            16.,
+            88.,
+            "Drag to move · pull a corner to resize",
+            17.,
+            [0.64, 0.76, 0.83, 1.],
+        );
+        for (rect, label) in editor.buttons().into_iter().zip(["Next", "Cancel", "Done"]) {
+            self.rounded(
+                rect,
+                if label == "Done" {
+                    [0.11, 0.45, 0.40, 1.]
+                } else {
+                    [0.09, 0.13, 0.18, 1.]
+                },
+            );
+            self.text(
+                rect.x + (rect.w - self.font.measure(label, 23.)) / 2.,
+                rect.y + 14.,
+                label,
+                23.,
+                [0.9, 0.95, 1., 1.],
+            );
+        }
+    }
+    fn menu(&mut self, menu: &Menu, time: f64) {
+        let column = Menu::column(self.w);
+        let viewport = Menu::viewport(self.w, self.h);
+        let background = [0.035, 0.045, 0.065, 1.];
+        self.polygon(
+            &[(0., 0.), (self.w, 0.), (self.w, self.h), (0., self.h)],
+            [0.025, 0.035, 0.055, 0.94],
+        );
+        let mut y = viewport.y - menu.scroll;
+        for row in &menu.rows {
+            if y + row.height > viewport.y && y < viewport.y + viewport.h {
+                if row.enabled {
+                    self.rounded(
+                        Rect::new(column.x, y + 4., column.w, row.height - 8.),
+                        [0.075, 0.095, 0.125, 1.],
+                    );
+                    let x = column.x
+                        + if row.artwork.is_some() {
+                            96.
+                        } else if row.checked.is_some() {
+                            54.
+                        } else {
+                            18.
+                        };
+                    if let Some(artwork) = &row.artwork {
+                        self.artwork(Rect::new(column.x + 12., y + 12., 64., 64.), artwork, time);
+                    }
+                    if let Some(checked) = row.checked {
+                        let r = Rect::new(column.x + 16., y + 28., 24., 24.);
+                        self.rounded(
+                            r,
+                            if checked {
+                                [0.18, 0.75, 0.63, 1.]
+                            } else {
+                                [0.19, 0.23, 0.29, 1.]
+                            },
+                        );
+                        if checked {
+                            self.line(
+                                (r.x + 5., r.y + 12.),
+                                (r.x + 10., r.y + 17.),
+                                2.5,
+                                [0.02, 0.1, 0.1, 1.],
+                            );
+                            self.line(
+                                (r.x + 10., r.y + 17.),
+                                (r.x + 20., r.y + 6.),
+                                2.5,
+                                [0.02, 0.1, 0.1, 1.],
+                            );
+                        }
+                    }
+                    let width = column.x + column.w - x - 18.;
+                    self.text(
+                        x,
+                        y + 12.,
+                        &elide(self.font, &row.title, width, 26.),
+                        26.,
+                        [0.94, 0.96, 1., 1.],
+                    );
+                    self.text(
+                        x,
+                        y + 47.,
+                        &elide(self.font, &row.detail, width, 20.),
+                        20.,
+                        [0.61, 0.69, 0.78, 1.],
+                    );
+                } else {
+                    self.text(column.x + 4., y, &row.title, 22., [0.72, 0.79, 0.86, 1.]);
+                }
+            }
+            y += row.height;
+        }
+        // Opaque header/footer clip scrolling text without another render pass.
+        self.polygon(
+            &[
+                (0., 0.),
+                (self.w, 0.),
+                (self.w, viewport.y),
+                (0., viewport.y),
+            ],
+            background,
+        );
+        self.polygon(
+            &[
+                (0., viewport.y + viewport.h),
+                (self.w, viewport.y + viewport.h),
+                (self.w, self.h),
+                (0., self.h),
+            ],
+            background,
+        );
+        self.text(column.x + 4., 14., "psx", 22., [0.25, 0.79, 0.69, 1.]);
+        self.text(
+            column.x + 4.,
+            44.,
+            &elide(self.font, &menu.title, column.w - 8., 36.),
+            36.,
+            [0.95, 0.97, 1., 1.],
+        );
+        for (i, line) in wrap(self.font, &menu.description, column.w - 8., 21.)
+            .iter()
+            .take(3)
+            .enumerate()
+        {
+            self.text(
+                column.x + 4.,
+                94. + i as f32 * 22.,
+                line,
+                21.,
+                [0.64, 0.72, 0.81, 1.],
+            );
+        }
+        let back = Menu::back_rect(self.w, self.h);
+        self.rounded(back, [0.11, 0.45, 0.40, 1.]);
+        let size = 25.;
+        self.text(
+            back.x + (back.w - self.font.measure(&menu.back, size)) / 2.,
+            back.y + 11.,
+            &menu.back,
+            size,
+            [0.94, 1., 0.98, 1.],
+        );
+        let total = menu.rows.iter().map(|r| r.height).sum::<f32>();
+        if total > viewport.h {
+            let thumb = (viewport.h * viewport.h / total).max(24.);
+            let top = viewport.y + menu.scroll / (total - viewport.h) * (viewport.h - thumb);
+            self.rounded(
+                Rect::new(column.x + column.w + 4., top, 3., thumb),
+                [0.36, 0.47, 0.57, 0.8],
+            );
+        }
+    }
+    /// Convex or star-shaped polygon, with the mean point inside its boundary.
+    fn polygon(&mut self, points: &[(f32, f32)], c: [f32; 4]) {
+        let center = points.iter().fold((0., 0.), |(x, y), p| (x + p.0, y + p.1));
+        let center = (
+            center.0 / points.len() as f32,
+            center.1 / points.len() as f32,
+        );
+        for i in 0..points.len() {
+            for (x, y) in [center, points[i], points[(i + 1) % points.len()]] {
+                self.vertices.extend_from_slice(&[
+                    x / self.w * 2. - 1.,
+                    1. - y / self.h * 2.,
+                    c[0],
+                    c[1],
+                    c[2],
+                    c[3] * self.opacity,
+                    -1.,
+                    -1.,
+                ]);
+            }
+        }
+    }
+    fn disc(&mut self, x: f32, y: f32, radius: f32, c: [f32; 4]) {
+        let points: [_; 32] = std::array::from_fn(|i| {
+            let angle = i as f32 / 32. * std::f32::consts::TAU;
+            (x + angle.cos() * radius, y + angle.sin() * radius)
+        });
+        self.polygon(&points, c);
+    }
+    fn ring(&mut self, x: f32, y: f32, radius: f32, width: f32, c: [f32; 4]) {
+        for i in 0..32 {
+            let a = i as f32 / 32. * std::f32::consts::TAU;
+            let b = (i + 1) as f32 / 32. * std::f32::consts::TAU;
+            self.polygon(
+                &[
+                    (x + a.cos() * radius, y + a.sin() * radius),
+                    (x + b.cos() * radius, y + b.sin() * radius),
+                    (
+                        x + b.cos() * (radius - width),
+                        y + b.sin() * (radius - width),
+                    ),
+                    (
+                        x + a.cos() * (radius - width),
+                        y + a.sin() * (radius - width),
+                    ),
+                ],
+                c,
+            );
+        }
+    }
+    fn line(&mut self, a: (f32, f32), b: (f32, f32), width: f32, c: [f32; 4]) {
+        let length = (b.0 - a.0).hypot(b.1 - a.1);
+        if length == 0. {
+            return;
+        }
+        let dx = -(b.1 - a.1) / length * width / 2.;
+        let dy = (b.0 - a.0) / length * width / 2.;
+        self.polygon(
+            &[
+                (a.0 + dx, a.1 + dy),
+                (b.0 + dx, b.1 + dy),
+                (b.0 - dx, b.1 - dy),
+                (a.0 - dx, a.1 - dy),
+            ],
+            c,
+        );
+    }
+    fn rounded(&mut self, r: Rect, c: [f32; 4]) {
+        let radius = 12_f32.min(r.h / 2.).min(r.w / 2.);
+        let points: [_; 24] = std::array::from_fn(|i| {
+            let corner = i / 6;
+            let angle = (-0.5 + corner as f32 * 0.5 + (i % 6) as f32 / 10.) * std::f32::consts::PI;
+            let cx = if corner < 2 {
+                r.x + r.w - radius
+            } else {
+                r.x + radius
+            };
+            let cy = if corner == 0 || corner == 3 {
+                r.y + radius
+            } else {
+                r.y + r.h - radius
+            };
+            (cx + angle.cos() * radius, cy + angle.sin() * radius)
+        });
+        self.polygon(&points, c);
+    }
+    fn dpad(&mut self, r: Rect, presses: &[f32; 16]) {
+        let x = r.x + r.w / 2.;
+        let y = r.y + r.h / 2.;
+        let radius = r.w / 2.;
+        self.disc(x, y, radius, [0.025, 0.04, 0.06, 0.38]);
+        self.ring(x, y, radius - 1., 1., [0.85, 0.93, 1., 0.28]);
+        let arm = radius * 0.91;
+        let half = radius * 0.31;
+        self.polygon(
+            &[
+                (x - half, y - arm),
+                (x + half, y - arm),
+                (x + half, y - half),
+                (x + arm, y - half),
+                (x + arm, y + half),
+                (x + half, y + half),
+                (x + half, y + arm),
+                (x - half, y + arm),
+                (x - half, y + half),
+                (x - arm, y + half),
+                (x - arm, y - half),
+                (x - half, y - half),
+            ],
+            [0.055, 0.075, 0.10, 0.72],
+        );
+        for (dx, dy, bit) in [(0., -1., 4), (-1., 0., 6), (1., 0., 7), (0., 1., 5)] {
+            let ax = x + dx * radius * 0.65;
+            let ay = y + dy * radius * 0.65;
+            if presses[bit] > 0. {
+                self.disc(
+                    ax,
+                    ay,
+                    radius * 0.25,
+                    [0.10, 0.66, 0.58, 0.86 * presses[bit]],
+                );
+            }
+            let tip = (ax + dx * 7., ay + dy * 7.);
+            let base = (ax - dx * 4., ay - dy * 4.);
+            let color = [0.90, 0.95, 1., 0.95];
+            self.line((base.0 - dy * 7., base.1 + dx * 7.), tip, 2.5, color);
+            self.line((base.0 + dy * 7., base.1 - dx * 7.), tip, 2.5, color);
+        }
+        self.disc(x, y, radius * 0.08, [0.85, 0.93, 1., 0.25]);
+    }
+    fn text(&mut self, mut x: f32, y: f32, text: &str, size: f32, c: [f32; 4]) {
+        let scale = Text::scale(size);
+        let baseline = y + self.font.ascent * scale;
+        for ch in text.chars() {
+            let glyph = self.font.glyph(ch);
+            let left = x + glyph.offset[0] * scale;
+            let top = baseline + glyph.offset[1] * scale;
+            for (dx, dy) in [(0., 0.), (1., 0.), (0., 1.), (0., 1.), (1., 0.), (1., 1.)] {
+                self.vertices.extend_from_slice(&[
+                    (left + dx * glyph.size[0] * scale) / self.w * 2. - 1.,
+                    1. - (top + dy * glyph.size[1] * scale) / self.h * 2.,
+                    c[0],
+                    c[1],
+                    c[2],
+                    c[3] * self.opacity,
+                    glyph.uv[0] + dx * (glyph.uv[2] - glyph.uv[0]),
+                    glyph.uv[1] + dy * (glyph.uv[3] - glyph.uv[1]),
+                ]);
+            }
+            x += glyph.advance * scale;
+        }
+    }
+    fn button(&mut self, r: Rect, label: &str, strength: f32) {
+        let idle = [0.08, 0.11, 0.15, 0.9];
+        let pressed = [0.10, 0.58, 0.51, 0.94];
+        let background = std::array::from_fn(|i| idle[i] + (pressed[i] - idle[i]) * strength);
+        let x = r.x + r.w / 2.;
+        let y = r.y + r.h / 2.;
+        if matches!(label, "TRI" | "O" | "X" | "SQ") {
+            self.disc(x, y, r.w / 2. - 1., background);
+            self.ring(
+                x,
+                y,
+                r.w / 2. - 1.,
+                1.3,
+                [0.85, 0.93, 1., 0.4 + 0.4 * strength],
+            );
+            let a = r.w * 0.20;
+            let color = match label {
+                "TRI" => [0.49, 0.95, 0.77, 1.],
+                "O" => [1., 0.63, 0.54, 1.],
+                "SQ" => [1., 0.65, 0.84, 1.],
+                _ => [0.62, 0.81, 1., 1.],
+            };
+            match label {
+                "O" => self.ring(x, y, a, 2.8, color),
+                "X" => {
+                    self.line((x - a, y - a), (x + a, y + a), 2.8, color);
+                    self.line((x - a, y + a), (x + a, y - a), 2.8, color);
+                }
+                "SQ" => {
+                    let p = [
+                        (x - a, y - a),
+                        (x + a, y - a),
+                        (x + a, y + a),
+                        (x - a, y + a),
+                    ];
+                    for i in 0..4 {
+                        self.line(p[i], p[(i + 1) % 4], 2.8, color);
+                    }
+                }
+                _ => {
+                    let p = [(x, y - a), (x + a, y + a), (x - a, y + a)];
+                    for i in 0..3 {
+                        self.line(p[i], p[(i + 1) % 3], 2.8, color);
+                    }
+                }
+            }
+            return;
+        }
+        self.rounded(r, background);
+        if label == "MENU" {
+            // Eight-tooth cog, with an open center. Rust vector geometry.
+            for i in 0..32 {
+                let a = i as f32 / 32. * std::f32::consts::TAU;
+                let b = (i + 1) as f32 / 32. * std::f32::consts::TAU;
+                let ra = if i % 4 < 2 { 12. } else { 9.5 };
+                let rb = if (i + 1) % 4 < 2 { 12. } else { 9.5 };
+                self.polygon(
+                    &[
+                        (x + a.cos() * ra, y + a.sin() * ra),
+                        (x + b.cos() * rb, y + b.sin() * rb),
+                        (x + b.cos() * 4.5, y + b.sin() * 4.5),
+                        (x + a.cos() * 4.5, y + a.sin() * 4.5),
+                    ],
+                    [0.90, 0.95, 1., 0.95],
+                );
+            }
+            return;
+        }
+        let size = 22_f32.min(r.h * 0.5);
+        self.text(
+            r.x + (r.w - self.font.measure(label, size)) / 2.,
+            r.y + (r.h - size) / 2.,
+            label,
+            size,
+            [0.85, 0.92, 0.98, 1.],
+        );
+    }
+}
+
+fn elide(font: &Text, text: &str, width: f32, size: f32) -> String {
+    if font.measure(text, size) <= width {
+        return text.into();
+    }
+    let mut result = String::new();
+    for ch in text.chars() {
+        if font.measure(&result, size)
+            + font.measure(&ch.to_string(), size)
+            + font.measure("...", size)
+            > width
+        {
+            break;
+        }
+        result.push(ch);
+    }
+    result.push_str("...");
+    result
+}
+
+fn wrap(font: &Text, text: &str, width: f32, size: f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
         let mut line = String::new();
-        let mut row = 0;
-        for word in text.split_whitespace() {
-            if line.len() + word.len() + 1 > columns && !line.is_empty() {
-                self.text(x, y + row as f32 * 22., &line, scale, [0.7, 0.76, 0.83, 1.]);
-                line.clear();
-                row += 1;
+        for word in paragraph.split_whitespace() {
+            if !line.is_empty() && font.measure(&format!("{line} {word}"), size) > width {
+                lines.push(std::mem::take(&mut line));
             }
             if !line.is_empty() {
                 line.push(' ');
             }
-            line.push_str(word);
+            for ch in word.chars() {
+                if !line.is_empty()
+                    && font.measure(&line, size) + font.measure(&ch.to_string(), size) > width
+                {
+                    lines.push(std::mem::take(&mut line));
+                }
+                line.push(ch);
+            }
         }
-        self.text(x, y + row as f32 * 22., &line, scale, [0.7, 0.76, 0.83, 1.]);
+        lines.push(line);
     }
-    fn button(&mut self, r: Rect, label: &str, held: bool) {
-        self.rect(
-            r,
-            if held {
-                [0.13, 0.52, 0.48, 1.]
-            } else {
-                [0.12, 0.16, 0.21, 1.]
-            },
-        );
-        let scale = if label.len() > 4 { 1.2 } else { 1.7 };
-        self.text(
-            r.x + (r.w - label.len() as f32 * 9. * scale) / 2.,
-            r.y + (r.h - 8. * scale) / 2.,
-            label,
-            scale,
-            [0.85, 0.92, 0.98, 1.],
-        );
-    }
+    lines
 }

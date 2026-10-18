@@ -6,11 +6,16 @@ A small native PlayStation 1 player from Machine Rhythm.
 
 ## Status
 
-The Rust Android host launches an owner-selected Crash Bandicoot disc on a
+The Rust Android host launches an owner-selected PS1 disc on a
 stock Fold through the system picker, with hardware-rendered gameplay and
 owner-confirmed clear audio. Host tests and ARM64/signature/16 KB alignment
-checks pass. Save/restart, simultaneous touch and fold/lifecycle acceptance
-are still being checked; see [observations](docs/verification.md).
+checks pass. The owner confirms simultaneous touch and discrete press haptics.
+Save/restart and fold/lifecycle acceptance are still being checked; see
+[observations](docs/verification.md).
+The Rust-rendered interface now includes a persistent game collection,
+explicit storage scanning/selection, multi-disc menus, local thumbnails and
+controller layout editing with separate picture/control space by default.
+Direct corner resizing and final save/lifecycle checks are in progress.
 The first implementation target is a stock Android foldable.
 The product is intended for eventual Google Play and Apple App Store release.
 Store acceptance and iOS performance have not been established.
@@ -21,11 +26,12 @@ Store acceptance and iOS performance have not been established.
 - [SwanStation](https://github.com/libretro/swanstation) is the initial Android
   core candidate, through its libretro C interface. Its upstream C++ stays
   intact. Cross-platform selection depends on the distribution checks below.
-- One local game picker and one play surface, with sensible defaults chosen
-  by the application.
+- A persistent local game collection and one play surface, with sensible
+  defaults chosen by the application.
 - Native execution and the core's existing rendering paths.
 - Comfortable simultaneous touch input, stable sound and durable memory-card saves.
-- Local game files; no account, upload service or library-scanning requirement.
+- Local game files: scan accessible storage once and choose games to keep.
+  Add games repeats the scan; manual browsing is optional. No accounts or uploads.
 - Shared Rust player behavior with small Android and iOS platform adapters.
 - Clean everyday use: clear file errors, comfortable controls, dependable
   pause/resume and accessible navigation. Development diagnostics stay hidden

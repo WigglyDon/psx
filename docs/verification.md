@@ -37,7 +37,7 @@ first failure. Rust layout also accounts for system bars and cutout insets.
   `b4744d0304263d624fb04c9e51b56aa7403644d992987916a2ca30e82d8e9ee9`.
 - Installation/update preserves app data. Native menus and the ordinary
   system document picker work, including multi-select CUE/BIN import.
-- An owner-selected Crash Bandicoot disc boots with the bundled OpenBIOS
+- An owner-selected PS1 disc boots with the bundled OpenBIOS
   fallback. The first level renders and responds to direction input.
 - The GLES path is active on the physical GPU through Android's ANGLE
   driver. Core counters show hardware frames and zero software frames.
@@ -62,14 +62,99 @@ devices are not measured.
 
 At the owner's request, discrete press haptics have been added in Rust.
 Seven focused tests, host/Android Clippy, formatting and updated package
-checks pass. Physical haptic feedback is pending installation after the
-current in-game save. The prepared APK SHA-256 is
-`ff04864372124e4849442bb4ba56a797a76d13d695862c9999c7bddddb14a886`.
+checks pass. The owner confirms one haptic pulse for each new control press,
+with no repeated vibration while held. The update is installed and reopens
+the imported disc. Its APK SHA-256, including clarified in-game saving text,
+is `26d11a5eed4e5d1ab10f783ee4cc79f1fb9358bea1698cae3b837515b4041547`.
 
-Real in-game save/restart, interruption behavior and direct inner-display
-layout observation remain under test. The phone remains in the explicitly
+The owner exercised checkpoints and level completion, then returned to the
+first level after game over. A private card snapshot remains byte-identical;
+this is not an ordinary card save. The pause menu now explains that the game
+controls save points and completed in-game card saves survive restart. Normal
+Close game flushed and returned to the native menu without a crash.
+
+Direct inner-display observation subsequently showed the same game/core
+process continuing after the display changed to the inner screen. The older
+layout was uncomfortable; the owner requested a separate control area and
+an embedded interface, which are being verified below.
+
+Real in-game save/restart and interruption behavior remain under test.
+The phone remains in the explicitly
 authorized task-wide session. Games, saved progress, identifiers, raw logs
 and captures remain private.
+
+## Native interface and collection checkpoint
+
+The development APK with the Rust-rendered menus, Noto Sans, vector control
+symbols, native layout editor and local multi-disc library is installed.
+Current local SHA-256:
+`e40ffbba38aa000fec86c3b1942ae0b08f1d692f6157e33bdf09cbc9b1e43fbd`.
+The signature, required entries, AArch64 libraries and ZIP/ELF 16 KB alignment
+checks pass. Twelve focused host tests pass, including non-overlap geometry,
+explicit overlap, scrolling/multitouch cancellation, header/companion checks,
+disc grouping and preserving a card ID when another disc is added. Host,
+Android and Android scoped-feature Clippy pass with warnings denied.
+
+Direct device observations: the embedded home/menu renders with the new font
+and retains the existing game entry. Add games opens the intended storage
+permission flow. The app-specific system grant was observed off, enabled
+through Android's public UI for the requested scan, and observed checked.
+Returning to psx scans accessible storage and presents selectable game sets,
+including single-disc and three-/four-disc entries with the correct numeric
+disc lists. Referenced BIN tracks do not appear as separate games. Scan
+coverage, unreadable/rejected counts and archive limits are visible. The
+selection UI and Select all work. Raw results and captures remain private.
+
+The selected collection survives a force-stop/new process with all its disc
+entries retained. Choosing a starting disc from a multi-disc entry loads the
+generated playlist and reaches the game's rendered title/attract sequence.
+The inner-display capture shows the 4:3 game rectangle entirely above the
+separate controls. Initial ten-second boot/attract windows measure 58.79 fps
+then 59.82 fps, hardware frames only, with zero FIFO underruns/dropped frames
+in those windows. This is not yet a new bounded gameplay run.
+
+The scoped APK also builds and passes packaging/signature/alignment checks;
+its dumped manifest has no all-files permission. It is not installed over
+the broad-scan development build. Runtime switching, editor persistence,
+lifecycle and ordinary card-save loading remain under device checks.
+
+## Graphics and direct-manipulation checkpoint
+
+Subsequent installed APK SHA-256:
+`918a86efe809a0b1a08e0ecf02977429c134b345bc0195342759aa4ee45967c3`.
+The embedded settings now fit without a duplicate Resume row, and the narrow
+scrollbar renders correctly. Library entries show distinct local thumbnails.
+The latest addition was selected through Scan storage and retained alongside
+the existing single-/multi-disc entries.
+
+Device testing exposed two shared-context integration defects. The core's
+PS1 subtractive blend equation made host controls/menus dark; the Rust UI now
+sets its own additive equation. Changing the active program without restoring
+it invalidated the donor's cached binding across duplicate frames, hiding
+game text. The host now restores the actual entry program after drawing.
+Direct device captures confirm colored native controls/menus and restored
+title/load-screen labels. The load flow reports an empty card and responds
+to input; it is not evidence of a completed save.
+
+Runtime Change disc selected a second image, reported it as inserted from
+the core's callback, then selected the first image again. Resuming returned
+to the same in-game screen without booting again. This verifies the host's
+swap path, not progression through a game's later disc-change prompt.
+The older editor's move/resize/Done path ran on the inner display and was
+reset after testing. The requested replacement uses visible corner grips,
+continuous anchored resizing and tap/drag movement; it is prepared for the
+next connected device pass. Save/Cancel and separate display profiles remain.
+
+Seventeen focused host tests pass, including four-corner anchoring,
+second-finger rejection, game aspect/separation during resizing, fast tap
+latching, visual interpolation reversals and local memory-card icon decoding.
+Host and Android ARM64 Clippy pass with warnings denied. The corner-editor
+APK builds and passes signature, required-entry and ZIP/ELF alignment checks.
+Private captures, game files and card snapshots remain outside Git.
+
+The current USB connection was lost before that installation. Ordinary
+in-game save/restart, direct corner gestures/persistence and the updated
+fold/lifecycle flow remain under device acceptance. The issue stays open.
 
 ## Store limits
 

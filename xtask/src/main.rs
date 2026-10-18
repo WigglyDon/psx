@@ -177,6 +177,15 @@ fn apk() -> Result<()> {
             "--locked",
         ],
     );
+    let scoped_storage = env::var_os("PSX_SCOPED_STORAGE").is_some();
+    if scoped_storage {
+        rust.arg("--no-default-features");
+    }
+    let mut manifest = fs::read_to_string("android/AndroidManifest.xml")?;
+    if !scoped_storage {
+        manifest = manifest.replace("  <application", "  <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\" />\n  <application");
+    }
+    fs::write("build/apk/AndroidManifest.xml", manifest)?;
     rust.env(
         "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER",
         bin.join("aarch64-linux-android28-clang"),
@@ -199,19 +208,13 @@ fn apk() -> Result<()> {
         java,
         r#"package com.machinerhythm.psx;
 public final class PsxActivity extends android.app.NativeActivity implements
- android.content.DialogInterface.OnClickListener,
- android.content.DialogInterface.OnCancelListener,
  android.media.AudioManager.OnAudioFocusChangeListener {
  static { System.loadLibrary("psx"); }
  private native void documentResult(int request, int result, android.content.Intent data);
- private native void dialogResult(int index);
- private native void dialogCancel();
  private native void audioFocusChanged(int focus);
  @Override protected void onActivityResult(int request, int result, android.content.Intent data) {
   super.onActivityResult(request, result, data); documentResult(request, result, data);
  }
- @Override public void onClick(android.content.DialogInterface dialog, int index) { dialogResult(index); }
- @Override public void onCancel(android.content.DialogInterface dialog) { dialogCancel(); }
  @Override public void onAudioFocusChange(int focus) { audioFocusChanged(focus); }
 }
 "#,
@@ -252,7 +255,7 @@ public final class PsxActivity extends android.app.NativeActivity implements
             "-I".into(),
             jar.as_os_str().into(),
             "--manifest".into(),
-            "android/AndroidManifest.xml".into(),
+            "build/apk/AndroidManifest.xml".into(),
             "-A".into(),
             "build/apk/assets".into(),
             "-o".into(),
@@ -476,6 +479,15 @@ fn notices() -> Result<()> {
     fs::create_dir_all(destination.join("host"))?;
     fs::copy("LICENSE", destination.join("host/LICENSE"))?;
     fs::copy("THIRD_PARTY.md", destination.join("host/THIRD_PARTY.md"))?;
+    fs::create_dir_all(destination.join("fonts"))?;
+    fs::copy(
+        "assets/fonts/LICENSE",
+        destination.join("fonts/NotoSans-LICENSE"),
+    )?;
+    fs::copy(
+        "assets/fonts/SOURCE.md",
+        destination.join("fonts/SOURCE.md"),
+    )?;
     fs::copy(
         "upstream.lock.json",
         destination.join("host/upstream.lock.json"),

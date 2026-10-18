@@ -15,10 +15,12 @@ use std::{
 
 pub const PICK_GAME: i32 = 101;
 pub const PICK_FIRMWARE: i32 = 102;
+pub const PICK_STORAGE: i32 = 103;
 
 pub enum Event {
-    Menu(i32),
     Documents(i32, Option<GlobalRef>),
+    Storage(Option<Vec<PathBuf>>),
+    ScanUnavailable,
     Focus(i32),
     Error(String),
     Insets([i32; 4]),
@@ -46,6 +48,10 @@ pub extern "system" fn Java_com_machinerhythm_psx_PsxActivity_documentResult(
     result: jint,
     intent: JObject,
 ) {
+    if request == PICK_STORAGE {
+        post(Event::Documents(request, None));
+        return;
+    }
     if result != -1 || intent.is_null() {
         post(Event::Documents(request, None));
         return;
@@ -56,21 +62,6 @@ pub extern "system" fn Java_com_machinerhythm_psx_PsxActivity_documentResult(
             "The selected file could not be read. Try selecting it again.".into(),
         )),
     }
-}
-#[no_mangle]
-pub extern "system" fn Java_com_machinerhythm_psx_PsxActivity_dialogResult(
-    _env: JNIEnv,
-    _this: JObject,
-    index: jint,
-) {
-    post(Event::Menu(index));
-}
-#[no_mangle]
-pub extern "system" fn Java_com_machinerhythm_psx_PsxActivity_dialogCancel(
-    _env: JNIEnv,
-    _this: JObject,
-) {
-    post(Event::Menu(-1));
 }
 #[no_mangle]
 pub extern "system" fn Java_com_machinerhythm_psx_PsxActivity_audioFocusChanged(
@@ -141,22 +132,61 @@ impl Platform {
             )?;
             Ok(())
         });
+        self.fullscreen(app);
     }
 
-    pub fn menu(&self, app: &AndroidApp, title: String, message: String, items: Vec<String>) {
-        self.ui(app,move |env,activity| {
-            let builder=env.new_object("android/app/AlertDialog$Builder","(Landroid/content/Context;)V",&[JValue::Object(activity)])?;
-            let title=env.new_string(title)?;let message=env.new_string(message)?;
-            env.call_method(&builder,"setTitle","(Ljava/lang/CharSequence;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(&title)])?;
-            let explanation=env.new_object("android/widget/TextView","(Landroid/content/Context;)V",&[JValue::Object(activity)])?;
-            env.call_method(&explanation,"setText","(Ljava/lang/CharSequence;)V",&[JValue::Object(&message)])?;
-            env.call_method(&explanation,"setPadding","(IIII)V",&[JValue::Int(32),JValue::Int(16),JValue::Int(32),JValue::Int(24)])?;
-            env.call_method(&builder,"setView","(Landroid/view/View;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(&explanation)])?;
-            let array=env.new_object_array(items.len() as i32,"java/lang/CharSequence",JObject::null())?;
-            for (i,item) in items.iter().enumerate() { let text=env.new_string(item)?;env.set_object_array_element(&array,i as i32,text)?; }
-            env.call_method(&builder,"setItems","([Ljava/lang/CharSequence;Landroid/content/DialogInterface$OnClickListener;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(&array),JValue::Object(activity)])?;
-            env.call_method(&builder,"setOnCancelListener","(Landroid/content/DialogInterface$OnCancelListener;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(activity)])?;
-            env.call_method(&builder,"show","()Landroid/app/AlertDialog;",&[])?;
+    pub fn fullscreen(&self, app: &AndroidApp) {
+        self.ui(app, |env, activity| {
+            let window = env
+                .call_method(activity, "getWindow", "()Landroid/view/Window;", &[])?
+                .l()?;
+            let view = env
+                .call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?
+                .l()?;
+            let sdk = env
+                .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?
+                .i()?;
+            if sdk >= 30 {
+                env.call_method(
+                    &window,
+                    "setDecorFitsSystemWindows",
+                    "(Z)V",
+                    &[JValue::Bool(0)],
+                )?;
+                let controller = env
+                    .call_method(
+                        &view,
+                        "getWindowInsetsController",
+                        "()Landroid/view/WindowInsetsController;",
+                        &[],
+                    )?
+                    .l()?;
+                if !controller.is_null() {
+                    let bars = env
+                        .call_static_method(
+                            "android/view/WindowInsets$Type",
+                            "systemBars",
+                            "()I",
+                            &[],
+                        )?
+                        .i()?;
+                    env.call_method(
+                        &controller,
+                        "setSystemBarsBehavior",
+                        "(I)V",
+                        &[JValue::Int(2)],
+                    )?;
+                    env.call_method(&controller, "hide", "(I)V", &[JValue::Int(bars)])?;
+                }
+            } else {
+                // Public immersive-sticky fallback on the supported API 28–29.
+                env.call_method(
+                    &view,
+                    "setSystemUiVisibility",
+                    "(I)V",
+                    &[JValue::Int(0x1706)],
+                )?;
+            }
             Ok(())
         });
     }
@@ -172,6 +202,99 @@ impl Platform {
             // VIRTUAL_KEY, with no flags overriding the user's system setting.
             // View haptics need no vibration permission and degrade to no effect.
             env.call_method(view, "performHapticFeedback", "(I)Z", &[JValue::Int(1)])?;
+            Ok(())
+        });
+    }
+
+    pub fn storage(&self, app: &AndroidApp, request_access: bool) {
+        self.ui(app, move |env, activity| {
+            let sdk = env
+                .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?
+                .i()?;
+            // Older supported Android releases retain the document-picker route.
+            if sdk < 30 || !cfg!(feature = "storage-scan") {
+                post(Event::ScanUnavailable);
+                return Ok(());
+            }
+            let granted = env
+                .call_static_method(
+                    "android/os/Environment",
+                    "isExternalStorageManager",
+                    "()Z",
+                    &[],
+                )?
+                .z()?;
+            if !granted {
+                if request_access {
+                    let action =
+                        env.new_string("android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION")?;
+                    let intent = env.new_object(
+                        "android/content/Intent",
+                        "(Ljava/lang/String;)V",
+                        &[JValue::Object(&action)],
+                    )?;
+                    let package = env
+                        .call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?
+                        .l()?;
+                    let package: String = env.get_string(&JString::from(package))?.into();
+                    let address = env.new_string(format!("package:{package}"))?;
+                    let uri = env
+                        .call_static_method(
+                            "android/net/Uri",
+                            "parse",
+                            "(Ljava/lang/String;)Landroid/net/Uri;",
+                            &[JValue::Object(&address)],
+                        )?
+                        .l()?;
+                    env.call_method(
+                        &intent,
+                        "setData",
+                        "(Landroid/net/Uri;)Landroid/content/Intent;",
+                        &[JValue::Object(&uri)],
+                    )?;
+                    env.call_method(
+                        activity,
+                        "startActivityForResult",
+                        "(Landroid/content/Intent;I)V",
+                        &[JValue::Object(&intent), JValue::Int(PICK_STORAGE)],
+                    )?;
+                } else {
+                    post(Event::Storage(None));
+                }
+                return Ok(());
+            }
+            let name = env.new_string("storage")?;
+            let manager = env
+                .call_method(
+                    activity,
+                    "getSystemService",
+                    "(Ljava/lang/String;)Ljava/lang/Object;",
+                    &[JValue::Object(&name)],
+                )?
+                .l()?;
+            let volumes = env
+                .call_method(manager, "getStorageVolumes", "()Ljava/util/List;", &[])?
+                .l()?;
+            let count = env.call_method(&volumes, "size", "()I", &[])?.i()?;
+            let mut roots = Vec::new();
+            for i in 0..count.min(64) {
+                let volume = env
+                    .call_method(&volumes, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                    .l()?;
+                let directory = env
+                    .call_method(volume, "getDirectory", "()Ljava/io/File;", &[])?
+                    .l()?;
+                if !directory.is_null() {
+                    let path = env
+                        .call_method(directory, "getAbsolutePath", "()Ljava/lang/String;", &[])?
+                        .l()?;
+                    let path: String = env.get_string(&JString::from(path))?.into();
+                    roots.push(PathBuf::from(path));
+                }
+            }
+            roots.sort();
+            roots.dedup();
+            post(Event::Storage(Some(roots)));
             Ok(())
         });
     }
@@ -280,27 +403,6 @@ impl Platform {
         });
     }
 
-    pub fn notices(&self, app: &AndroidApp, body: String) {
-        self.ui(app,move|env,activity| {
-            let builder=env.new_object("android/app/AlertDialog$Builder","(Landroid/content/Context;)V",&[JValue::Object(activity)])?;
-            let title=env.new_string("Source, licenses and privacy")?;
-            env.call_method(&builder,"setTitle","(Ljava/lang/CharSequence;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(&title)])?;
-            let scroll=env.new_object("android/widget/ScrollView","(Landroid/content/Context;)V",&[JValue::Object(activity)])?;
-            let text=env.new_object("android/widget/TextView","(Landroid/content/Context;)V",&[JValue::Object(activity)])?;
-            let content=env.new_string(body)?;
-            env.call_method(&text,"setAutoLinkMask","(I)V",&[JValue::Int(1)])?;
-            env.call_method(&text,"setText","(Ljava/lang/CharSequence;)V",&[JValue::Object(&content)])?;
-            env.call_method(&text,"setPadding","(IIII)V",&[JValue::Int(32),JValue::Int(16),JValue::Int(32),JValue::Int(24)])?;
-            env.call_method(&scroll,"addView","(Landroid/view/View;)V",&[JValue::Object(&text)])?;
-            env.call_method(&builder,"setView","(Landroid/view/View;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(&scroll)])?;
-            let back=env.new_string("Back")?;
-            env.call_method(&builder,"setPositiveButton","(Ljava/lang/CharSequence;Landroid/content/DialogInterface$OnClickListener;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(&back),JValue::Object(activity)])?;
-            env.call_method(&builder,"setOnCancelListener","(Landroid/content/DialogInterface$OnCancelListener;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(activity)])?;
-            env.call_method(&builder,"show","()Landroid/app/AlertDialog;",&[])?;
-            Ok(())
-        });
-    }
-
     pub fn focus(&self, app: &AndroidApp, want: bool) {
         self.ui(app, move |env, activity| {
             let name = env.new_string("audio")?;
@@ -337,6 +439,33 @@ impl Platform {
     pub fn finish(&self, app: &AndroidApp) {
         self.ui(app, |env, a| {
             env.call_method(a, "finish", "()V", &[])?;
+            Ok(())
+        });
+    }
+
+    pub fn open_source(&self, app: &AndroidApp) {
+        self.ui(app, |env, activity| {
+            let action = env.new_string("android.intent.action.VIEW")?;
+            let address = env.new_string("https://github.com/WigglyDon/psx")?;
+            let uri = env
+                .call_static_method(
+                    "android/net/Uri",
+                    "parse",
+                    "(Ljava/lang/String;)Landroid/net/Uri;",
+                    &[JValue::Object(&address)],
+                )?
+                .l()?;
+            let intent = env.new_object(
+                "android/content/Intent",
+                "(Ljava/lang/String;Landroid/net/Uri;)V",
+                &[JValue::Object(&action), JValue::Object(&uri)],
+            )?;
+            env.call_method(
+                activity,
+                "startActivity",
+                "(Landroid/content/Intent;)V",
+                &[JValue::Object(&intent)],
+            )?;
             Ok(())
         });
     }

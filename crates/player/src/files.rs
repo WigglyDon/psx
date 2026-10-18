@@ -13,6 +13,58 @@ pub struct Game {
     pub id: String,
     pub title: String,
     pub path: PathBuf,
+    #[serde(default)]
+    pub discs: Vec<Disc>,
+    #[serde(default)]
+    pub last_disc: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Disc {
+    pub id: String,
+    pub label: String,
+    pub number: u32,
+    pub path: PathBuf,
+}
+
+impl Game {
+    pub fn disc_list(&self) -> Vec<Disc> {
+        if self.discs.is_empty() {
+            vec![Disc {
+                id: self.id.clone(),
+                label: "Disc 1".into(),
+                number: 1,
+                path: self.path.clone(),
+            }]
+        } else {
+            self.discs.clone()
+        }
+    }
+
+    pub fn launch_path(&self, root: &Path) -> io::Result<PathBuf> {
+        if self.discs.len() < 2 {
+            return Ok(self.path.clone());
+        }
+        let directory = root.join("playlists");
+        fs::create_dir_all(&directory)?;
+        let path = directory.join(format!("{}.m3u", self.id));
+        let mut content = String::new();
+        for disc in &self.discs {
+            let entry = disc
+                .path
+                .to_str()
+                .ok_or_else(|| io::Error::other("This disc path is not valid Unicode."))?;
+            if entry.contains(['\n', '\r']) {
+                return Err(io::Error::other(
+                    "Rename the disc file to remove its line break.",
+                ));
+            }
+            content.push_str(entry);
+            content.push('\n');
+        }
+        atomic_write(&path, content.as_bytes())?;
+        Ok(path)
+    }
 }
 
 pub fn safe_name(name: &str) -> io::Result<&str> {
@@ -133,6 +185,8 @@ pub fn finish_import(
             .to_string_lossy()
             .into_owned(),
         path: directory.join(name),
+        discs: Vec::new(),
+        last_disc: 0,
     })
 }
 
@@ -150,7 +204,7 @@ pub fn remember(root: &Path, game: &Game) -> io::Result<()> {
 
 pub fn recent(root: &Path) -> Option<Game> {
     let game: Game = serde_json::from_slice(&fs::read(root.join("recent.json")).ok()?).ok()?;
-    if game.path.is_file() && game.path.starts_with(root.join("games")) {
+    if game.path.is_file() {
         Some(game)
     } else {
         None

@@ -44,12 +44,21 @@ https://github.com/rust-mobile/android-activity
 
 It is MIT OR Apache-2.0; the build selects the MIT option where offered.
 Other direct Rust dependencies are `ndk` 0.9.0, JNI, khronos-egl, glow,
-android_logger, log, libloading, font8x8, libc, serde/serde_json and sha2.
+android_logger, log, libloading, ab_glyph, libc, serde/serde_json and sha2.
 `Cargo.lock` pins all versions and registry checksums. The packaged
 `assets/notices/INDEX.txt` lists dependency versions, declared license terms
 and source links; retained license files are alongside it. The index also
 includes build-only and other-platform Cargo dependencies for completeness.
 The build retains Rust toolchain and NDK notices for linked runtime material.
+
+## UI typography
+
+Noto Sans Regular is retained unchanged under SIL Open Font License 1.1,
+Copyright 2018 The Noto Project Authors. Its pinned source revision, file
+hash and exact upstream license are in [assets/fonts](assets/fonts/SOURCE.md).
+The same license and source notice are packaged in the APK. The Rust
+`ab_glyph` rasterizer retains its own MIT/Apache notices through the Cargo
+dependency notice collection. These font assets are not original MIT work.
 
 ## Original contributions
 

@@ -68,6 +68,43 @@ claim superiority, broad compatibility or a completion time without evidence.
 
 ## Execution
 
+### Owner additions, 2026-10-18
+
+Complete the native Rust-rendered interface: embedded home/game menus,
+clear errors and source/license pages, an ergonomic full game view, proper
+controller symbols, discrete press haptics, clean sans-serif typography and
+a cog for the app menu. Preserve the game aspect ratio while maximizing its
+view **clear of every control by default**. Controller settings provide a
+preview editor for moving/resizing individual controls and the game picture.
+Tap selects an element, dragging moves it, and dragging a corner grip resizes
+it continuously; retain Save/Cancel behavior. Provide
+an explicit **Allow overlap** toggle (off by default), and reset. Persist
+separate tall, square and wide layouts. Keep this customization behind the
+cog rather than crowding ordinary play. Bluetooth/USB controller support is
+a later addition through the same logical input boundary.
+
+Press/release highlights and transitions into/out of the embedded settings
+should animate smoothly without delaying logical input or haptics. Add game
+icons to the collection using available local metadata, with clear distinct
+placeholders where artwork is unavailable. Keep ordinary navigation small.
+
+Provide a local list of imported games and clear disc selection for
+multi-disc games, including runtime changes through the donor's existing
+disc-control interface. This explicitly extends the original single-recent
+game scope; it is a local file collection, without an online game database.
+
+The primary add flow is **Scan storage**, select discovered games, and retain
+the selection for future play. **Add games** reruns the same scan. Manual
+file/folder navigation is optional. Scan shared storage when the platform
+grants it, and report actual coverage and access limits honestly. Recognize
+supported containers and CUE companions, group disc sets, and distinguish
+candidates, missing files, archives and unsupported inputs. Do not claim
+compatibility from a filename. Preserve a route consistent with store
+requirements; broad Android storage access needs its own Play review basis.
+Use owner-selected private single-disc and multi-disc games for acceptance.
+All private-input rules still apply. Verify collection persistence, starting
+disc selection, runtime swapping, persistent choices and existing card IDs.
+
 Prepare and build without holding the phone. Use the existing stock-device
 procedure and current exclusive operating session before installation/testing.
 Keep game data, proprietary firmware, saved progress, signing material,
@@ -77,9 +114,9 @@ Continue the complete implementation autonomously under this issue. Give
 progress updates at useful milestones and a full handback with commit/build
 identity, reproduction instructions, observed outcomes and remaining limits.
 
-Core redesign, language translation of the core, cloud services, library
-scanning, enhancement menus and a full second platform port are outside this
-first milestone. If a donor integration requires substantial core repair,
+Core redesign, language translation of the core, cloud services, an online
+game database, emulation-enhancement catalogs and a full second platform port
+remain outside this milestone. If a donor integration requires substantial core repair,
 report the concrete blocker and evaluate a narrower integration or donor
 change rather than silently expanding the task.
 
