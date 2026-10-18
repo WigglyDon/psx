@@ -51,8 +51,8 @@ lifecycle changes; input is released and audio is closed on interruption.
 
 Rust Android/NDK bindings and NativeActivity implement the first host.
 The runtime, controls, UI and save/file policies remain Rust. The generated
-callback shim completes the document-picker result path; its actual use
-still requires device evidence.
+callback shim completes the document-picker result path; multiple CUE/BIN
+selection and streaming import have run on the target Fold.
 
 Prefer existing core rendering paths and direct native audio delivery. Avoid
 unnecessary full-frame copies through managed UI and unbounded queues. Use

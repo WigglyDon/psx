@@ -24,14 +24,39 @@ NativeActivity subclass. Exact build dependencies and reproduction are in
   license files, embedded notices, Rust runtime and NDK notices are retained
   in the APK. Source submodule is unchanged.
 
-## Device and store limits
+## First device checkpoint, 2026-10-18
 
-The build checkpoint has no Fold gameplay, audible-sound, simultaneous
-physical-touch, real in-game save/restart, fold transition or sustained-speed
-result yet. The owner selected a private local game; its archive is still
-downloading during preparation. Phone operation requires the current
-stock-device procedure and a fresh exclusive window. No device has been
-operated during this checkpoint.
+The stock Fold is running the development APK. Device testing found and
+corrected three host integration failures: the missing explicit EGL link,
+JNI callback lookup without a class-loader library association, and the
+`ndk` 0.9 wrapper rejecting AAudio's positive buffer-size result. Link-time
+undefined-symbol rejection and an APK EGL-dependency check now cover the
+first failure. Rust layout also accounts for system bars and cutout insets.
+
+- Current local APK SHA-256:
+  `b4744d0304263d624fb04c9e51b56aa7403644d992987916a2ca30e82d8e9ee9`.
+- Installation/update preserves app data. Native menus and the ordinary
+  system document picker work, including multi-select CUE/BIN import.
+- An owner-selected Crash Bandicoot disc boots with the bundled OpenBIOS
+  fallback. The first level renders and responds to direction input.
+- The GLES path is active on the physical GPU through Android's ANGLE
+  driver. Core counters show hardware frames and zero software frames.
+- Initial ten-second windows through boot/title run at 59.61–59.74 fps,
+  99.7–99.9% of the core's 59.8173 Hz, with 3.25–3.84 ms average core time.
+  This is an initial observation, not a sustained-gameplay result.
+- AAudio opens at 44.1 kHz stereo, 89-frame bursts, 267-frame device buffer.
+  The owner confirms clear audible game sound. Initial buffering dropped
+  787 frames; 44 callback underruns were counted over the first 50 seconds.
+  Counters and audible quality are separate observations.
+- Android ARM64 Clippy and formatting pass after these fixes. Signature,
+  ZIP/ELF alignment and required-entry checks pass on the updated APK.
+
+Simultaneous physical touch, real in-game save/restart, fold transitions,
+interruption behavior and a bounded gameplay-speed observation remain under
+test. The phone remains in the explicitly authorized task-wide session.
+Games, saved progress, identifiers, raw logs and captures remain private.
+
+## Store limits
 
 16 KB alignment is verified; 16 KB runtime/performance is not. Physical
 stock-iOS non-JIT gameplay/audio and this application's combined App Store

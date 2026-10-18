@@ -21,6 +21,7 @@ pub enum Event {
     Documents(i32, Option<GlobalRef>),
     Focus(i32),
     Error(String),
+    Insets([i32; 4]),
 }
 static EVENTS: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
 fn post(event: Event) {
@@ -156,6 +157,63 @@ impl Platform {
             env.call_method(&builder,"setItems","([Ljava/lang/CharSequence;Landroid/content/DialogInterface$OnClickListener;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(&array),JValue::Object(activity)])?;
             env.call_method(&builder,"setOnCancelListener","(Landroid/content/DialogInterface$OnCancelListener;)Landroid/app/AlertDialog$Builder;",&[JValue::Object(activity)])?;
             env.call_method(&builder,"show","()Landroid/app/AlertDialog;",&[])?;
+            Ok(())
+        });
+    }
+
+    pub fn insets(&self, app: &AndroidApp) {
+        self.ui(app, |env, activity| {
+            let window = env
+                .call_method(activity, "getWindow", "()Landroid/view/Window;", &[])?
+                .l()?;
+            let view = env
+                .call_method(window, "getDecorView", "()Landroid/view/View;", &[])?
+                .l()?;
+            let insets = env
+                .call_method(
+                    view,
+                    "getRootWindowInsets",
+                    "()Landroid/view/WindowInsets;",
+                    &[],
+                )?
+                .l()?;
+            if insets.is_null() {
+                return Ok(());
+            }
+            let mut edges = [0; 4];
+            for (i, name) in [
+                "getSystemWindowInsetLeft",
+                "getSystemWindowInsetTop",
+                "getSystemWindowInsetRight",
+                "getSystemWindowInsetBottom",
+            ]
+            .iter()
+            .enumerate()
+            {
+                edges[i] = env.call_method(&insets, name, "()I", &[])?.i()?;
+            }
+            let cutout = env
+                .call_method(
+                    &insets,
+                    "getDisplayCutout",
+                    "()Landroid/view/DisplayCutout;",
+                    &[],
+                )?
+                .l()?;
+            if !cutout.is_null() {
+                for (i, name) in [
+                    "getSafeInsetLeft",
+                    "getSafeInsetTop",
+                    "getSafeInsetRight",
+                    "getSafeInsetBottom",
+                ]
+                .iter()
+                .enumerate()
+                {
+                    edges[i] = edges[i].max(env.call_method(&cutout, name, "()I", &[])?.i()?);
+                }
+            }
+            post(Event::Insets(edges));
             Ok(())
         });
     }

@@ -6,9 +6,11 @@ A small native PlayStation 1 player from Machine Rhythm.
 
 ## Status
 
-The Rust Android host and pinned SwanStation core build into a development
-APK. Host tests and ARM64/signature/16 KB alignment checks pass; device
-gameplay, sound and restart saving have not yet been qualified.
+The Rust Android host launches an owner-selected Crash Bandicoot disc on a
+stock Fold through the system picker, with hardware-rendered gameplay and
+owner-confirmed clear audio. Host tests and ARM64/signature/16 KB alignment
+checks pass. Save/restart, simultaneous touch and fold/lifecycle acceptance
+are still being checked; see [observations](docs/verification.md).
 The first implementation target is a stock Android foldable.
 The product is intended for eventual Google Play and Apple App Store release.
 Store acceptance and iOS performance have not been established.

@@ -202,6 +202,7 @@ public final class PsxActivity extends android.app.NativeActivity implements
  android.content.DialogInterface.OnClickListener,
  android.content.DialogInterface.OnCancelListener,
  android.media.AudioManager.OnAudioFocusChangeListener {
+ static { System.loadLibrary("psx"); }
  private native void documentResult(int request, int result, android.content.Intent data);
  private native void dialogResult(int index);
  private native void dialogCancel();
@@ -371,6 +372,9 @@ fn verify_apk() -> Result<()> {
         let headers = output(&mut command(&readelf, ["-h", "-lW", "-d", &path]))?;
         if !headers.contains("AArch64") {
             return Err(format!("Wrong ABI in {name}").into());
+        }
+        if name == "libpsx.so" && !headers.contains("Shared library: [libEGL.so]") {
+            return Err("The Rust host must declare its Android EGL dependency.".into());
         }
         for line in headers
             .lines()

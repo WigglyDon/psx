@@ -52,7 +52,19 @@ callbacks are Java virtual methods/interfaces. The build generates one small
 `PsxActivity` class, extending NativeActivity and forwarding those signatures
 to exported Rust JNI functions. It contains no picker, UI, file, save, input,
 audio or emulation policy. All those decisions and SDK calls are Rust.
+Its static `System.loadLibrary("psx")` associates the native library with the
+class loader so Java can resolve those exported callbacks; NativeActivity's
+own native loading does not establish that JNI association.
 This is the minimal platform callback exception allowed by `AGENTS.md`.
+
+The host explicitly links EGL and rejects unresolved native symbols at link
+time. APK verification also checks its `libEGL.so` dependency. The Android
+adapter accounts for system bars and display-cutout insets in its Rust layout.
+
+The pinned `ndk` 0.9 audio wrapper reports positive buffer-size results as
+errors. The Rust adapter accepts that API's positive actual frame count,
+while retaining negative failures, matching the
+[AAudio contract](https://developer.android.com/ndk/reference/group/audio).
 
 ## Device verification
 

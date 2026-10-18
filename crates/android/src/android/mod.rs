@@ -47,6 +47,7 @@ struct Player {
     touches: Touches,
     layout: Layout,
     density: f32,
+    insets: [i32; 4],
     menu: bool,
     notice: bool,
     picker: bool,
@@ -77,7 +78,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     let mut player=Player {
         recent:files::recent(&root),root,platform,graphics,
         core:None,card:None,game:None,queue:Arc::new(AudioQueue::new(4096)),sound:None,
-        activity:Activity::default(),touches:Touches::default(),layout:Layout::new(360.,800.),density:1.,
+        activity:Activity::default(),touches:Touches::default(),layout:Layout::new(360.,800.),density:1.,insets:[0;4],
         menu:false,notice:false,picker:false,actions:Vec::new(),import:None,
         message:"Open a local PS1 game. Select one CUE with all its BIN tracks, or a CHD, PBP, ISO or PS-EXE.".into(),
         destroyed:false,dirty:true,next_frame:now,last_flush:now,last_report:now,frames:0,run_time:Duration::ZERO,
@@ -187,6 +188,7 @@ impl Player {
                 }
                 self.activity.surface = true;
                 self.resize(app)?;
+                self.platform.insets(app);
             }
             MainEvent::TerminateWindow { .. } => {
                 self.interrupt()?;
@@ -199,9 +201,11 @@ impl Player {
             | MainEvent::InsetsChanged { .. } => {
                 self.touches.cancel();
                 self.resize(app)?;
+                self.platform.insets(app);
             }
             MainEvent::GainedFocus => {
                 self.activity.focused = true;
+                self.platform.insets(app);
             }
             MainEvent::LostFocus => {
                 self.activity.focused = false;
@@ -234,8 +238,22 @@ impl Player {
     fn resize(&mut self, app: &AndroidApp) -> Result<(), String> {
         self.graphics.resize()?;
         let content = app.content_rect();
-        self.graphics
-            .content_rect(content.left, content.top, content.right, content.bottom);
+        let right = if content.right > 0 {
+            content.right
+        } else {
+            self.graphics.width
+        };
+        let bottom = if content.bottom > 0 {
+            content.bottom
+        } else {
+            self.graphics.height
+        };
+        self.graphics.content_rect(
+            content.left.max(self.insets[0]),
+            content.top.max(self.insets[1]),
+            right.min(self.graphics.width - self.insets[2]),
+            bottom.min(self.graphics.height - self.insets[3]),
+        );
         self.density = app
             .config()
             .density()
@@ -392,6 +410,15 @@ impl Player {
                 self.picker = false;
                 self.menu = false;
                 self.fail(error);
+            }
+            Event::Insets(edges) => {
+                if edges != self.insets {
+                    self.insets = edges;
+                    self.touches.cancel();
+                    if let Err(error) = self.resize(app) {
+                        self.fail(error);
+                    }
+                }
             }
         }
     }
