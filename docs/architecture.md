@@ -145,7 +145,9 @@ Audio-focus denial before the first frame leaves the play controls visible
 with an interruption message. Play retries focus; it never overrides another
 app's audio ownership. Android's reported
 [system-bar insets](https://developer.android.com/reference/android/view/WindowInsets#getInsets(int))
-determine toolbar placement.
+and [status-bar visibility](https://developer.android.com/reference/android/view/WindowInsets#isVisible(int))
+determine toolbar placement, including transient bars that do not resize the
+content area.
 
 The controller editor selects elements by tap, moves them by dragging, and
 resizes them through corner grips, keeping the opposite corner anchored.

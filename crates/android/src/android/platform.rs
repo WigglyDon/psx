@@ -336,7 +336,15 @@ impl Platform {
                         &[JValue::Int(bars)],
                     )?
                     .l()?;
-                env.get_field(occupied, "top", "I")?.i()? == 0
+                let status = env
+                    .call_static_method("android/view/WindowInsets$Type", "statusBars", "()I", &[])?
+                    .i()?;
+                let status_visible = env
+                    .call_method(&insets, "isVisible", "(I)Z", &[JValue::Int(status)])?
+                    .z()?;
+                // Transient bars can be visible without contributing layout
+                // insets. Query status-bar visibility separately as well.
+                !status_visible && env.get_field(occupied, "top", "I")?.i()? == 0
             } else {
                 // API 28–29 keep the toolbar inside the safe content area.
                 false
