@@ -46,6 +46,7 @@ enum Action {
     Discs,
     Controllers,
     ToggleOverlap,
+    ToggleFollowThumb,
     EditControls,
     ResetControls,
     SaveControls,
@@ -289,6 +290,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             player.touches.mask(),
             player.menu.is_some() || player.editor.is_some(),
             animated_icons,
+            player.touches.dpad_feedback(),
         );
         player.last_visual = now;
         player.dirty |= player.visual_animating;
@@ -545,6 +547,11 @@ impl Player {
                             .touches
                             .release(motion.pointer_at_index(motion.pointer_index()).pointer_id()),
                         MotionAction::Down | MotionAction::PointerDown | MotionAction::Move => {
+                            let new_pointer = matches!(
+                                motion.action(),
+                                MotionAction::Down | MotionAction::PointerDown
+                            )
+                            .then(|| motion.pointer_at_index(motion.pointer_index()).pointer_id());
                             for pointer in motion.pointers() {
                                 let x = (pointer.x() - self.graphics.content.x) / self.density;
                                 let y = (pointer.y() - self.graphics.content.y) / self.density;
@@ -555,9 +562,23 @@ impl Player {
                                     action = Some(Action::Settings);
                                     feedback = true;
                                 } else if self.activity.can_run() {
-                                    let pressed = self
-                                        .touches
-                                        .update(pointer.pointer_id(), self.layout.mask_at(x, y));
+                                    let pressed = if new_pointer == Some(pointer.pointer_id()) {
+                                        let (w, h) = self.dimensions();
+                                        self.touches.down(
+                                            pointer.pointer_id(),
+                                            x,
+                                            y,
+                                            &self.layout,
+                                            self.controller_settings.preset(w, h).follow_thumb,
+                                        )
+                                    } else {
+                                        self.touches.motion(
+                                            pointer.pointer_id(),
+                                            x,
+                                            y,
+                                            &self.layout,
+                                        )
+                                    };
                                     self.visuals.trigger(pressed);
                                     feedback |= pressed != 0;
                                 }
@@ -801,6 +822,17 @@ impl Player {
                 }
             }
             Action::Controllers => self.navigate(app, Screen::Controllers),
+            Action::ToggleFollowThumb => {
+                let (w, h) = self.dimensions();
+                let mut preset = self.controller_settings.preset(w, h);
+                preset.follow_thumb = !preset.follow_thumb;
+                self.controller_settings.set(w, h, preset);
+                self.controller_settings
+                    .save(&self.root)
+                    .map_err(|e| e.to_string())?;
+                self.resize(app)?;
+                self.refresh_menu(app);
+            }
             Action::ToggleOverlap => {
                 let (w, h) = self.dimensions();
                 let mut preset = self.controller_settings.preset(w, h);
@@ -1114,6 +1146,15 @@ impl Player {
                     "Tap to select; drag elements or their corner grips".into(),
                 );
                 add(
+                    Action::ToggleFollowThumb,
+                    "Follow thumb".into(),
+                    if preset.follow_thumb {
+                        "D-pad center follows your thumb; lift to release".into()
+                    } else {
+                        "Fixed center; keeps tracking until you lift".into()
+                    },
+                );
+                add(
                     Action::ToggleOverlap,
                     "Allow overlap".into(),
                     if preset.allow_overlap {
@@ -1126,7 +1167,7 @@ impl Player {
                     add(
                         Action::ResetControls,
                         "Reset to defaults".into(),
-                        "Restore this display's whole layout".into(),
+                        "Restore this display's controls and layout".into(),
                     );
                 }
                 (
@@ -1209,9 +1250,13 @@ impl Player {
         menu.home = self.screen == Screen::Home;
         menu.settings = menu.home.then_some(self.library.games.len());
         if self.screen == Screen::Controllers {
+            let (w, h) = self.dimensions();
+            let preset = self.controller_settings.preset(w, h);
             if let Some(row) = menu.rows.get_mut(1) {
-                let (w, h) = self.dimensions();
-                row.toggle = Some(self.controller_settings.preset(w, h).allow_overlap);
+                row.toggle = Some(preset.follow_thumb);
+            }
+            if let Some(row) = menu.rows.get_mut(2) {
+                row.toggle = Some(preset.allow_overlap);
             }
         }
         menu.description_lines = self

@@ -6,7 +6,7 @@ use psx_player::{
     artwork::Artwork,
     input::{Layout, Rect},
     retro::ProcAddress,
-    ui::{Editor, Menu, Row, Visuals},
+    ui::{DpadVisual, Editor, Menu, Row, Visuals},
 };
 use std::ffi::{c_char, CStr};
 use text::Text;
@@ -333,7 +333,7 @@ impl Graphics {
         };
         if frame.is_some() && editor.is_none() && visuals.overlay < 1. {
             canvas.opacity = 1. - visuals.overlay;
-            canvas.dpad(layout.dpad, &visuals.presses);
+            canvas.dpad(layout.dpad, &visuals.presses, &visuals.dpad);
             for c in &layout.controls {
                 canvas.button(
                     c.bounds,
@@ -480,7 +480,11 @@ impl Canvas<'_> {
                 [0.7, 0.89, 0.91, 1.],
             );
         }
-        self.dpad(editor.map(editor.layout.dpad), &[0.; 16]);
+        self.dpad(
+            editor.map(editor.layout.dpad),
+            &[0.; 16],
+            &DpadVisual::default(),
+        );
         for c in &editor.layout.controls {
             self.button(editor.map(c.bounds), c.label, 0.);
         }
@@ -837,10 +841,23 @@ impl Canvas<'_> {
         });
         self.polygon(&points, c);
     }
-    fn dpad(&mut self, r: Rect, presses: &[f32; 16]) {
-        let x = r.x + r.w / 2.;
-        let y = r.y + r.h / 2.;
-        let radius = r.w / 2.;
+    fn dpad(&mut self, r: Rect, presses: &[f32; 16], movement: &DpadVisual) {
+        let well_radius = r.w.min(r.h) / 2.;
+        let radius = well_radius * (1. - 0.28 * movement.active);
+        let inset = well_radius - radius;
+        let x = r.x + r.w / 2. + movement.center[0] * inset;
+        let y = r.y + r.h / 2. + movement.center[1] * inset;
+        // Both the following base and thumb marker stay inside the reserved
+        // control well, even when the captured finger drifts over the picture.
+        if movement.active > 0. {
+            self.ring(
+                r.x + r.w / 2.,
+                r.y + r.h / 2.,
+                well_radius - 1.,
+                1.,
+                [0.85, 0.93, 1., 0.12 * movement.active],
+            );
+        }
         self.disc(x, y, radius, [0.025, 0.04, 0.06, 0.38]);
         self.ring(x, y, radius - 1., 1., [0.85, 0.93, 1., 0.28]);
         let arm = radius * 0.91;
@@ -880,6 +897,14 @@ impl Canvas<'_> {
             self.line((base.0 + dy * 7., base.1 - dx * 7.), tip, 2.5, color);
         }
         self.disc(x, y, radius * 0.08, [0.85, 0.93, 1., 0.25]);
+        if movement.active > 0. {
+            self.disc(
+                x + movement.offset[0] * radius * 0.48,
+                y + movement.offset[1] * radius * 0.48,
+                radius * 0.20,
+                [0.34, 0.88, 0.76, 0.65 * movement.active],
+            );
+        }
     }
     fn text(&mut self, mut x: f32, y: f32, text: &str, size: f32, c: [f32; 4]) {
         let scale = Text::scale(size);

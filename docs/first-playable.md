@@ -87,6 +87,12 @@ separate tall, square and wide layouts. Keep this customization behind the
 cog rather than crowding ordinary play. Bluetooth/USB controller support is
 a later addition through the same logical input boundary.
 
+Track a captured D-pad finger until lift or interruption even outside its
+visible area. Let its center follow thumb drift by default, with a neutral
+zone, stable eight-way directions and a fixed-center option. Preserve direct
+direction taps and independent face-button fingers. Animate the thumb/base
+within the reserved control space, keeping the default picture unobstructed.
+
 Press/release highlights and transitions into/out of the embedded settings
 should animate smoothly without delaying logical input or haptics. Add game
 icons to the collection using available local metadata, with clear distinct

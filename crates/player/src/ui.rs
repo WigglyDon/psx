@@ -1,6 +1,6 @@
 //! Small native menu model. No platform handles or emulation ownership.
 use crate::artwork::Artwork;
-use crate::input::{Layout, Preset, Rect};
+use crate::input::{DpadFeedback, Layout, Preset, Rect};
 
 pub const ROW_HEIGHT: f32 = 72.;
 
@@ -22,7 +22,15 @@ pub struct Visuals {
     pub presses: [f32; 16],
     pub overlay: f32,
     pub time: f64,
+    pub dpad: DpadVisual,
     pulses: [f32; 16],
+}
+
+#[derive(Default)]
+pub struct DpadVisual {
+    pub active: f32,
+    pub center: [f32; 2],
+    pub offset: [f32; 2],
 }
 impl Visuals {
     pub fn trigger(&mut self, pressed: u16) {
@@ -32,11 +40,29 @@ impl Visuals {
             }
         }
     }
-    pub fn advance(&mut self, dt: f32, buttons: u16, menu: bool, animated_icons: bool) -> bool {
+    pub fn advance(
+        &mut self,
+        dt: f32,
+        buttons: u16,
+        menu: bool,
+        animated_icons: bool,
+        dpad: Option<DpadFeedback>,
+    ) -> bool {
         let dt = dt.clamp(0., 0.1);
         let previous_icon_frames = ((self.time / 0.32) as u64, (self.time / 0.22) as u64);
         self.time += dt as f64;
         let mut active = false;
+        active |= approach(
+            &mut self.dpad.active,
+            if dpad.is_some() { 1. } else { 0. },
+            dt,
+            0.055,
+        );
+        let dpad = dpad.unwrap_or_default();
+        for i in 0..2 {
+            active |= approach(&mut self.dpad.center[i], dpad.center[i], dt, 0.035);
+            active |= approach(&mut self.dpad.offset[i], dpad.offset[i], dt, 0.025);
+        }
         for (i, value) in self.presses.iter_mut().enumerate() {
             let target = if buttons & (1 << i) != 0 || self.pulses[i] > 0. {
                 1.
@@ -69,17 +95,38 @@ mod animation_tests {
     #[test]
     fn press_and_menu_fades_reverse_without_jumping() {
         let mut visual = Visuals::default();
-        assert!(visual.advance(0.016, 1, true, false));
+        assert!(visual.advance(0.016, 1, true, false, None));
         assert!(visual.presses[0] > 0. && visual.presses[0] < 1.);
         assert!(visual.overlay > 0. && visual.overlay < 1.);
         let pressed = visual.presses[0];
-        visual.advance(0.016, 0, false, false);
+        visual.advance(0.016, 0, false, false, None);
         assert!(visual.presses[0] < pressed && visual.presses[0] > 0.);
         for _ in 0..60 {
-            visual.advance(0.016, 0, false, false);
+            visual.advance(0.016, 0, false, false, None);
         }
         assert_eq!(visual.presses[0], 0.);
         assert_eq!(visual.overlay, 0.);
+    }
+
+    #[test]
+    fn captured_thumb_visuals_settle_smoothly_after_release() {
+        let mut visual = Visuals::default();
+        let feedback = DpadFeedback {
+            center: [1., -1.],
+            offset: [0.7, -0.7],
+        };
+        visual.advance(0.016, 144, false, false, Some(feedback));
+        assert!(visual.dpad.active > 0. && visual.dpad.active < 1.);
+        assert!(visual.dpad.center[0] > 0. && visual.dpad.center[0] < 1.);
+        let offset = visual.dpad.offset[0];
+        visual.advance(0.016, 0, false, false, None);
+        assert!(visual.dpad.offset[0] > 0. && visual.dpad.offset[0] < offset);
+        for _ in 0..60 {
+            visual.advance(0.016, 0, false, false, None);
+        }
+        assert_eq!(visual.dpad.active, 0.);
+        assert_eq!(visual.dpad.center, [0., 0.]);
+        assert_eq!(visual.dpad.offset, [0., 0.]);
     }
 }
 

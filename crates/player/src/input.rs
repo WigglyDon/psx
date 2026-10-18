@@ -227,6 +227,8 @@ fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Preset {
     pub allow_overlap: bool,
+    #[serde(default = "enabled")]
+    pub follow_thumb: bool,
     pub elements: Vec<Rect>,
     pub game_scale: f32,
     pub game_offset: [f32; 2],
@@ -235,6 +237,7 @@ impl Default for Preset {
     fn default() -> Self {
         Self {
             allow_overlap: false,
+            follow_thumb: true,
             elements: Vec::new(),
             game_scale: 1.,
             game_offset: [0.5, 0.5],
@@ -246,6 +249,7 @@ impl Preset {
         let layout = self.layout(w, h);
         let defaults = Layout::new(w, h);
         !self.allow_overlap
+            && self.follow_thumb
             && layout.game.same_bounds(defaults.game)
             && (0..layout.element_count())
                 .all(|i| layout.element(i).same_bounds(defaults.element(i)))
@@ -283,6 +287,10 @@ impl Preset {
             })
             .collect();
     }
+}
+
+fn enabled() -> bool {
+    true
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -324,8 +332,124 @@ impl ControllerSettings {
 pub struct Touches {
     held: BTreeMap<i32, u16>,
     pending: u16,
+    dpad: Option<DpadGesture>,
 }
+
+const DIRECTIONS: u16 = (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7);
+
+#[derive(Clone, Copy, Default)]
+pub struct DpadFeedback {
+    pub center: [f32; 2],
+    pub offset: [f32; 2],
+}
+
+struct DpadGesture {
+    pointer: i32,
+    bounds: Rect,
+    origin: [f32; 2],
+    finger: [f32; 2],
+    follow: bool,
+    mask: u16,
+}
+impl DpadGesture {
+    fn track(&mut self, x: f32, y: f32, moving: bool) -> u16 {
+        let travel = self.bounds.w.min(self.bounds.h) * 0.32;
+        let mut dx = x - self.origin[0];
+        let mut dy = y - self.origin[1];
+        let distance = dx.hypot(dy);
+        // Keep ordinary taps on the drawn arrows. Once the thumb moves beyond
+        // its travel, the logical center follows it instead of losing input.
+        if moving && self.follow && distance > travel {
+            let scale = travel / distance;
+            dx *= scale;
+            dy *= scale;
+            self.origin = [x - dx, y - dy];
+        }
+        self.finger = [x, y];
+        let dead_zone = self.bounds.w.min(self.bounds.h) * 0.09;
+        let threshold = if self.mask == 0 {
+            dead_zone
+        } else {
+            dead_zone * 0.75
+        };
+        self.mask = if dx.hypot(dy) <= threshold {
+            0
+        } else {
+            // Five degrees of angular hysteresis keeps a near-diagonal thumb
+            // from chattering between directions (and repeating haptics).
+            let angle = dy.atan2(dx);
+            let sector = std::f32::consts::FRAC_PI_4;
+            let masks = [128, 160, 32, 96, 64, 80, 16, 144];
+            let previous = masks.iter().position(|&mask| mask == self.mask);
+            let keep = previous.is_some_and(|index| {
+                let delta = (angle - index as f32 * sector + std::f32::consts::PI)
+                    .rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
+                delta.abs() <= sector / 2. + 5_f32.to_radians()
+            });
+            if keep {
+                self.mask
+            } else {
+                masks[(angle / sector).round().rem_euclid(8.) as usize]
+            }
+        };
+        self.mask
+    }
+
+    fn feedback(&self) -> DpadFeedback {
+        let radius = self.bounds.w.min(self.bounds.h) * 0.32;
+        let dx = self.finger[0] - self.origin[0];
+        let dy = self.finger[1] - self.origin[1];
+        let scale = radius.max(dx.hypot(dy));
+        DpadFeedback {
+            center: [
+                ((self.origin[0] - self.bounds.x - self.bounds.w / 2.) / radius).clamp(-1., 1.),
+                ((self.origin[1] - self.bounds.y - self.bounds.h / 2.) / radius).clamp(-1., 1.),
+            ],
+            offset: [dx / scale, dy / scale],
+        }
+    }
+}
+
 impl Touches {
+    pub fn down(&mut self, id: i32, x: f32, y: f32, layout: &Layout, follow: bool) -> u16 {
+        if self.dpad.is_none() && layout.dpad.contains(x, y) {
+            let bounds = layout.dpad;
+            let mut gesture = DpadGesture {
+                pointer: id,
+                bounds,
+                origin: [bounds.x + bounds.w / 2., bounds.y + bounds.h / 2.],
+                finger: [x, y],
+                follow,
+                mask: 0,
+            };
+            let mask = gesture.track(x, y, false);
+            self.dpad = Some(gesture);
+            self.pending &= !DIRECTIONS;
+            self.update(id, mask)
+        } else {
+            self.motion(id, x, y, layout)
+        }
+    }
+
+    pub fn motion(&mut self, id: i32, x: f32, y: f32, layout: &Layout) -> u16 {
+        let mask = if let Some(gesture) = self.dpad.as_mut().filter(|g| g.pointer == id) {
+            // Direction is a current vector. Keep fast face-button taps, but
+            // never latch opposing directions from two moves in one frame.
+            self.pending &= !DIRECTIONS;
+            gesture.track(x, y, true)
+        } else {
+            // A captured direction finger cannot become a face-button press;
+            // other fingers remain independent and cannot steal the D-pad.
+            layout.mask_at(x, y) & !DIRECTIONS
+        };
+        self.update(id, mask)
+    }
+
+    pub fn dpad_feedback(&self) -> Option<DpadFeedback> {
+        self.dpad.as_ref().map(DpadGesture::feedback)
+    }
+
     /// Newly pressed controls across all fingers, suitable for a brief haptic.
     /// Motion within a held control and a second finger on it do not repeat.
     pub fn update(&mut self, id: i32, mask: u16) -> u16 {
@@ -337,10 +461,14 @@ impl Touches {
     }
     pub fn release(&mut self, id: i32) {
         self.held.remove(&id);
+        if self.dpad.as_ref().is_some_and(|g| g.pointer == id) {
+            self.dpad = None;
+        }
     }
     pub fn cancel(&mut self) {
         self.held.clear();
         self.pending = 0;
+        self.dpad = None;
     }
     pub fn mask(&self) -> u16 {
         self.held.values().fold(0, |a, b| a | b)
@@ -355,6 +483,110 @@ impl Touches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn captured_dpad_survives_leaving_the_well_and_releases_independently() {
+        let layout = Layout::new(852., 817.);
+        let r = layout.dpad;
+        let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+        let mut touches = Touches::default();
+        assert_eq!(touches.down(1, x + r.w * 0.3, y, &layout, true), 1 << 7);
+        assert_eq!(touches.motion(1, r.x + r.w + 100., y, &layout), 0);
+        assert_eq!(touches.mask(), 1 << 7);
+        let cross = layout.controls.iter().find(|c| c.mask == 1).unwrap().bounds;
+        let (bx, by) = (cross.x + cross.w / 2., cross.y + cross.h / 2.);
+        assert_eq!(touches.down(2, bx, by, &layout, true), 1);
+        touches.motion(1, bx, by, &layout);
+        touches.release(2);
+        assert_eq!(touches.mask() & 1, 0); // direction finger cannot become Cross
+        assert_ne!(touches.mask() & DIRECTIONS, 0);
+        touches.release(1);
+        assert_eq!(touches.mask(), 0);
+        assert!(touches.dpad_feedback().is_none());
+        touches.down(1, x, y, &layout, true);
+        touches.motion(1, x + 100., y, &layout);
+        touches.cancel();
+        assert_eq!(touches.frame_mask(), 0);
+        assert!(touches.dpad_feedback().is_none());
+    }
+
+    #[test]
+    fn following_center_allows_reversing_after_thumb_drift() {
+        let layout = Layout::new(852., 817.);
+        let r = layout.dpad;
+        let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+        for follow in [true, false] {
+            let mut touches = Touches::default();
+            touches.down(1, x, y, &layout, follow);
+            touches.motion(1, x + 300., y, &layout);
+            assert_eq!(touches.mask(), 1 << 7);
+            touches.motion(1, x + 200., y, &layout);
+            assert_eq!(touches.mask(), 1 << if follow { 6 } else { 7 });
+            let feedback = touches.dpad_feedback().unwrap();
+            assert_eq!(feedback.center[0] > 0., follow);
+            assert!(feedback.offset[0].abs() <= 1.);
+            // Another finger cannot take over the captured direction gesture.
+            touches.down(2, x - 50., y, &layout, follow);
+            assert_eq!(touches.mask(), 1 << if follow { 6 } else { 7 });
+        }
+    }
+
+    #[test]
+    fn fast_direction_changes_do_not_latch_opposites_in_one_guest_frame() {
+        let layout = Layout::new(852., 817.);
+        let r = layout.dpad;
+        let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+        let mut touches = Touches::default();
+        touches.down(1, x + 50., y, &layout, false);
+        touches.update(2, 1);
+        touches.release(2);
+        touches.motion(1, x - 50., y, &layout);
+        assert_eq!(touches.frame_mask(), (1 << 6) | 1);
+        assert_eq!(touches.frame_mask(), 1 << 6);
+        touches.motion(1, x, y, &layout);
+        assert_eq!(touches.frame_mask(), 0);
+    }
+
+    #[test]
+    fn dpad_dead_zone_and_direction_boundaries_have_hysteresis() {
+        let layout = Layout::new(852., 817.);
+        let r = layout.dpad;
+        let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+        let mut touches = Touches::default();
+        touches.down(1, x, y, &layout, true);
+        for (degrees, expected) in [
+            (20_f32, 128),
+            (24., 128),
+            (31., 160),
+            (24., 160),
+            (16., 128),
+        ] {
+            let angle = degrees.to_radians();
+            touches.motion(1, x + angle.cos() * 50., y + angle.sin() * 50., &layout);
+            assert_eq!(touches.mask(), expected);
+        }
+        for (distance, expected) in [(19., 128), (16., 128), (12., 0), (16., 0), (19., 128)] {
+            touches.motion(1, x + distance, y, &layout);
+            assert_eq!(touches.mask(), expected);
+        }
+    }
+
+    #[test]
+    fn existing_layouts_gain_following_without_losing_customization() {
+        let mut preset = Preset::default();
+        let mut layout = preset.layout(852., 817.);
+        layout.dpad.x += 25.;
+        preset.capture(&layout, 852., 817.);
+        let mut old = serde_json::to_value(&preset).unwrap();
+        old.as_object_mut().unwrap().remove("follow_thumb");
+        let restored: Preset = serde_json::from_value(old).unwrap();
+        assert!(restored.follow_thumb);
+        assert!(restored.layout(852., 817.).dpad.same_bounds(layout.dpad));
+        let mut fixed = Preset::default();
+        assert!(fixed.is_default(852., 817.));
+        fixed.follow_thumb = false;
+        assert!(!fixed.is_default(852., 817.));
+    }
+
     #[test]
     fn game_is_clear_of_controls_and_targets_stay_reachable() {
         for (w, h) in [

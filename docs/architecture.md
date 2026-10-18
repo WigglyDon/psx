@@ -127,6 +127,15 @@ resizes them through corner grips, keeping the opposite corner anchored.
 The game picture keeps its aspect ratio. Reset appears only for a changed
 selection and restores that element's draft until Done; Cancel discards it.
 Controller settings offer a whole-layout reset only for a changed profile.
+The D-pad captures its first finger until lift or cancellation, including
+outside its visible bounds. Follow thumb is enabled by default: its logical
+center follows overtravel, with a small neutral zone and directional
+hysteresis. Direct taps on the arrows still work. A fixed-center option
+also retains capture. Other fingers cannot steal that gesture or turn it
+into a face-button press. The following visual base and thumb marker ease
+back on release and stay inside the reserved control well. This continues
+to send eight-way digital PS1 input; analog and external controllers remain
+later work.
 An explicit overlap option remains there. Tall, square and wide
 profiles are persisted in logical coordinates. A display change cancels an
 unfinished edit; committed profiles survive it. Bluetooth/USB controllers
