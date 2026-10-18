@@ -116,12 +116,28 @@ Do not let an old save state silently roll back newer memory-card progress.
 
 ## Everyday use
 
-The first screen offers saved games and Add games. The cog opens embedded
-settings and pauses the session. Embedded navigation uses compact mobile
-app bars, back arrows, grouped rows and explicit switches. The library's
+The first screen offers saved games and Add games. During play the cog opens
+a native settings sheet over the running game; opening it releases input
+without changing pause intent. Pause/play and speed have separate controls.
+Tapping outside a sheet dismisses it after lift, without passing that touch
+through to the game. Embedded navigation uses compact console panels,
+framed highlights, small headers and explicit on/off indicators. The library's
 Add and Settings icons live in its app bar; primary actions stay distinct
 from back navigation. Controls occupy separate space by default;
 the largest clear 4:3 picture is computed from their rectangular targets.
+The default layout compares arrangements at the actual window dimensions.
+On a sufficiently wide square display, shoulders and system buttons occupy
+the space between thumb clusters. The dock adjusts its height while retaining
+face-button sizes and directional response. Wide phone layouts use side rails,
+including their system buttons, so a bottom row does not constrain picture
+height. The small pause/play, speed, volume and settings toolbar uses a clear
+part of an already excluded top margin when available, avoiding the actual
+camera cutout rectangles. This recovers picture space without placing touch
+targets over the game. Devices without that space reserve it in the controller
+rails or above the picture. Custom toolbar placement is retained. Android requests `fullUser`
+orientation: all four rotations when
+the user permits rotation, respecting their rotation lock.
+[Android orientation contract](https://developer.android.com/guide/topics/manifest/activity-element#screen)
 The controller editor selects elements by tap, moves them by dragging, and
 resizes them through corner grips, keeping the opposite corner anchored.
 The game picture keeps its aspect ratio. Reset appears only for a changed
@@ -132,10 +148,15 @@ outside its visible bounds. Follow thumb is enabled by default: its logical
 center follows overtravel, with a small neutral zone and directional
 hysteresis. Direct taps on the arrows still work. A fixed-center option
 also retains capture. Other fingers cannot steal that gesture or turn it
-into a face-button press. The following visual base and thumb marker ease
+into a face-button press. The cross-shaped visual base and thumb marker ease
 back on release and stay inside the reserved control well. This continues
 to send eight-way digital PS1 input; analog and external controllers remain
 later work.
+Face buttons have square touch targets and a small margin in otherwise
+unused control space. Nearest-button selection and a small preference for
+the held button reduce misses and boundary chatter. Forgiveness does not
+claim the game picture, the D-pad or another control. Independent fingers
+still allow button combinations.
 An explicit overlap option remains there. Tall, square and wide
 profiles are persisted in logical coordinates. A display change cancels an
 unfinished edit; committed profiles survive it. Bluetooth/USB controllers
@@ -144,6 +165,34 @@ Choose core defaults in the app. Ask about firmware or missing companion
 files only when the selected game needs them, using an actionable message.
 Keep navigation accessible and usable across display sizes. Treat reliable
 reopening, sound interruptions and saved progress as part of the experience.
+
+The speaker control opens a compact volume popover with a slider and mute,
+independent of system media volume. Zero mutes; raising the slider unmutes.
+The mute action retains the last chosen listening level. The main settings
+list has no duplicate Sound or Speed subpages. Shared Rust settings are
+atomically persisted. The
+real-time consumer applies a bounded gain while consuming the same FIFO;
+muting never accumulates sound to replay later. Slider dragging previews the
+value and commits once on lift; cancellation restores the previous value.
+The slider spans a perceptual -56 to 0 dB range, with zero silent. Migration
+from the initial linear slider preserves its approximate loudness.
+
+Tapping speed cycles 1x, 2x and 5x target emulation speed, without a menu.
+Faster modes retain pitched sound unless muted. The fixed-rate audio consumer
+averages source-frame groups at the selected multiplier, preserving stereo;
+the bounded FIFO uses a proportionate fill target. Speed changes clear the
+stopped queue before reopening audio. The libretro fast-forward query reflects
+the selected mode, with video and audio still enabled. Emulation/rendering
+runs on the sole owner thread; no emulation internals change. Frontend
+presentation is bounded to 60 Hz above 1x. Achieved speed remains a measurement,
+not a guarantee from the selected multiplier.
+
+The launcher icon is original psx vector artwork. Borrowed notices remain in
+About and APK assets. The current no-proprietary-firmware route runs the
+donor's included OpenBIOS and its own startup sequence. The existing fast-boot
+option is enabled, but the donor's patch does not cover OpenBIOS. Replacing
+that sequence requires a supported firmware/donor route; the host does not
+guess a time at which to crop or hide game output.
 
 ## Delivery boundary
 

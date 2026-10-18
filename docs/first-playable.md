@@ -74,8 +74,8 @@ Complete the native Rust-rendered interface: embedded home/game menus,
 clear errors and source/license pages, an ergonomic full game view, proper
 controller symbols, discrete press haptics, clean sans-serif typography and
 a cog for the app menu. Preserve the game aspect ratio while maximizing its
-view. Give the embedded interface a mobile OS feel with compact app bars,
-back navigation, icon actions, grouped rows and switches. Keep the picture
+view. Use compact console-style panels, restrained frames and highlights,
+back navigation and icon actions. Keep the picture
 **clear of every control by default**. Controller settings provide a
 preview editor for moving/resizing individual controls and the game picture.
 Tap selects an element, dragging moves it, and dragging a corner grip resizes
@@ -86,6 +86,25 @@ an explicit **Allow overlap** toggle (off by default), and reset. Persist
 separate tall, square and wide layouts. Keep this customization behind the
 cog rather than crowding ordinary play. Bluetooth/USB controller support is
 a later addition through the same logical input boundary.
+
+Use actual window dimensions across inner/outer display rotations to choose
+the larger clear picture, without stretching it. Keep the D-pad visually a
+digital cross with its following behavior. Make face-button touch targets
+forgiving in unused control space without taking touches from the picture.
+
+Settings during play are a native sheet over the running game. Opening the
+cog releases held input and preserves explicit pause intent. Provide a
+small separate pause/play, speed, volume and settings controls near the
+top, using spare camera-margin space where safe. The volume control opens a
+compact slider popover with mute; zero mutes and raising it restores sound.
+Persist a useful perceptual volume range. Tap speed to cycle only 1x, 2x and
+5x, retaining pitched audio unless muted. Achieved speed depends on the
+game/device; measure the actual modes. Keep the main settings sheet small.
+Give folded landscape side rails and a picture that uses the available
+height; adapt the inner-screen control band across both rotations.
+Use original psx launcher branding and retain borrowed notices. Investigate
+the donor/OpenBIOS startup transition through its supported interfaces;
+preserve its license and keep proprietary startup artwork out of app branding.
 
 Track a captured D-pad finger until lift or interruption even outside its
 visible area. Let its center follow thumb drift by default, with a neutral

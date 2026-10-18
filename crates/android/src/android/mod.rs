@@ -12,10 +12,11 @@ use psx_player::{
     artwork::Artwork,
     audio::AudioQueue,
     files::{self, Game},
-    input::{ControllerSettings, Layout, Touches},
+    input::{ControllerSettings, Layout, Rect, Touches},
     library::{self, Library},
     retro::{Core, HostConfig},
     saves::MemoryCard,
+    settings::{PlaybackSettings, Speed},
     ui::{EditResult, Editor, Menu, Row, Visuals},
     Activity,
 };
@@ -45,6 +46,11 @@ enum Action {
     Home,
     Discs,
     Controllers,
+    Sound,
+    ToggleMute,
+    SetVolume(u8),
+    CycleSpeed,
+    TogglePause,
     ToggleOverlap,
     ToggleFollowThumb,
     EditControls,
@@ -71,6 +77,7 @@ enum Screen {
     About,
     License(&'static str),
     Controllers,
+    Sound,
     Editing,
     Error,
 }
@@ -86,6 +93,7 @@ struct Player {
     game: Option<Game>,
     library: Library,
     controller_settings: ControllerSettings,
+    playback: PlaybackSettings,
     queue: Arc<AudioQueue>,
     sound: Option<Sound>,
     activity: Activity,
@@ -93,6 +101,7 @@ struct Player {
     layout: Layout,
     density: f32,
     insets: [i32; 4],
+    cutouts: Vec<[i32; 4]>,
     screen: Screen,
     menu: Option<Menu>,
     closing_menu: Option<Menu>,
@@ -112,6 +121,7 @@ struct Player {
     destroyed: bool,
     dirty: bool,
     next_frame: Instant,
+    next_present: Instant,
     last_flush: Instant,
     last_report: Instant,
     frames: u64,
@@ -130,23 +140,29 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     platform.configure(&app);
     let graphics = unsafe { Graphics::new()? };
     let now = Instant::now();
+    let playback = PlaybackSettings::load(&root).map_err(|e| e.to_string())?;
+    let queue = Arc::new(AudioQueue::new(8192));
+    queue.set_volume(playback.output_volume());
+    queue.set_speed_stopped(playback.speed.multiplier());
     let mut player = Player {
         library: Library::load(&root)
             .map_err(|e| format!("The saved library could not be read: {e}"))?,
         controller_settings: ControllerSettings::load(&root).map_err(|e| e.to_string())?,
+        playback,
         root,
         platform,
         graphics,
         core: None,
         card: None,
         game: None,
-        queue: Arc::new(AudioQueue::new(4096)),
+        queue,
         sound: None,
         activity: Activity::default(),
         touches: Touches::default(),
         layout: Layout::new(360., 800.),
         density: 1.,
         insets: [0; 4],
+        cutouts: Vec::new(),
         screen: Screen::Home,
         menu: None,
         closing_menu: None,
@@ -166,6 +182,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         destroyed: false,
         dirty: true,
         next_frame: now,
+        next_present: now,
         last_flush: now,
         last_report: now,
         frames: 0,
@@ -262,7 +279,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             && player.import.is_none()
             && player.activity.foreground
             && player.activity.surface
-            && (player.core.is_none() || player.activity.user_paused)
+            && player.core.is_none()
         {
             player.navigate(
                 &app,
@@ -293,6 +310,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             player.touches.dpad_feedback(),
         );
         player.last_visual = now;
+        player.visuals.playback_paused = player.activity.user_paused;
+        player.visuals.playback_speed = player.playback.speed.multiplier();
+        player.visuals.muted = player.playback.muted || player.playback.volume == 0;
         player.dirty |= player.visual_animating;
         if player.visuals.overlay == 0. && player.menu.is_none() {
             player.closing_menu = None;
@@ -305,7 +325,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 state.hw.map(|h| h.bottom_left).unwrap_or(true),
             ))
         });
-        if player.dirty && player.activity.surface && player.activity.foreground {
+        let present_due = player.playback.speed == Speed::Normal || now >= player.next_present;
+        if player.dirty && player.activity.surface && player.activity.foreground && present_due {
+            player.next_present = now + Duration::from_secs_f64(1. / 60.);
             if let Err(error) = unsafe {
                 player.graphics.render(
                     player.density,
@@ -434,13 +456,40 @@ impl Player {
             self.screen = Screen::Controllers;
             self.refresh_menu(app);
         }
-        self.layout = self.controller_settings.preset(w, h).layout(w, h);
+        let preset = self.controller_settings.preset(w, h);
+        self.layout = preset.layout(w, h);
+        let cutouts: Vec<_> = self
+            .cutouts
+            .iter()
+            .map(|r| {
+                Rect::new(
+                    (r[0] as f32 - self.graphics.content.x) / self.density,
+                    (r[1] as f32 - self.graphics.content.y) / self.density,
+                    (r[2] - r[0]) as f32 / self.density,
+                    (r[3] - r[1]) as f32 / self.density,
+                )
+            })
+            .collect();
+        self.layout
+            .toolbar_in_top_margin(w, h, self.graphics.content.y / self.density, &cutouts);
+        self.layout.place_game(
+            w,
+            h,
+            preset.allow_overlap,
+            preset.game_scale,
+            preset.game_offset,
+        );
         if let Some(menu) = &mut self.menu {
+            if menu.anchor.is_some() {
+                menu.anchor = Some(self.layout.mute);
+            }
+            let panel = menu.surface(w, h);
             menu.description_lines = self
                 .graphics
-                .menu_description(&menu.description, Menu::column(w).w);
+                .menu_description(&menu.description, Menu::column(panel.w).w);
             menu.cancel();
-            menu.clamp_scroll(w, h);
+            let panel = menu.surface(w, h);
+            menu.clamp_scroll(panel.w, panel.h);
         }
         if matches!(self.screen, Screen::License(_)) {
             self.refresh_menu(app);
@@ -478,6 +527,37 @@ impl Player {
         while events.next(|event| match event {
             InputEvent::MotionEvent(motion) => {
                 self.dirty = true;
+                if self.editor.is_none()
+                    && self.core.is_some()
+                    && matches!(
+                        motion.action(),
+                        MotionAction::Down | MotionAction::PointerDown
+                    )
+                {
+                    let pointer = motion.pointer_at_index(motion.pointer_index());
+                    let x = (pointer.x() - self.graphics.content.x) / self.density;
+                    let y = (pointer.y() - self.graphics.content.y) / self.density;
+                    let toolbar = if self.layout.pause.contains(x, y) {
+                        Some(if self.menu.is_some() && self.screen == Screen::Settings {
+                            Action::Resume
+                        } else {
+                            Action::Settings
+                        })
+                    } else if self.layout.playback.contains(x, y) {
+                        Some(Action::TogglePause)
+                    } else if self.layout.speed.contains(x, y) {
+                        Some(Action::CycleSpeed)
+                    } else if self.layout.mute.contains(x, y) {
+                        Some(Action::Sound)
+                    } else {
+                        None
+                    };
+                    if let Some(toolbar) = toolbar {
+                        action = Some(toolbar);
+                        self.platform.haptic(app);
+                        return InputStatus::Handled;
+                    }
+                }
                 let mut feedback = false;
                 if let Some(editor) = &mut self.editor {
                     let pointer = motion.pointer_at_index(motion.pointer_index());
@@ -508,18 +588,23 @@ impl Player {
                     }
                 } else if let Some(menu) = &mut self.menu {
                     let pointer = motion.pointer_at_index(motion.pointer_index());
-                    let x = (pointer.x() - self.graphics.content.x) / self.density;
-                    let y = (pointer.y() - self.graphics.content.y) / self.density;
-                    let w = self.graphics.content.w / self.density;
-                    let h = self.graphics.content.h / self.density;
+                    let panel = menu.surface(
+                        self.graphics.content.w / self.density,
+                        self.graphics.content.h / self.density,
+                    );
+                    let x = (pointer.x() - self.graphics.content.x) / self.density - panel.x;
+                    let y = (pointer.y() - self.graphics.content.y) / self.density - panel.y;
+                    let (w, h) = (panel.w, panel.h);
                     match motion.action() {
-                        MotionAction::Down => menu.down(pointer.pointer_id(), x, y),
+                        MotionAction::Down => menu.down(pointer.pointer_id(), x, y, w, h),
                         MotionAction::Move => {
                             for pointer in motion.pointers() {
                                 menu.motion(
                                     pointer.pointer_id(),
-                                    (pointer.x() - self.graphics.content.x) / self.density,
-                                    (pointer.y() - self.graphics.content.y) / self.density,
+                                    (pointer.x() - self.graphics.content.x) / self.density
+                                        - panel.x,
+                                    (pointer.y() - self.graphics.content.y) / self.density
+                                        - panel.y,
                                     w,
                                     h,
                                 );
@@ -531,6 +616,8 @@ impl Player {
                                     Some(self.back_action.clone())
                                 } else if index == usize::MAX - 1 {
                                     Some(Action::Back)
+                                } else if index == usize::MAX - 2 {
+                                    Some(Action::Resume)
                                 } else {
                                     self.actions.get(index).cloned()
                                 };
@@ -539,6 +626,9 @@ impl Player {
                         }
                         MotionAction::Cancel => menu.cancel(),
                         _ => {}
+                    }
+                    if let Some((_, value)) = menu.take_slider_change() {
+                        action = Some(Action::SetVolume(value));
                     }
                 } else {
                     match motion.action() {
@@ -555,11 +645,23 @@ impl Player {
                             for pointer in motion.pointers() {
                                 let x = (pointer.x() - self.graphics.content.x) / self.density;
                                 let y = (pointer.y() - self.graphics.content.y) / self.density;
-                                if motion.action() == MotionAction::Down
+                                if new_pointer == Some(pointer.pointer_id())
                                     && self.layout.pause.contains(x, y)
                                     && self.core.is_some()
                                 {
                                     action = Some(Action::Settings);
+                                    feedback = true;
+                                } else if new_pointer == Some(pointer.pointer_id())
+                                    && self.core.is_some()
+                                    && self.layout.playback.contains(x, y)
+                                {
+                                    action = Some(Action::TogglePause);
+                                    feedback = true;
+                                } else if new_pointer == Some(pointer.pointer_id())
+                                    && self.core.is_some()
+                                    && self.layout.speed.contains(x, y)
+                                {
+                                    action = Some(Action::CycleSpeed);
                                     feedback = true;
                                 } else if self.activity.can_run() {
                                     let pressed = if new_pointer == Some(pointer.pointer_id()) {
@@ -661,9 +763,10 @@ impl Player {
                 self.picker = false;
                 self.fail(error);
             }
-            Event::Insets(edges) => {
-                if edges != self.insets {
+            Event::Insets(edges, cutouts) => {
+                if edges != self.insets || cutouts != self.cutouts {
                     self.insets = edges;
+                    self.cutouts = cutouts;
                     self.touches.cancel();
                     if let Err(error) = self.resize(app) {
                         self.fail(error);
@@ -676,8 +779,11 @@ impl Player {
     fn navigate(&mut self, app: &AndroidApp, screen: Screen) {
         self.closing_menu = None;
         self.screen = screen;
-        self.activity.user_paused = self.core.is_some();
-        if let Err(error) = self.interrupt() {
+        self.touches.cancel();
+        if let Some(core) = &mut self.core {
+            core.state_mut().buttons = 0;
+        }
+        if let Err(error) = self.flush() {
             self.fail(error);
         }
         self.refresh_menu(app);
@@ -805,7 +911,6 @@ impl Player {
             }
             Action::Resume => {
                 self.closing_menu = self.menu.take();
-                self.activity.user_paused = false;
                 self.platform.focus(app, true);
                 self.dirty = true;
             }
@@ -822,6 +927,54 @@ impl Player {
                 }
             }
             Action::Controllers => self.navigate(app, Screen::Controllers),
+            Action::Sound => {
+                if self.screen == Screen::Sound && self.menu.is_some() {
+                    self.action(app, Action::Resume)?;
+                } else {
+                    self.navigate(app, Screen::Sound);
+                }
+            }
+            Action::TogglePause => {
+                self.activity.user_paused = !self.activity.user_paused;
+                if self.activity.user_paused {
+                    self.interrupt()?;
+                } else {
+                    self.platform.focus(app, true);
+                    self.next_frame = Instant::now();
+                }
+                self.dirty = true;
+                if self.menu.is_some() {
+                    self.refresh_menu(app);
+                }
+            }
+            Action::ToggleMute => {
+                self.playback.toggle_mute();
+                self.save_playback()?;
+                if self.menu.is_some() {
+                    self.refresh_menu(app);
+                }
+                self.dirty = true;
+            }
+            Action::SetVolume(value) => {
+                self.playback.set_volume(value);
+                self.save_playback()?;
+                self.refresh_menu(app);
+            }
+            Action::CycleSpeed => {
+                // Both producer and stream are stopped before resetting the
+                // queue. Returning to 1x starts fresh audio, never sped-up backlog.
+                self.interrupt()?;
+                self.playback.speed = match self.playback.speed {
+                    Speed::Normal => Speed::Double,
+                    Speed::Double => Speed::Quintuple,
+                    Speed::Quintuple => Speed::Normal,
+                };
+                self.queue
+                    .set_speed_stopped(self.playback.speed.multiplier());
+                self.save_playback()?;
+                self.next_frame = Instant::now();
+                self.dirty = true;
+            }
             Action::ToggleFollowThumb => {
                 let (w, h) = self.dimensions();
                 let mut preset = self.controller_settings.preset(w, h);
@@ -888,6 +1041,7 @@ impl Player {
                 Screen::License(_) => self.navigate(app, Screen::About),
                 Screen::Editing => return self.action(app, Action::CancelEdit),
                 Screen::Controllers => self.navigate(app, Screen::Settings),
+                Screen::Sound => return self.action(app, Action::Resume),
                 Screen::Settings if self.core.is_some() => return self.action(app, Action::Resume),
                 Screen::Home if self.core.is_none() => self.platform.finish(app),
                 _ if self.core.is_some() && self.menu.is_none() => {
@@ -905,6 +1059,11 @@ impl Player {
             self.graphics.content.w / self.density,
             self.graphics.content.h / self.density,
         )
+    }
+
+    fn save_playback(&self) -> Result<(), String> {
+        self.queue.set_volume(self.playback.output_volume());
+        self.playback.save(&self.root).map_err(|e| e.to_string())
     }
 
     fn refresh_menu(&mut self, app: &AndroidApp) {
@@ -931,7 +1090,7 @@ impl Player {
                 add(
                     Action::Settings,
                     "Settings".into(),
-                    "Controllers, firmware, source and licenses".into(),
+                    "Controllers, sound, source and licenses".into(),
                 );
                 (
                     "Games".into(),
@@ -994,13 +1153,17 @@ impl Player {
                 }
                 (
                     "Settings".into(),
-                    if self.core.is_some() {
-                        self.message.clone()
+                    if let Some(game) = &self.game {
+                        if self.activity.user_paused {
+                            format!("Paused · {}", game.title)
+                        } else {
+                            game.title.clone()
+                        }
                     } else {
                         String::new()
                     },
                     if self.core.is_some() {
-                        "Resume game".into()
+                        "Back to game".into()
                     } else {
                         "Back to games".into()
                     },
@@ -1010,6 +1173,24 @@ impl Player {
                         Action::Home
                     },
                 )
+            }
+            Screen::Sound => {
+                add(
+                    Action::SetVolume(self.playback.volume),
+                    "Game volume".into(),
+                    String::new(),
+                );
+                add(
+                    Action::ToggleMute,
+                    if self.playback.output_volume() == 0 {
+                        "Unmute"
+                    } else {
+                        "Mute"
+                    }
+                    .into(),
+                    "Keep your chosen volume for later".into(),
+                );
+                ("Volume".into(), String::new(), "Back".into(), Action::Back)
             }
             Screen::Access => {
                 if self.scan_available {
@@ -1247,6 +1428,7 @@ impl Player {
         self.actions = actions;
         self.back_action = back_action;
         let mut menu = Menu::new(title, description, rows, &back);
+        menu.over_game = self.core.is_some();
         menu.home = self.screen == Screen::Home;
         menu.settings = menu.home.then_some(self.library.games.len());
         if self.screen == Screen::Controllers {
@@ -1259,9 +1441,16 @@ impl Player {
                 row.toggle = Some(preset.allow_overlap);
             }
         }
+        if self.screen == Screen::Sound {
+            menu.anchor = Some(self.layout.mute);
+            menu.rows[0].slider = Some(self.playback.volume);
+            menu.rows[0].height = 104.;
+        }
+        let (w, h) = self.dimensions();
+        let panel = menu.surface(w, h);
         menu.description_lines = self
             .graphics
-            .menu_description(&menu.description, Menu::column(self.dimensions().0).w);
+            .menu_description(&menu.description, Menu::column(panel.w).w);
         self.menu = Some(menu);
         self.dirty = true;
     }
@@ -1320,14 +1509,8 @@ impl Player {
     }
     fn tick(&mut self) -> Result<(), String> {
         self.dirty = true;
-        // A reopened audio stream starts a new active observation window.
-        // Time spent in settings or the background is not emulation slowdown.
-        if self.sound.is_none() {
-            self.last_report = Instant::now();
-            self.frames = 0;
-            self.run_time = Duration::ZERO;
-        }
         let core = self.core.as_mut().unwrap();
+        core.state_mut().fast_forward = self.playback.speed != Speed::Normal;
         core.state_mut().buttons = self.touches.frame_mask();
         let before = Instant::now();
         core.run();
@@ -1346,9 +1529,11 @@ impl Player {
             return Err("The core output exceeded the native-resolution buffer.".into());
         }
         let fps = core.state().av.timing.fps;
-        let error = (self.queue.queued() as f64 - 1100.) / 1100.;
+        let target = 1100. * self.playback.speed.multiplier() as f64;
+        let error = (self.queue.queued() as f64 - target) / target;
+        let correction = 1. + (error * 0.003).clamp(-0.005, 0.005);
         let period =
-            Duration::from_secs_f64((1. / fps) * (1. + (error * 0.003).clamp(-0.005, 0.005)));
+            Duration::from_secs_f64(correction / fps / self.playback.speed.multiplier() as f64);
         self.next_frame += period;
         if Instant::now().saturating_duration_since(self.next_frame) > Duration::from_millis(100) {
             self.next_frame = Instant::now();
@@ -1363,9 +1548,9 @@ impl Player {
         if self.last_report.elapsed() >= Duration::from_secs(10) {
             let elapsed = self.last_report.elapsed().as_secs_f64();
             let core = self.core.as_ref().unwrap();
-            log::info!("playback fps={:.2} speed={:.1}% core_ms={:.2} hw_frames={} sw_frames={} audio_queued={} underruns={} dropped={}",
+            log::info!("playback fps={:.2} speed={:.1}% core_ms={:.2} hw_frames={} sw_frames={} audio_queued={} underruns={} dropped={} target={}x",
                 self.frames as f64/elapsed,self.frames as f64/elapsed/fps*100.,self.run_time.as_secs_f64()*1000./self.frames as f64,
-                core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed));
+                core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed), self.playback.speed.multiplier());
             self.last_report = Instant::now();
             self.frames = 0;
             self.run_time = Duration::ZERO;

@@ -250,6 +250,16 @@ public final class PsxActivity extends android.app.NativeActivity implements
     execute(&mut command(
         build.join("aapt2"),
         [
+            "compile",
+            "--dir",
+            "android/res",
+            "-o",
+            "build/apk/resources.zip",
+        ],
+    ))?;
+    execute(&mut command(
+        build.join("aapt2"),
+        [
             OsString::from("link"),
             "--debug-mode".into(),
             "-I".into(),
@@ -258,6 +268,7 @@ public final class PsxActivity extends android.app.NativeActivity implements
             "build/apk/AndroidManifest.xml".into(),
             "-A".into(),
             "build/apk/assets".into(),
+            "build/apk/resources.zip".into(),
             "-o".into(),
             "build/apk/unsigned.apk".into(),
         ],
@@ -397,6 +408,9 @@ fn verify_apk() -> Result<()> {
     let entries = output(&mut command("unzip", ["-Z1", "build/psx-development.apk"]))?;
     for entry in [
         "classes.dex",
+        "resources.arsc",
+        "res/drawable/ic_psx.xml",
+        "res/mipmap-anydpi-v26/ic_launcher.xml",
         "lib/arm64-v8a/libpsx.so",
         "lib/arm64-v8a/libswanstation.so",
         "assets/notices/host/LICENSE",

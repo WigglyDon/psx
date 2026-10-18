@@ -2,7 +2,7 @@
 use crate::artwork::Artwork;
 use crate::input::{DpadFeedback, Layout, Preset, Rect};
 
-pub const ROW_HEIGHT: f32 = 72.;
+pub const ROW_HEIGHT: f32 = 64.;
 
 #[derive(Default)]
 pub struct Row {
@@ -13,6 +13,7 @@ pub struct Row {
     pub height: f32,
     pub artwork: Option<Artwork>,
     pub toggle: Option<bool>,
+    pub slider: Option<u8>,
 }
 
 /// Visual response never delays logical input. Bounded interpolation keeps
@@ -23,6 +24,9 @@ pub struct Visuals {
     pub overlay: f32,
     pub time: f64,
     pub dpad: DpadVisual,
+    pub playback_paused: bool,
+    pub playback_speed: u8,
+    pub muted: bool,
     pulses: [f32; 16],
 }
 
@@ -617,7 +621,11 @@ pub struct Menu {
     pub scroll: f32,
     pub home: bool,
     pub settings: Option<usize>,
+    pub over_game: bool,
+    pub anchor: Option<Rect>,
     pointer: Option<(i32, f32, f32, bool)>,
+    slider_pointer: Option<(i32, usize, u8)>,
+    slider_change: Option<(usize, u8)>,
 }
 
 impl Menu {
@@ -647,9 +655,38 @@ impl Menu {
         Rect::new((width - w) / 2., 0., w, 0.)
     }
 
+    pub fn surface(&self, width: f32, height: f32) -> Rect {
+        if let Some(anchor) = self.anchor {
+            let w = (width - 24.).clamp(0., 320.);
+            let h = (48. + 16. + self.rows.iter().map(|r| r.height).sum::<f32>())
+                .min((height - 24.).max(0.));
+            return Rect::new(
+                (anchor.x + anchor.w / 2. - w / 2.).clamp(12., (width - w - 12.).max(12.)),
+                (anchor.y + anchor.h + 8.).clamp(8., (height - h - 8.).max(8.)),
+                w,
+                h,
+            );
+        }
+        if !self.over_game {
+            return Rect::new(0., 0., width, height);
+        }
+        let w = (width - 24.).clamp(0., 600.);
+        let header = 72.
+            + if self.description_lines.is_empty() {
+                0.
+            } else {
+                12. + self.description_lines.len().min(4) as f32 * 20.
+            };
+        let footer = if self.has_footer() { 76. } else { 24. };
+        let h = (header + footer + self.rows.iter().map(|r| r.height).sum::<f32>())
+            .min((height - 24.).max(0.))
+            .min(height * 0.72);
+        Rect::new((width - w) / 2., height - h - 12., w, h)
+    }
+
     pub fn viewport(&self, width: f32, height: f32) -> Rect {
         let column = Self::column(width);
-        let top = 72.
+        let top = if self.anchor.is_some() { 48. } else { 72. }
             + if self.description_lines.is_empty() {
                 0.
             } else {
@@ -660,7 +697,12 @@ impl Menu {
     }
 
     pub fn has_footer(&self) -> bool {
-        !self.home && !matches!(self.back.as_str(), "Back" | "Back to games")
+        self.anchor.is_none()
+            && !self.home
+            && !matches!(
+                self.back.as_str(),
+                "Back" | "Back to games" | "Back to game" | "Done"
+            )
     }
     pub fn navigation_rect(width: f32) -> Rect {
         Rect::new(Self::column(width).x - 8., 8., 48., 48.)
@@ -676,7 +718,7 @@ impl Menu {
 
     pub fn back_rect(width: f32, height: f32) -> Rect {
         let column = Self::column(width);
-        let w = column.w.min(320.);
+        let w = column.w.min(240.);
         Rect::new((width - w) / 2., height - 60., w, 48.)
     }
 
@@ -688,13 +730,64 @@ impl Menu {
         );
     }
 
-    pub fn down(&mut self, id: i32, x: f32, y: f32) {
-        if self.pointer.is_none() {
+    pub fn pressed_row(&self, width: f32, height: f32) -> Option<usize> {
+        let (_, x, y, moved) = self.pointer?;
+        let viewport = self.viewport(width, height);
+        if moved || !viewport.contains(x, y) {
+            return None;
+        }
+        let target = y - viewport.y + self.scroll;
+        let mut offset = 0.;
+        self.rows.iter().position(|row| {
+            offset += row.height;
+            target < offset
+        })
+    }
+
+    pub fn slider_rect(&self, index: usize, width: f32, height: f32) -> Rect {
+        let viewport = self.viewport(width, height);
+        let top =
+            viewport.y - self.scroll + self.rows.iter().take(index).map(|r| r.height).sum::<f32>();
+        Rect::new(viewport.x + 16., top + 48., viewport.w - 32., 48.)
+    }
+
+    fn slide(&mut self, id: i32, x: f32, width: f32, height: f32) {
+        if let Some((active, index, _)) = self.slider_pointer {
+            if id == active {
+                let r = self.slider_rect(index, width, height);
+                self.rows[index].slider = Some(
+                    (((x - r.x - 8.) / (r.w - 16.).max(1.)).clamp(0., 1.) * 100.).round() as u8,
+                );
+            }
+        }
+    }
+
+    pub fn take_slider_change(&mut self) -> Option<(usize, u8)> {
+        self.slider_change.take()
+    }
+
+    pub fn down(&mut self, id: i32, x: f32, y: f32, width: f32, height: f32) {
+        if self.pointer.is_none() && self.slider_pointer.is_none() {
+            if self.viewport(width, height).contains(x, y) {
+                for (index, row) in self.rows.iter().enumerate() {
+                    if let Some(value) = row.slider.filter(|_| row.enabled) {
+                        if self.slider_rect(index, width, height).contains(x, y) {
+                            self.slider_pointer = Some((id, index, value));
+                            self.slide(id, x, width, height);
+                            return;
+                        }
+                    }
+                }
+            }
             self.pointer = Some((id, x, y, false));
         }
     }
 
     pub fn motion(&mut self, id: i32, x: f32, y: f32, width: f32, height: f32) {
+        if self.slider_pointer.is_some() {
+            self.slide(id, x, width, height);
+            return;
+        }
         if let Some((active, start_x, last_y, moved)) = self.pointer.as_mut() {
             if *active == id {
                 if (*start_x - x).abs() > 10. || (*last_y - y).abs() > 10. {
@@ -709,8 +802,16 @@ impl Menu {
         self.clamp_scroll(width, height);
     }
 
-    /// MAX is the primary action; MAX-1 is app-bar back. Other values are rows.
+    /// MAX is the primary action; MAX-1 is back; MAX-2 dismisses a game sheet.
     pub fn up(&mut self, id: i32, x: f32, y: f32, width: f32, height: f32) -> Option<usize> {
+        if let Some((active, index, _)) = self.slider_pointer {
+            if id == active {
+                self.slide(id, x, width, height);
+                self.slider_change = self.rows[index].slider.map(|value| (index, value));
+                self.slider_pointer = None;
+            }
+            return None;
+        }
         let (active, start_x, start_y, moved) = self.pointer?;
         if active != id {
             return None;
@@ -719,6 +820,15 @@ impl Menu {
         if moved || (start_x - x).abs() > 10. || (start_y - y).abs() > 10. {
             return None;
         }
+        if self.over_game
+            && !Rect::new(0., 0., width, height).contains(start_x, start_y)
+            && !Rect::new(0., 0., width, height).contains(x, y)
+        {
+            return Some(usize::MAX - 2);
+        }
+        if self.anchor.is_some() && Self::settings_rect(width).contains(x, y) {
+            return Some(usize::MAX - 2);
+        }
         if self.home {
             if Self::settings_rect(width).contains(x, y) {
                 return self.settings;
@@ -726,7 +836,7 @@ impl Menu {
             if Self::add_rect(width).contains(x, y) {
                 return Some(usize::MAX);
             }
-        } else if Self::navigation_rect(width).contains(x, y) {
+        } else if self.anchor.is_none() && Self::navigation_rect(width).contains(x, y) {
             return Some(usize::MAX - 1);
         }
         if self.has_footer() && Self::back_rect(width, height).contains(x, y) {
@@ -749,6 +859,10 @@ impl Menu {
 
     pub fn cancel(&mut self) {
         self.pointer = None;
+        if let Some((_, index, original)) = self.slider_pointer.take() {
+            self.rows[index].slider = Some(original);
+        }
+        self.slider_change = None;
     }
 }
 
@@ -756,26 +870,62 @@ impl Menu {
 mod tests {
     use super::*;
     #[test]
+    fn slider_capture_commits_once_on_lift_and_cancellation_restores_the_value() {
+        let mut row = Row::action("Game volume", "");
+        row.slider = Some(70);
+        row.height = 104.;
+        let mut menu = Menu::new("Sound", "", vec![row], "Back");
+        let r = menu.slider_rect(0, 420., 800.);
+        menu.down(4, r.x + 8., r.y + 24., 420., 800.);
+        menu.motion(4, r.x + r.w - 8., r.y + 24., 420., 800.);
+        assert_eq!(menu.rows[0].slider, Some(100));
+        assert_eq!(menu.take_slider_change(), None);
+        assert_eq!(menu.up(5, r.x, r.y, 420., 800.), None);
+        menu.cancel();
+        assert_eq!(menu.rows[0].slider, Some(70));
+        menu.down(4, r.x + 8., r.y + 24., 420., 800.);
+        assert_eq!(menu.up(4, r.x + 8., r.y + 24., 420., 800.), None);
+        assert_eq!(menu.take_slider_change(), Some((0, 0)));
+        assert_eq!(menu.take_slider_change(), None);
+        assert_eq!(menu.scroll, 0.);
+    }
+
+    #[test]
+    fn live_game_sheets_leave_picture_visible_and_dismiss_only_after_lift() {
+        let mut menu = Menu::new("Sound", "", vec![Row::action("Mute", "")], "Back");
+        menu.over_game = true;
+        let panel = menu.surface(852., 817.);
+        assert!(panel.y > 400.);
+        assert!(panel.w < 852.);
+        menu.down(3, 50., -50., panel.w, panel.h);
+        assert_eq!(menu.up(9, 50., -50., panel.w, panel.h), None);
+        assert_eq!(
+            menu.up(3, 50., -50., panel.w, panel.h),
+            Some(usize::MAX - 2)
+        );
+    }
+
+    #[test]
     fn scrolling_and_second_fingers_do_not_activate_rows() {
         let mut menu = Menu::new(
             "Games",
             "",
             (0..20).map(|i| Row::action(i.to_string(), "")).collect(),
-            "Done",
+            "Add selected",
         );
-        menu.down(4, 100., 250.);
+        menu.down(4, 100., 250., 420., 800.);
         assert_eq!(menu.up(9, 100., 250., 420., 800.), None);
         menu.motion(4, 100., 180., 420., 800.);
         assert!(menu.scroll > 0.);
         assert_eq!(menu.up(4, 100., 180., 420., 800.), None);
-        menu.down(4, 100., 760.);
+        menu.down(4, 100., 760., 420., 800.);
         assert_eq!(menu.up(4, 100., 760., 420., 800.), Some(usize::MAX));
     }
     #[test]
     fn app_bar_navigation_is_distinct_from_the_primary_action() {
         let mut menu = Menu::new("Choose games", "", vec![], "Add selected");
         let back = Menu::navigation_rect(420.);
-        menu.down(1, back.x + 24., back.y + 24.);
+        menu.down(1, back.x + 24., back.y + 24., 420., 800.);
         assert_eq!(
             menu.up(1, back.x + 24., back.y + 24., 420., 800.),
             Some(usize::MAX - 1)
@@ -783,13 +933,13 @@ mod tests {
         menu.home = true;
         menu.settings = Some(7);
         let settings = Menu::settings_rect(420.);
-        menu.down(1, settings.x + 24., settings.y + 24.);
+        menu.down(1, settings.x + 24., settings.y + 24., 420., 800.);
         assert_eq!(
             menu.up(1, settings.x + 24., settings.y + 24., 420., 800.),
             Some(7)
         );
         let add = Menu::add_rect(420.);
-        menu.down(1, add.x + 24., add.y + 24.);
+        menu.down(1, add.x + 24., add.y + 24., 420., 800.);
         assert_eq!(
             menu.up(1, add.x + 24., add.y + 24., 420., 800.),
             Some(usize::MAX)

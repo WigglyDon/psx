@@ -176,6 +176,62 @@ layout experiments were reset. Twenty host tests, host/Android Clippy,
 formatting and APK signature/alignment checks pass. Ordinary save/restart
 and updated fold/lifecycle checks are still pending.
 
+## Ordinary card restart and thumb-tracking update
+
+An owner-selected game on the compact-interface APK confirmed an ordinary
+in-game memory-card save. After Close game, a force-stop and fresh process,
+the game's Load Game read that saved character and returned to the same
+location. This is a real card save/load observation, separate from the
+earlier checkpoints. The library also displayed the icon decoded from that
+actual saved card after restart. Private card snapshots were retained.
+
+The following-controller update is pushed in `19e12cf` and installed as
+APK SHA-256
+`0d54e692f50c81c07d0284db6b732353c0c8d02e6a0dcab7e088e103a3f56875`.
+Twenty-six host tests pass, including captured overtravel, reversing after
+drift, independent finger release/cancellation, neutral/angular hysteresis,
+avoiding opposite-direction latching, existing-preset migration and animated
+release. Host and Android ARM64 Clippy, formatting and APK signature,
+required-entry and ZIP/ELF alignment checks pass.
+
+On the inner display, Follow thumb defaults on and overlap off. Selecting
+fixed-center behavior writes the choice to the profile and exposes Reset;
+Reset restores following, leaves overlap off and hides itself. Selected
+collection additions retain existing card identities. The saved game also
+loads back into the same location after this APK update.
+
+Direct in-game gesture observations: a direction press moved outside the
+pad's well and continued moving the character. Reversing while still outside
+changed the direction; lifting cleared it. The following base/marker stayed
+inside the reserved well and eased back after release. The owner described
+the new D-pad as a major improvement. A 50-second gameplay observation
+recorded 59.81–59.84 fps, 4.38–4.82 ms average core time per frame, hardware
+output only, one new FIFO underrun and no dropped audio frames. This covers
+walking/drift/reversal and standing in the game, not a thermal or combat test.
+Updated fold/lifecycle acceptance is continuing.
+
+## Larger picture and live settings checkpoint
+
+APK SHA-256
+`40c923db00a68c089108597371e8015dd776d978de316fb2e7f08701f9c2389e`
+was installed with app data retained. The collection still contained eight
+games and thirteen discs. A nonzero starting disc booted through the ordinary
+disc menu, and an existing save was visible after the fresh process. Loading
+it produced the game's request for the first disc. The runtime disc menu
+identified the second disc as inserted; switching to the first kept the same
+session and subsequently returned to play. The owner also played through
+fold/unfold and rotation changes in that process. This is separate from
+the earlier synthetic disk-callback checks.
+
+The inner display rendered the larger clear picture, cross-shaped D-pad and
+separate playback controls. Settings appeared over the game, which continued
+running. The owner requested further changes to volume range, quick controls,
+visual style and folded layouts. Those are implemented in Rust and prepared
+in a later candidate, with 37 host tests, host/Android Clippy and APK
+signature/resource/ABI/alignment checks passing. They have not yet completed
+their device acceptance. A public source checkpoint is not a claim that all
+new modes or release requirements have passed.
+
 ## Store limits
 
 16 KB alignment is verified; 16 KB runtime/performance is not. Physical

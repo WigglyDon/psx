@@ -10,13 +10,16 @@ The Rust Android host launches an owner-selected PS1 disc on a
 stock Fold through the system picker, with hardware-rendered gameplay and
 owner-confirmed clear audio. Host tests and ARM64/signature/16 KB alignment
 checks pass. The owner confirms simultaneous touch and discrete press haptics.
-Save/restart and fold/lifecycle acceptance are still being checked; see
+An ordinary in-game card save has loaded after a fresh process and APK update.
+Updated fold/lifecycle acceptance is still being checked; see
 [observations](docs/verification.md).
 The Rust-rendered interface now includes a persistent game collection,
 explicit storage scanning/selection, multi-disc menus, local thumbnails and
 controller layout editing with separate picture/control space by default.
 Corner resizing, contextual reset and layout persistence have run on the
-Fold. Final save/lifecycle acceptance remains in progress.
+Fold. The new play surface adds live console-style settings, a top toolbar,
+volume popover, speed cycling and layouts for folded landscape. Those latest
+controls remain under device acceptance.
 The first implementation target is a stock Android foldable.
 The product is intended for eventual Google Play and Apple App Store release.
 Store acceptance and iOS performance have not been established.

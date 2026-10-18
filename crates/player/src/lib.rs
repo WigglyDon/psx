@@ -5,6 +5,7 @@ pub mod input;
 pub mod library;
 pub mod retro;
 pub mod saves;
+pub mod settings;
 pub mod ui;
 
 /// User intent survives interruptions. Platform focus alone never unpauses a game.

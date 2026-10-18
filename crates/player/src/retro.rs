@@ -117,6 +117,7 @@ pub struct Callbacks {
     pub av: AvInfo,
     pub buttons: u16,
     pub audio: Arc<AudioQueue>,
+    pub fast_forward: bool,
     pub hardware_frames: u64,
     pub software_frames: u64,
     pub frame_width: u32,
@@ -158,13 +159,15 @@ unsafe extern "C" fn audio_batch(samples: *const i16, frames: usize) -> usize {
     if !samples.is_null() && frames <= 65536 {
         with_callbacks((), |s| {
             s.audio
-                .push(std::slice::from_raw_parts(samples, frames * 2))
+                .push(std::slice::from_raw_parts(samples, frames * 2));
         });
     }
     frames
 }
 unsafe extern "C" fn audio_sample(left: i16, right: i16) {
-    with_callbacks((), |s| s.audio.push(&[left, right]));
+    with_callbacks((), |s| {
+        s.audio.push(&[left, right]);
+    });
 }
 unsafe extern "C" fn input_poll() {}
 unsafe extern "C" fn input_state(port: u32, device: u32, _index: u32, id: u32) -> i16 {
@@ -303,11 +306,13 @@ unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
                 true
             }
             0x1002f => {
-                *(data as *mut i32) = 3;
+                if !data.is_null() {
+                    *(data as *mut i32) = 3;
+                }
                 true
-            } // video + audio enabled
+            } // video + audio, including pitched fast-forward output
             0x10031 => {
-                *(data as *mut bool) = false;
+                *(data as *mut bool) = s.fast_forward;
                 true
             } // fast forwarding
             0x10033 => true, // input bitmasks: query has no output
@@ -422,6 +427,7 @@ impl Core {
             av: AvInfo::default(),
             buttons: 0,
             audio,
+            fast_forward: false,
             hardware_frames: 0,
             software_frames: 0,
             frame_width: 0,

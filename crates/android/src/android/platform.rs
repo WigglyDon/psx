@@ -23,7 +23,7 @@ pub enum Event {
     ScanUnavailable,
     Focus(i32),
     Error(String),
-    Insets([i32; 4]),
+    Insets([i32; 4], Vec<[i32; 4]>),
 }
 static EVENTS: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
 fn post(event: Event) {
@@ -319,6 +319,7 @@ impl Platform {
                 return Ok(());
             }
             let mut edges = [0; 4];
+            let mut cutouts = Vec::new();
             for (i, name) in [
                 "getSystemWindowInsetLeft",
                 "getSystemWindowInsetTop",
@@ -339,6 +340,20 @@ impl Platform {
                 )?
                 .l()?;
             if !cutout.is_null() {
+                let bounds = env
+                    .call_method(&cutout, "getBoundingRects", "()Ljava/util/List;", &[])?
+                    .l()?;
+                let count = env.call_method(&bounds, "size", "()I", &[])?.i()?;
+                for i in 0..count.min(16) {
+                    let r = env
+                        .call_method(&bounds, "get", "(I)Ljava/lang/Object;", &[JValue::Int(i)])?
+                        .l()?;
+                    let mut rect = [0; 4];
+                    for (edge, name) in rect.iter_mut().zip(["left", "top", "right", "bottom"]) {
+                        *edge = env.get_field(&r, name, "I")?.i()?;
+                    }
+                    cutouts.push(rect);
+                }
                 for (i, name) in [
                     "getSafeInsetLeft",
                     "getSafeInsetTop",
@@ -351,7 +366,7 @@ impl Platform {
                     edges[i] = edges[i].max(env.call_method(&cutout, name, "()I", &[])?.i()?);
                 }
             }
-            post(Event::Insets(edges));
+            post(Event::Insets(edges, cutouts));
             Ok(())
         });
     }

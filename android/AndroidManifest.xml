@@ -1,8 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.machinerhythm.psx" android:versionCode="1" android:versionName="0.1.0">
   <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="36" />
   <uses-feature android:glEsVersion="0x00030000" android:required="true" />
-  <application android:label="psx" android:allowBackup="false" android:hasCode="true" android:extractNativeLibs="true" android:theme="@android:style/Theme.Material.NoActionBar" android:enableOnBackInvokedCallback="false">
-    <activity android:name=".PsxActivity" android:exported="true" android:resizeableActivity="true" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|density|uiMode" android:windowSoftInputMode="stateAlwaysHidden">
+  <application android:label="psx" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:hasCode="true" android:extractNativeLibs="true" android:theme="@android:style/Theme.Material.NoActionBar" android:enableOnBackInvokedCallback="false">
+    <activity android:name=".PsxActivity" android:exported="true" android:resizeableActivity="true" android:screenOrientation="fullUser" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|density|uiMode" android:windowSoftInputMode="stateAlwaysHidden">
       <meta-data android:name="android.app.lib_name" android:value="psx" />
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />

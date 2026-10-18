@@ -324,15 +324,24 @@ impl Graphics {
         }
         let w = self.content.w / density;
         let h = self.content.h / density;
+        let origin = [self.content.x / density, self.content.y / density];
+        gl.viewport(0, 0, self.width, self.height);
         let mut canvas = Canvas {
             vertices: Vec::with_capacity(20000),
             w,
             h,
             font: &self.text,
             opacity: 1.,
+            offset: origin,
+            screen: [self.width as f32 / density, self.height as f32 / density],
         };
-        if frame.is_some() && editor.is_none() && visuals.overlay < 1. {
-            canvas.opacity = 1. - visuals.overlay;
+        let volume_popup = menu.is_some_and(|m| m.anchor.is_some());
+        if frame.is_some() && editor.is_none() && (visuals.overlay < 1. || volume_popup) {
+            canvas.opacity = if volume_popup {
+                1.
+            } else {
+                1. - visuals.overlay
+            };
             canvas.dpad(layout.dpad, &visuals.presses, &visuals.dpad);
             for c in &layout.controls {
                 canvas.button(
@@ -341,11 +350,51 @@ impl Graphics {
                     visuals.presses[c.mask.trailing_zeros() as usize],
                 );
             }
+        }
+        if frame.is_some() && editor.is_none() {
+            canvas.opacity = 1.;
             canvas.button(layout.pause, "MENU", 0.);
+            canvas.button(
+                layout.playback,
+                if visuals.playback_paused {
+                    "PLAY"
+                } else {
+                    "PAUSE"
+                },
+                0.,
+            );
+            canvas.button(
+                layout.mute,
+                if visuals.muted { "MUTE" } else { "SOUND" },
+                0.,
+            );
+            canvas.button(
+                layout.speed,
+                match visuals.playback_speed {
+                    2 => "2×",
+                    5 => "5×",
+                    _ => "1×",
+                },
+                0.,
+            );
         }
         canvas.opacity = visuals.overlay;
+        let mut menu_clip = None;
+        let mut menu_start = 0;
         if let Some(menu) = menu {
+            let panel = menu.surface(w, h);
+            if menu.over_game && menu.anchor.is_none() {
+                canvas.polygon(&[(0., 0.), (w, 0.), (w, h), (0., h)], [0., 0., 0., 0.2]);
+            }
+            menu_start = (canvas.vertices.len() / 8) as i32;
+            menu_clip = Some(panel);
+            canvas.w = panel.w;
+            canvas.h = panel.h;
+            canvas.offset = [origin[0] + panel.x, origin[1] + panel.y];
             canvas.menu(menu, visuals.time);
+            canvas.w = w;
+            canvas.h = h;
+            canvas.offset = origin;
         }
         if let Some(editor) = editor {
             canvas.editor(editor);
@@ -370,7 +419,21 @@ impl Graphics {
             canvas.vertices.len() * 4,
         );
         gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
-        gl.draw_arrays(glow::TRIANGLES, 0, (canvas.vertices.len() / 8) as i32);
+        let count = (canvas.vertices.len() / 8) as i32;
+        if let Some(panel) = menu_clip {
+            gl.draw_arrays(glow::TRIANGLES, 0, menu_start);
+            gl.enable(glow::SCISSOR_TEST);
+            gl.scissor(
+                (self.content.x + panel.x * density) as i32,
+                self.height - (self.content.y + (panel.y + panel.h) * density) as i32,
+                (panel.w * density) as i32,
+                (panel.h * density) as i32,
+            );
+            gl.draw_arrays(glow::TRIANGLES, menu_start, count - menu_start);
+            gl.disable(glow::SCISSOR_TEST);
+        } else {
+            gl.draw_arrays(glow::TRIANGLES, 0, count);
+        }
         gl.bind_vertex_array(None);
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
         gl.use_program(saved_program.filter(|program| gl.is_program(*program)));
@@ -416,6 +479,8 @@ struct Canvas<'a> {
     h: f32,
     font: &'a Text,
     opacity: f32,
+    offset: [f32; 2],
+    screen: [f32; 2],
 }
 impl Canvas<'_> {
     fn artwork(&mut self, r: Rect, artwork: &Artwork, time: f64) {
@@ -489,6 +554,9 @@ impl Canvas<'_> {
             self.button(editor.map(c.bounds), c.label, 0.);
         }
         self.button(editor.map(editor.layout.pause), "MENU", 0.);
+        self.button(editor.map(editor.layout.playback), "PAUSE", 0.);
+        self.button(editor.map(editor.layout.speed), "1×", 0.);
+        self.button(editor.map(editor.layout.mute), "SOUND", 0.);
         let selected = if editor.selected < editor.layout.element_count() {
             editor.map(editor.layout.element(editor.selected))
         } else {
@@ -555,32 +623,33 @@ impl Canvas<'_> {
     fn menu(&mut self, menu: &Menu, time: f64) {
         let column = Menu::column(self.w);
         let viewport = menu.viewport(self.w, self.h);
-        let background = [0.035, 0.045, 0.065, 1.];
+        let background = [0.018, 0.028, 0.085, 1.];
         self.polygon(
             &[(0., 0.), (self.w, 0.), (self.w, self.h), (0., self.h)],
-            [0.035, 0.045, 0.065, 0.98],
+            background,
         );
         let total = menu.rows.iter().map(|r| r.height).sum::<f32>();
-        if total > 0. && menu.rows.iter().any(|r| r.enabled) {
-            self.rounded(
-                Rect::new(column.x, viewport.y - menu.scroll, column.w, total),
-                [0.075, 0.09, 0.115, 1.],
-            );
-        }
+        let pressed = menu.pressed_row(self.w, self.h);
         let mut y = viewport.y - menu.scroll;
         for (index, row) in menu.rows.iter().enumerate() {
             if y + row.height > viewport.y && y < viewport.y + viewport.h {
                 if row.enabled {
+                    if pressed == Some(index) {
+                        self.panel(
+                            Rect::new(column.x, y, column.w, row.height),
+                            [0.07, 0.16, 0.29, 1.],
+                        );
+                    }
                     let x = column.x
                         + if row.artwork.is_some() {
-                            80.
+                            64.
                         } else if row.checked.is_some() {
                             52.
                         } else {
                             16.
                         };
                     if let Some(artwork) = &row.artwork {
-                        self.artwork(Rect::new(column.x + 16., y + 12., 48., 48.), artwork, time);
+                        self.artwork(Rect::new(column.x + 12., y + 12., 40., 40.), artwork, time);
                     }
                     if let Some(checked) = row.checked {
                         let r = Rect::new(column.x + 16., y + 26., 20., 20.);
@@ -613,7 +682,9 @@ impl Canvas<'_> {
                         }
                     }
                     let right = column.x + column.w - 16.;
-                    let accessory = if row.toggle.is_some() {
+                    let accessory = if row.slider.is_some() {
+                        72.
+                    } else if row.toggle.is_some() {
                         56.
                     } else if row.checked.is_none() {
                         24.
@@ -623,45 +694,60 @@ impl Canvas<'_> {
                     let width = right - x - accessory;
                     self.text(
                         x,
-                        y + if row.detail.is_empty() { 26. } else { 14. },
+                        y + if row.detail.is_empty() && row.slider.is_none() {
+                            row.height / 2. - 10.
+                        } else {
+                            12.
+                        },
                         &elide(self.font, &row.title, width, 18.),
                         18.,
                         [0.94, 0.96, 1., 1.],
                     );
                     self.text(
                         x,
-                        y + 40.,
+                        y + 36.,
                         &elide(self.font, &row.detail, width, 14.),
                         14.,
                         [0.61, 0.69, 0.78, 1.],
                     );
-                    if let Some(on) = row.toggle {
-                        self.rounded(
-                            Rect::new(right - 40., y + 24., 40., 24.),
+                    if let Some(value) = row.slider {
+                        let label = format!("{value}%");
+                        self.text(
+                            right - self.font.measure(&label, 18.),
+                            y + 14.,
+                            &label,
+                            18.,
+                            [0.75, 0.87, 0.9, 1.],
+                        );
+                        let r = menu.slider_rect(index, self.w, self.h);
+                        let track = Rect::new(r.x + 8., r.y + 21., r.w - 16., 6.);
+                        self.panel(track, [0.12, 0.18, 0.28, 1.]);
+                        let filled = track.w * value as f32 / 100.;
+                        if filled > 0. {
+                            self.panel(
+                                Rect::new(track.x, track.y, filled, track.h),
+                                [0.31, 0.66, 0.82, 1.],
+                            );
+                        }
+                        self.panel(
+                            Rect::new(track.x + filled - 5., r.y + 13., 10., 22.),
+                            [0.80, 0.90, 0.94, 1.],
+                        );
+                    } else if let Some(on) = row.toggle {
+                        self.panel(
+                            Rect::new(right - 44., y + 19., 44., 26.),
+                            [0.03, 0.07, 0.15, 1.],
+                        );
+                        self.text(
+                            right - 37.,
+                            y + 24.,
+                            if on { "ON" } else { "OFF" },
+                            14.,
                             if on {
-                                [0.12, 0.55, 0.46, 1.]
+                                [0.5, 0.95, 0.76, 1.]
                             } else {
-                                [0.25, 0.29, 0.34, 1.]
+                                [0.62, 0.7, 0.8, 1.]
                             },
-                        );
-                        self.disc(
-                            right - if on { 12. } else { 28. },
-                            y + 36.,
-                            9.,
-                            [0.9, 0.96, 0.94, 1.],
-                        );
-                    } else if row.checked.is_none() {
-                        self.line(
-                            (right - 8., y + 31.),
-                            (right - 3., y + 36.),
-                            1.5,
-                            [0.5, 0.58, 0.67, 1.],
-                        );
-                        self.line(
-                            (right - 3., y + 36.),
-                            (right - 8., y + 41.),
-                            1.5,
-                            [0.5, 0.58, 0.67, 1.],
                         );
                     }
                     if index + 1 < menu.rows.len() {
@@ -697,7 +783,22 @@ impl Canvas<'_> {
             ],
             background,
         );
-        if menu.home {
+        if menu.anchor.is_some() {
+            let close = Menu::settings_rect(self.w);
+            let (x, y) = (close.x + 24., close.y + 24.);
+            self.line(
+                (x - 6., y - 6.),
+                (x + 6., y + 6.),
+                2.,
+                [0.85, 0.94, 0.96, 1.],
+            );
+            self.line(
+                (x - 6., y + 6.),
+                (x + 6., y - 6.),
+                2.,
+                [0.85, 0.94, 0.96, 1.],
+            );
+        } else if menu.home {
             let add = Menu::add_rect(self.w);
             let (x, y) = (add.x + 24., add.y + 24.);
             self.line((x - 9., y), (x + 9., y), 2., [0.85, 0.94, 0.96, 1.]);
@@ -711,17 +812,22 @@ impl Canvas<'_> {
             self.line((x - 8., y), (x - 1., y - 7.), 2., [0.85, 0.94, 0.96, 1.]);
             self.line((x - 8., y), (x - 1., y + 7.), 2., [0.85, 0.94, 0.96, 1.]);
         }
-        let title_x = column.x + if menu.home { 0. } else { 48. };
+        let title_x = column.x
+            + if menu.home || menu.anchor.is_some() {
+                0.
+            } else {
+                48.
+            };
         self.text(
             title_x,
             17.,
             &elide(
                 self.font,
-                &menu.title,
+                &menu.title.to_uppercase(),
                 column.w - if menu.home { 112. } else { 48. },
-                26.,
+                22.,
             ),
-            26.,
+            22.,
             [0.95, 0.97, 1., 1.],
         );
         for (i, line) in menu.description_lines.iter().take(4).enumerate() {
@@ -736,7 +842,7 @@ impl Canvas<'_> {
         if menu.has_footer() {
             let back = Menu::back_rect(self.w, self.h);
             if menu.back != "Cancel" {
-                self.rounded(back, [0.11, 0.45, 0.40, 1.]);
+                self.panel(back, [0.06, 0.15, 0.28, 1.]);
             }
             self.text(
                 back.x + (back.w - self.font.measure(&menu.back, 17.)) / 2.,
@@ -754,6 +860,37 @@ impl Canvas<'_> {
                 [0.36, 0.47, 0.57, 0.8],
             );
         }
+        if menu.over_game {
+            self.frame(Rect::new(1., 1., self.w - 2., self.h - 2.));
+        }
+    }
+    fn panel(&mut self, r: Rect, color: [f32; 4]) {
+        self.polygon(
+            &[
+                (r.x, r.y),
+                (r.x + r.w, r.y),
+                (r.x + r.w, r.y + r.h),
+                (r.x, r.y + r.h),
+            ],
+            color,
+        );
+        self.frame(r);
+    }
+    fn frame(&mut self, r: Rect) {
+        self.line((r.x, r.y + r.h), (r.x, r.y), 1., [0.30, 0.40, 0.55, 1.]);
+        self.line((r.x, r.y), (r.x + r.w, r.y), 1., [0.42, 0.52, 0.65, 1.]);
+        self.line(
+            (r.x + r.w, r.y),
+            (r.x + r.w, r.y + r.h),
+            1.,
+            [0.10, 0.17, 0.28, 1.],
+        );
+        self.line(
+            (r.x + r.w, r.y + r.h),
+            (r.x, r.y + r.h),
+            1.,
+            [0.10, 0.17, 0.28, 1.],
+        );
     }
     /// Convex or star-shaped polygon, with the mean point inside its boundary.
     fn polygon(&mut self, points: &[(f32, f32)], c: [f32; 4]) {
@@ -765,8 +902,8 @@ impl Canvas<'_> {
         for i in 0..points.len() {
             for (x, y) in [center, points[i], points[(i + 1) % points.len()]] {
                 self.vertices.extend_from_slice(&[
-                    x / self.w * 2. - 1.,
-                    1. - y / self.h * 2.,
+                    (x + self.offset[0]) / self.screen[0] * 2. - 1.,
+                    1. - (y + self.offset[1]) / self.screen[1] * 2.,
                     c[0],
                     c[1],
                     c[2],
@@ -778,16 +915,16 @@ impl Canvas<'_> {
         }
     }
     fn disc(&mut self, x: f32, y: f32, radius: f32, c: [f32; 4]) {
-        let points: [_; 32] = std::array::from_fn(|i| {
-            let angle = i as f32 / 32. * std::f32::consts::TAU;
+        let points: [_; 96] = std::array::from_fn(|i| {
+            let angle = i as f32 / 96. * std::f32::consts::TAU;
             (x + angle.cos() * radius, y + angle.sin() * radius)
         });
         self.polygon(&points, c);
     }
     fn ring(&mut self, x: f32, y: f32, radius: f32, width: f32, c: [f32; 4]) {
-        for i in 0..32 {
-            let a = i as f32 / 32. * std::f32::consts::TAU;
-            let b = (i + 1) as f32 / 32. * std::f32::consts::TAU;
+        for i in 0..96 {
+            let a = i as f32 / 96. * std::f32::consts::TAU;
+            let b = (i + 1) as f32 / 96. * std::f32::consts::TAU;
             self.polygon(
                 &[
                     (x + a.cos() * radius, y + a.sin() * radius),
@@ -847,38 +984,34 @@ impl Canvas<'_> {
         let inset = well_radius - radius;
         let x = r.x + r.w / 2. + movement.center[0] * inset;
         let y = r.y + r.h / 2. + movement.center[1] * inset;
-        // Both the following base and thumb marker stay inside the reserved
-        // control well, even when the captured finger drifts over the picture.
-        if movement.active > 0. {
-            self.ring(
-                r.x + r.w / 2.,
-                r.y + r.h / 2.,
-                well_radius - 1.,
-                1.,
-                [0.85, 0.93, 1., 0.12 * movement.active],
-            );
-        }
-        self.disc(x, y, radius, [0.025, 0.04, 0.06, 0.38]);
-        self.ring(x, y, radius - 1., 1., [0.85, 0.93, 1., 0.28]);
+        // A digital cross communicates eight-way PS1 input. Its forgiving
+        // capture well and following behavior do not need a circular outline.
+        // The cross and marker stay inside the reserved well during drift.
         let arm = radius * 0.91;
         let half = radius * 0.31;
-        self.polygon(
-            &[
-                (x - half, y - arm),
-                (x + half, y - arm),
-                (x + half, y - half),
-                (x + arm, y - half),
-                (x + arm, y + half),
-                (x + half, y + half),
-                (x + half, y + arm),
-                (x - half, y + arm),
-                (x - half, y + half),
-                (x - arm, y + half),
-                (x - arm, y - half),
-                (x - half, y - half),
-            ],
-            [0.055, 0.075, 0.10, 0.72],
-        );
+        let outline = [
+            (x - half, y - arm),
+            (x + half, y - arm),
+            (x + half, y - half),
+            (x + arm, y - half),
+            (x + arm, y + half),
+            (x + half, y + half),
+            (x + half, y + arm),
+            (x - half, y + arm),
+            (x - half, y + half),
+            (x - arm, y + half),
+            (x - arm, y - half),
+            (x - half, y - half),
+        ];
+        self.polygon(&outline, [0.065, 0.09, 0.12, 0.9]);
+        for i in 0..outline.len() {
+            self.line(
+                outline[i],
+                outline[(i + 1) % outline.len()],
+                1.2,
+                [0.65, 0.76, 0.84, 0.65],
+            );
+        }
         for (dx, dy, bit) in [(0., -1., 4), (-1., 0., 6), (1., 0., 7), (0., 1., 5)] {
             let ax = x + dx * radius * 0.65;
             let ay = y + dy * radius * 0.65;
@@ -915,8 +1048,8 @@ impl Canvas<'_> {
             let top = baseline + glyph.offset[1] * scale;
             for (dx, dy) in [(0., 0.), (1., 0.), (0., 1.), (0., 1.), (1., 0.), (1., 1.)] {
                 self.vertices.extend_from_slice(&[
-                    (left + dx * glyph.size[0] * scale) / self.w * 2. - 1.,
-                    1. - (top + dy * glyph.size[1] * scale) / self.h * 2.,
+                    (left + self.offset[0] + dx * glyph.size[0] * scale) / self.screen[0] * 2. - 1.,
+                    1. - (top + self.offset[1] + dy * glyph.size[1] * scale) / self.screen[1] * 2.,
                     c[0],
                     c[1],
                     c[2],
@@ -931,7 +1064,14 @@ impl Canvas<'_> {
     fn button(&mut self, r: Rect, label: &str, strength: f32) {
         let idle = [0.08, 0.11, 0.15, 0.9];
         let pressed = [0.10, 0.58, 0.51, 0.94];
-        let background = std::array::from_fn(|i| idle[i] + (pressed[i] - idle[i]) * strength);
+        let background = if matches!(
+            label,
+            "MENU" | "PAUSE" | "PLAY" | "SOUND" | "MUTE" | "1×" | "2×" | "5×"
+        ) {
+            [0.; 4]
+        } else {
+            std::array::from_fn(|i| idle[i] + (pressed[i] - idle[i]) * strength)
+        };
         let x = r.x + r.w / 2.;
         let y = r.y + r.h / 2.;
         if matches!(label, "TRI" | "O" | "X" | "SQ") {
@@ -976,12 +1116,54 @@ impl Canvas<'_> {
             }
             return;
         }
-        self.rounded(r, background);
+        if background[3] > 0. {
+            self.panel(r, background);
+        }
         if label == "MENU" {
             self.cog(x, y);
             return;
         }
-        let size = 22_f32.min(r.h * 0.5);
+        if label == "PAUSE" {
+            for left in [x - 8., x + 3.] {
+                self.rounded(Rect::new(left, y - 10., 5., 20.), [0.9, 0.95, 1., 1.]);
+            }
+            return;
+        }
+        if label == "PLAY" {
+            self.polygon(
+                &[(x - 7., y - 11.), (x + 10., y), (x - 7., y + 11.)],
+                [0.55, 0.95, 0.79, 1.],
+            );
+            return;
+        }
+        if matches!(label, "MUTE" | "SOUND") {
+            let color = [0.85, 0.92, 0.98, 1.];
+            self.polygon(
+                &[
+                    (x - 12., y - 4.),
+                    (x - 7., y - 4.),
+                    (x, y - 10.),
+                    (x, y + 10.),
+                    (x - 7., y + 4.),
+                    (x - 12., y + 4.),
+                ],
+                color,
+            );
+            if label == "MUTE" {
+                self.line((x + 4., y - 5.), (x + 12., y + 5.), 2., color);
+                self.line((x + 4., y + 5.), (x + 12., y - 5.), 2., color);
+            } else {
+                self.line((x + 5., y - 8.), (x + 10., y), 2., color);
+                self.line((x + 10., y), (x + 5., y + 8.), 2., color);
+            }
+            return;
+        }
+        let size = (if matches!(label, "START" | "SELECT") {
+            14_f32
+        } else {
+            18_f32
+        })
+        .min(r.h * 0.5);
         self.text(
             r.x + (r.w - self.font.measure(label, size)) / 2.,
             r.y + (r.h - size) / 2.,
