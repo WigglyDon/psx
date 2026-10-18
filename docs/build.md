@@ -91,3 +91,25 @@ UI. Keep raw device logs and media private.
 
 An AAB/store package and physical iOS check are later delivery work; this APK
 does not establish either store's acceptance.
+
+## Release source bundle
+
+From a clean, reviewed Git checkout, run `cargo xtask source`. This exports
+the committed project and exact pinned SwanStation tree, includes the locked
+Rust dependencies with their original notices, and writes
+`build/psx-source-<revision>.tar.gz` plus its SHA-256 file. It exports Git
+objects rather than copying the working directory; ignored games, firmware,
+cards, captures, signing keys and local logs are excluded.
+
+Extract the archive, enter its directory and follow the build steps above.
+Its Cargo configuration uses the included Rust dependency sources, allowing
+`cargo test --workspace --locked --offline` without downloading crates.
+The Android SDK/NDK, Rust toolchain, JDK and other build tools are still
+required separately. Without Git metadata, the build verifies the recorded
+core inventory and exact upstream license instead of querying a submodule.
+Each developer generates their own private development signing key.
+
+Pair any distributed APK with the source bundle for its exact project
+revision, required notices and build instructions. Source packaging is one
+part of release preparation; it does not settle the store/distribution
+questions in [distribution.md](distribution.md).

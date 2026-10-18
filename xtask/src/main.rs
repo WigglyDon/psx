@@ -6,7 +6,7 @@ use std::{
     io::{self, Read},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, ExitCode},
+    process::{Command, ExitCode, Stdio},
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -28,8 +28,9 @@ fn run() -> Result<()> {
         Some("apk") => apk(),
         Some("verify") => verify_apk(),
         Some("notices") => notices(),
+        Some("source") => source_bundle(),
         _ => {
-            eprintln!("Usage: cargo xtask apk | verify | notices\nSet ANDROID_SDK_ROOT, ANDROID_NDK_HOME, ANDROID_BUILD_TOOLS (default 37.0.0), ANDROID_PLATFORM (default android-37.0). Compile SDK may exceed target API 36. Requires Java with javac module, cmake, ninja, zip, unzip, Rust Android target.");
+            eprintln!("Usage: cargo xtask apk | verify | notices | source\nSet ANDROID_SDK_ROOT, ANDROID_NDK_HOME, ANDROID_BUILD_TOOLS (default 37.0.0), ANDROID_PLATFORM (default android-37.0). Compile SDK may exceed target API 36. Requires Java with javac module, cmake, ninja, zip, unzip, Rust Android target. Source bundles also use tar, gzip and cargo vendor.");
             Ok(())
         }
     }
@@ -87,16 +88,169 @@ fn hash(path: &Path) -> Result<String> {
     }
     Ok(format!("{:x}", hash.finalize()))
 }
+
+fn archive_into(repository: &Path, revision: &str, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    let mut archive = command("git", ["archive", "--format=tar", revision])
+        .current_dir(repository)
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let extracted = command(
+        "tar",
+        [
+            OsStr::new("-xf"),
+            OsStr::new("-"),
+            OsStr::new("-C"),
+            destination.as_os_str(),
+        ],
+    )
+    .stdin(Stdio::from(
+        archive.stdout.take().ok_or("Missing archive output")?,
+    ))
+    .status()?;
+    let archived = archive.wait()?;
+    if !archived.success() || !extracted.success() {
+        return Err("Source archive extraction failed.".into());
+    }
+    Ok(())
+}
+
+fn source_bundle() -> Result<()> {
+    if !Path::new(".git").exists() {
+        return Err("Create source bundles from the reviewed Git checkout.".into());
+    }
+    verify_core()?;
+    if !output(&mut command("git", ["status", "--porcelain"]))?
+        .trim()
+        .is_empty()
+    {
+        return Err("Commit public source changes before creating a release source bundle.".into());
+    }
+    let revision = output(&mut command("git", ["rev-parse", "HEAD"]))?
+        .trim()
+        .to_owned();
+    let short = &revision[..12];
+    let name = format!("psx-source-{short}");
+    let staging = Path::new("build/source-bundles").join(&name);
+    // Only tracked public project/core files enter this tree. Private ignored
+    // games, logs, cards and keys never participate in recursive host copying.
+    let marker = staging.join(".psx-source-bundle");
+    if staging.exists() {
+        if !fs::read_to_string(&marker).is_ok_and(|value| value == revision) {
+            return Err("Source staging directory lacks this task's revision marker.".into());
+        }
+        fs::remove_dir_all(&staging)?;
+    }
+    fs::create_dir_all(&staging)?;
+    fs::write(&marker, &revision)?;
+    archive_into(Path::new("."), &revision, &staging)?;
+    archive_into(
+        Path::new("vendor/swanstation"),
+        CORE_REV,
+        &staging.join("vendor/swanstation"),
+    )?;
+    fs::write(
+        staging.join("SOURCE-CHECK.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "projectRevision": revision,
+            "coreRevision": CORE_REV,
+            "coreCommitTimestamp": core_epoch()?,
+            "coreSourceSha256": core_source_hash(&staging.join("vendor/swanstation"))?,
+        }))?,
+    )?;
+    let crates = staging.join("vendor/rust");
+    execute(&mut command(
+        "cargo",
+        [
+            OsStr::new("vendor"),
+            OsStr::new("--locked"),
+            OsStr::new("--versioned-dirs"),
+            crates.as_os_str(),
+        ],
+    ))?;
+    let config = staging.join(".cargo/config.toml");
+    let mut content = fs::read_to_string(&config)?;
+    content.push_str("\n[source.crates-io]\nreplace-with = \"release-vendor\"\n\n[source.release-vendor]\ndirectory = \"vendor/rust\"\n");
+    fs::write(config, content)?;
+    fs::write(staging.join("SOURCE-REVISION.txt"), format!("psx {revision}\nSwanStation {CORE_REV}\n\nRust crates are included under vendor/rust with their original notices.\nSee docs/build.md. SDK/NDK, the Rust toolchain and development signing keys are not included.\n"))?;
+    let destination = Path::new("build").join(format!("{name}.tar.gz"));
+    let mut tar = command(
+        "tar",
+        [
+            OsStr::new("--sort=name"),
+            OsStr::new("--mtime=@0"),
+            OsStr::new("--owner=0"),
+            OsStr::new("--group=0"),
+            OsStr::new("--numeric-owner"),
+            OsStr::new("--exclude=.psx-source-bundle"),
+            OsStr::new("-cf"),
+            OsStr::new("-"),
+            OsStr::new("-C"),
+            OsStr::new("build/source-bundles"),
+            OsStr::new(&name),
+        ],
+    )
+    .stdout(Stdio::piped())
+    .spawn()?;
+    let packed = command("gzip", ["-n"])
+        .stdin(Stdio::from(tar.stdout.take().ok_or("Missing tar output")?))
+        .stdout(fs::File::create(&destination)?)
+        .status()?;
+    let archived = tar.wait()?;
+    if !packed.success() || !archived.success() {
+        return Err("Source bundle compression failed.".into());
+    }
+    let digest = hash(&destination)?;
+    fs::write(
+        destination.with_extension("gz.sha256"),
+        format!("{digest}  {name}.tar.gz\n"),
+    )?;
+    println!(
+        "Source bundle: {}\nSHA-256: {digest}",
+        destination.display()
+    );
+    Ok(())
+}
+
+fn core_source_hash(root: &Path) -> Result<String> {
+    let mut files = Vec::new();
+    walk(root, &mut files)?;
+    files.sort();
+    let mut digest = Sha256::new();
+    for file in files {
+        let relative = file.strip_prefix(root)?;
+        if relative == Path::new(".git") || relative == Path::new("src/libretro/version.h") {
+            continue;
+        }
+        digest.update(relative.as_os_str().as_encoded_bytes());
+        digest.update([0]);
+        digest.update(hash(&file)?.as_bytes());
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 fn verify_core() -> Result<()> {
+    if hash(Path::new("vendor/swanstation/LICENSE"))? != CORE_LICENSE {
+        return Err("SwanStation license differs from the reviewed upstream copy.".into());
+    }
+    if !Path::new(".git").exists() && !Path::new("vendor/swanstation/.git").exists() {
+        // Release source archives have no Git metadata. Their original core
+        // inventory is recorded after exporting the verified pinned revision.
+        let source: serde_json::Value = serde_json::from_slice(&fs::read("SOURCE-CHECK.json")?)?;
+        if source["coreRevision"].as_str() != Some(CORE_REV)
+            || source["coreSourceSha256"].as_str()
+                != Some(core_source_hash(Path::new("vendor/swanstation"))?.as_str())
+        {
+            return Err("Source-bundle core differs from its recorded pinned inventory.".into());
+        }
+        return Ok(());
+    }
     let rev = output(&mut command(
         "git",
         ["-C", "vendor/swanstation", "rev-parse", "HEAD"],
     ))?;
     if rev.trim() != CORE_REV {
         return Err("SwanStation revision differs from upstream.lock.json.".into());
-    }
-    if hash(Path::new("vendor/swanstation/LICENSE"))? != CORE_LICENSE {
-        return Err("SwanStation license differs from the reviewed upstream copy.".into());
     }
     let changes = output(&mut command(
         "git",
@@ -110,6 +264,31 @@ fn verify_core() -> Result<()> {
     }
     Ok(())
 }
+
+fn core_epoch() -> Result<String> {
+    if Path::new("vendor/swanstation/.git").exists() {
+        return Ok(output(&mut command(
+            "git",
+            [
+                "-C",
+                "vendor/swanstation",
+                "show",
+                "-s",
+                "--format=%ct",
+                "HEAD",
+            ],
+        ))?
+        .trim()
+        .to_owned());
+    }
+    let source: serde_json::Value = serde_json::from_slice(&fs::read("SOURCE-CHECK.json")?)?;
+    Ok(source["coreCommitTimestamp"]
+        .as_str()
+        .filter(|value| value.parse::<u64>().is_ok())
+        .ok_or("Missing source-bundle core timestamp")?
+        .to_owned())
+}
+
 fn apk() -> Result<()> {
     verify_core()?;
     let (sdk, ndk, build) = tools()?;
@@ -121,17 +300,7 @@ fn apk() -> Result<()> {
     fs::create_dir_all("build/apk/classes")?;
     fs::create_dir_all("build/apk/dex")?;
     let toolchain = ndk.join("build/cmake/android.toolchain.cmake");
-    let epoch = output(&mut command(
-        "git",
-        [
-            "-C",
-            "vendor/swanstation",
-            "show",
-            "-s",
-            "--format=%ct",
-            "HEAD",
-        ],
-    ))?;
+    let epoch = core_epoch()?;
     execute(
         command(
             "cmake",
@@ -149,6 +318,8 @@ fn apk() -> Result<()> {
                 "-DCMAKE_BUILD_TYPE=Release",
                 "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384",
                 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                &format!("-DGIT_HASH={}", &CORE_REV[..7]),
+                &format!("-DGIT_VERSION={CORE_REV}"),
             ],
         )
         .env("SOURCE_DATE_EPOCH", epoch.trim()),
@@ -489,6 +660,7 @@ fn copy_notices(source: &Path, destination: &Path) -> Result<usize> {
     Ok(count)
 }
 fn notices() -> Result<()> {
+    verify_core()?;
     let destination = Path::new("build/apk/assets/notices");
     fs::create_dir_all(destination.join("host"))?;
     fs::copy("LICENSE", destination.join("host/LICENSE"))?;
