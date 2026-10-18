@@ -84,3 +84,33 @@ source/license access and a privacy description matching actual behavior.
 The product direction is local files with no accounts, analytics or uploads
 required for play. Games and proprietary firmware remain user-provided local
 inputs. Publishing the project source does not publish those inputs.
+
+## First implementation feasibility finding
+
+The exact pinned source includes `Interpreter` and `CachedInterpreter` CPU
+modes. `src/core/cpu_code_cache.cpp` allocates executable code only when
+`IsUsingRecompiler()` is true. The candidate stock-iOS route is therefore
+the existing cached interpreter, with no JIT privileges. The actual current
+hardware host contract is OpenGL ES 3.0 through libretro; an iOS adapter would
+need a signed bundled core and a real EAGL presentation check. There is no
+implemented Metal adapter. These are source findings and an integration
+candidate, not an iOS execution or performance result.
+
+This implementation session has no authorized Mac/Xcode and physical-iOS
+test environment. Non-JIT iOS gameplay/audio and presentation remain
+unverified. No full iOS port, new CPU engine or graphics-backend rewrite is
+authorized by that missing evidence.
+
+The root core license and inherited dependency files are retained unchanged
+in the submodule. The development APK also carries original license files
+under `assets/notices`, including OpenBIOS (MIT), VIXL, libchdr and Rust
+dependency notices. GPL obligations apply to the bundled combination;
+publication of the MIT host does not settle store terms. No additional
+marketplace permission for this application has been obtained. Accordingly
+SwanStation is still a prototype candidate for the two-store product.
+
+Rechecked primary store/platform guidance on 2026-10-18: Google requires
+target API 36 for new phone apps; Android requires both native alignment and
+runtime testing for 16 KB support. Apple 4.7 addresses emulator apps, while
+Libretro documents its own marketplace-specific upstream approvals. The
+linked guidance above supports keeping these as explicit release gates.

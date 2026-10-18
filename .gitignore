@@ -11,6 +11,8 @@ local.properties
 *.aab
 *.keystore
 *.jks
+*.p12
+*.srm
+*.mcd
 .env
 .env.*
-

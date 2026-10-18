@@ -21,11 +21,38 @@ donor change if necessary; it does not call for a user-facing core selector.
 
 ## Android
 
-Start with Rust Android/NDK bindings and NativeActivity as a candidate for
-the first host. The runtime, controls, UI and save/file policies remain Rust.
-Prove the document-picker result path explicitly; NativeActivity alone does
-not establish that every Android callback can be implemented without a small
-platform shim.
+The implementation is the `psx-player` Rust crate plus `psx-android`.
+`psx-player` owns pause policy, touch layouts, audio buffering, imports,
+memory-card durability and the narrow libretro host. It has no Android
+handles. `psx-android` owns only platform event/SDK calls, EGL/window
+presentation and AAudio delivery. Rust `xtask` builds and packages the app.
+See [build.md](build.md) for the callback-only platform shim.
+
+`android_main` is the sole core/GL owner. The core is deliberately neither
+Send nor Sync. A thread-local session callback pointer remains live through
+unload/deinit. Audio callbacks consume a bounded atomic stereo FIFO and never
+enter the core or perform file work. A separate import worker streams user
+documents; it never owns emulation or GL. Native Android dialogs provide
+standard accessible menus and errors; the game and touch controls use GLES.
+
+The fixed renderer is SwanStation OpenGL ES 3.0 at 1x resolution. The host
+negotiates the exact context version, provides a persistent framebuffer,
+calls context reset after game load and context destroy while current before
+unload. A pbuffer keeps the same context current across Android surface
+replacement; the emulated machine is retained. A NULL frame preserves the
+previous picture. Hardware-frame and software-frame counts remain distinct.
+
+The existing recompiler with LUT fast memory is used on 4 KB Android. On
+other host page sizes the existing cached interpreter avoids the donor's
+4 KB JIT guard assumptions. This is preparation, not measured 16 KB support.
+Frame pacing follows the donor's reported PAL/NTSC timing, with small bounded
+audio-fill correction and no unbounded catch-up. Intentional pause survives
+lifecycle changes; input is released and audio is closed on interruption.
+
+Rust Android/NDK bindings and NativeActivity implement the first host.
+The runtime, controls, UI and save/file policies remain Rust. The generated
+callback shim completes the document-picker result path; its actual use
+still requires device evidence.
 
 Prefer existing core rendering paths and direct native audio delivery. Avoid
 unnecessary full-frame copies through managed UI and unbounded queues. Use
@@ -53,6 +80,11 @@ Keep this a bounded feasibility check alongside Android first playable,
 not a second full product implementation.
 
 ## Files and saves
+
+The implemented format/grant/card contract and current limits are in
+[formats.md](formats.md). Neither an archive nor a content URI is passed as
+an ordinary path. Successfully imported private copies survive provider
+revocation, and recent metadata is updated only for a loaded session.
 
 The ordinary action is to select one game. Android content URIs are access
 handles, not ordinary filesystem paths. Use system document pickers and keep

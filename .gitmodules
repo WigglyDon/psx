@@ -1,0 +1,3 @@
+[submodule "vendor/swanstation"]
+	path = vendor/swanstation
+	url = https://github.com/libretro/swanstation.git

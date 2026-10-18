@@ -6,8 +6,10 @@ A small native PlayStation 1 player from Machine Rhythm.
 
 ## Status
 
-Project foundation. No application build, APK or device gameplay has been
-qualified yet. The first implementation target is a stock Android foldable.
+The Rust Android host and pinned SwanStation core build into a development
+APK. Host tests and ARM64/signature/16 KB alignment checks pass; device
+gameplay, sound and restart saving have not yet been qualified.
+The first implementation target is a stock Android foldable.
 The product is intended for eventual Google Play and Apple App Store release.
 Store acceptance and iOS performance have not been established.
 
@@ -27,7 +29,9 @@ Store acceptance and iOS performance have not been established.
   pause/resume and accessible navigation. Development diagnostics stay hidden
   from the ordinary play flow.
 
-The initial milestone is [FIRST-PLAYABLE-1](docs/first-playable.md).
+The active milestone is [FIRST-PLAYABLE-1 #1](https://github.com/WigglyDon/psx/issues/1).
+[Build instructions](docs/build.md) produce the development APK.
+[Files and saves](docs/formats.md) describe supported inputs and current limits.
 [Architecture](docs/architecture.md) records the small ownership boundary.
 [Distribution](docs/distribution.md) records the early store requirements,
 including iOS execution without JIT and the borrowed core's licensing.
@@ -46,7 +50,7 @@ not claim authorship of those emulation engines. The exact initial core
 revision is recorded in [upstream.lock.json](upstream.lock.json); attribution
 and incorporation requirements are in [THIRD_PARTY.md](THIRD_PARTY.md).
 
-This foundation records a pinned candidate dependency; the core has not yet been
-incorporated or built here. Game images and proprietary firmware are not
-part of this repository.
+The core is retained unchanged as a pinned Git submodule. License files from
+the core and Rust dependencies are also packaged inside the development APK.
+Game images and proprietary firmware are not part of this repository.
 

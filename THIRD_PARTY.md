@@ -5,8 +5,8 @@
 - Upstream: https://github.com/libretro/swanstation
 - Pinned candidate revision: `e436e9b85374def58d211df7f78880f0f4a917b4`
 - Revision URL: https://github.com/libretro/swanstation/commit/e436e9b85374def58d211df7f78880f0f4a917b4
-- Planned role: existing PS1 emulation core, to be integrated through its
-  libretro C ABI.
+- Role: existing PS1 emulation core, integrated through its libretro C ABI
+  at the pinned `vendor/swanstation` Git submodule.
 - Lineage: SwanStation is an independent hard fork of DuckStation. Credit the
   SwanStation contributors, the DuckStation authors/contributors and the
   owners named in their retained source notices.
@@ -16,12 +16,17 @@
 - Exact retained license copy: [SwanStation-GPL-3.0.txt](LICENSES/SwanStation-GPL-3.0.txt).
 - License blob SHA-1: `94a9ed024d3859793618152ea559a168bbcbb5e2`.
 - License SHA-256: `8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903`.
-- Local source modifications at foundation: none; the core implementation
-  has not yet been incorporated.
+- Local source modifications: none. CMake's generated, upstream-ignored
+  `src/libretro/version.h` is a build output, not an emulation change.
 
 The pinned upstream tree vendors additional dependencies under `dep/`.
-When incorporating the tree, preserve their license/copyright files and
-record which inputs enter the delivered build. This file does not relicense
+The complete tree and notices are retained. The Android target builds core,
+common, GLAD, the Vulkan loader, libretro-common, libchdr (including LZMA,
+miniz and Zstandard inputs), stb, xxHash, VIXL, the embedded OpenBIOS from
+PCSX-Redux (MIT) and the NDK static C++ runtime. Exact per-file terms remain
+in those source directories, including embedded header notices where no
+standalone license file exists. `cargo xtask notices` copies the upstream
+license/notice files into APK assets without rewriting them. This file does not relicense
 those dependencies or claim authorship of borrowed work.
 
 Google Play and Apple App Store distribution are intended product goals.
@@ -34,12 +39,17 @@ See [distribution.md](docs/distribution.md).
 
 ## Rust Android integration
 
-`android-activity` is the current host candidate:
+`android-activity` 0.6.1 supplies the NativeActivity host:
 https://github.com/rust-mobile/android-activity
 
-It is not yet a declared or incorporated dependency in this foundation.
-The implementation must select and pin the actual Rust/Android dependencies
-and retain their applicable licenses before distribution.
+It is MIT OR Apache-2.0; the build selects the MIT option where offered.
+Other direct Rust dependencies are `ndk` 0.9.0, JNI, khronos-egl, glow,
+android_logger, log, libloading, font8x8, libc, serde/serde_json and sha2.
+`Cargo.lock` pins all versions and registry checksums. The packaged
+`assets/notices/INDEX.txt` lists dependency versions, declared license terms
+and source links; retained license files are alongside it. The index also
+includes build-only and other-platform Cargo dependencies for completeness.
+The build retains Rust toolchain and NDK notices for linked runtime material.
 
 ## Original contributions
 
