@@ -2,7 +2,7 @@
 use crate::artwork::Artwork;
 use crate::input::{Layout, Preset, Rect};
 
-pub const ROW_HEIGHT: f32 = 88.;
+pub const ROW_HEIGHT: f32 = 72.;
 
 #[derive(Default)]
 pub struct Row {
@@ -12,6 +12,7 @@ pub struct Row {
     pub enabled: bool,
     pub height: f32,
     pub artwork: Option<Artwork>,
+    pub toggle: Option<bool>,
 }
 
 /// Visual response never delays logical input. Bounded interpolation keeps
@@ -107,8 +108,26 @@ enum EditorPointer {
     },
     Button {
         id: i32,
-        index: usize,
+        button: EditorButton,
     },
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum EditorButton {
+    Next,
+    Reset,
+    Cancel,
+    Done,
+}
+impl EditorButton {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Next => "Next",
+            Self::Reset => "Reset",
+            Self::Cancel => "Cancel",
+            Self::Done => "Done",
+        }
+    }
 }
 impl EditorPointer {
     fn id(self) -> i32 {
@@ -136,7 +155,7 @@ impl Editor {
         }
     }
     pub fn preview(&self) -> Rect {
-        Rect::new(24., 124., self.width - 48., (self.height - 212.).max(24.))
+        Rect::new(24., 124., self.width - 48., (self.height - 276.).max(24.))
             .fit(self.width / self.height)
     }
     pub fn map(&self, rect: Rect) -> Rect {
@@ -149,13 +168,29 @@ impl Editor {
             rect.h * scale,
         )
     }
-    pub fn buttons(&self) -> [Rect; 3] {
+    pub fn buttons(&self) -> Vec<(Rect, EditorButton)> {
         let bottom = (self.width - 40.) / 2.;
-        [
-            Rect::new(self.width - 96., 16., 80., 48.),
-            Rect::new(16., self.height - 64., bottom, 52.),
-            Rect::new(24. + bottom, self.height - 64., bottom, 52.),
-        ]
+        let mut buttons = vec![
+            (
+                Rect::new(self.width - 96., 16., 80., 48.),
+                EditorButton::Next,
+            ),
+            (
+                Rect::new(16., self.height - 64., bottom, 52.),
+                EditorButton::Cancel,
+            ),
+            (
+                Rect::new(24. + bottom, self.height - 64., bottom, 52.),
+                EditorButton::Done,
+            ),
+        ];
+        if !self.selected_is_default() {
+            buttons.push((
+                Rect::new(16., self.height - 128., self.width - 32., 48.),
+                EditorButton::Reset,
+            ));
+        }
+        buttons
     }
     fn selected_bounds(&self) -> Rect {
         if self.selected < self.layout.element_count() {
@@ -164,14 +199,28 @@ impl Editor {
             self.layout.game
         }
     }
+    pub fn selected_is_default(&self) -> bool {
+        let expected = if self.selected < self.layout.element_count() {
+            Layout::new(self.width, self.height).element(self.selected)
+        } else {
+            let mut reset = self.preset.clone();
+            reset.game_scale = 1.;
+            reset.game_offset = [0.5, 0.5];
+            reset.layout(self.width, self.height).game
+        };
+        self.selected_bounds().same_bounds(expected)
+    }
     /// Visible corner grips share the same 48-point touch areas as rendering.
     pub fn handles(&self) -> [(f32, f32); 4] {
         let r = self.map(self.selected_bounds());
+        // Small preview controls need room between corner touch areas and the
+        // movable center. Outset their grips rather than stealing center drags.
+        let outset = ((56. - r.w.min(r.h)) / 2.).max(0.);
         [
-            (r.x, r.y),
-            (r.x + r.w, r.y),
-            (r.x + r.w, r.y + r.h),
-            (r.x, r.y + r.h),
+            (r.x - outset, r.y - outset),
+            (r.x + r.w + outset, r.y - outset),
+            (r.x + r.w + outset, r.y + r.h + outset),
+            (r.x - outset, r.y + r.h + outset),
         ]
     }
     pub fn selected_name(&self) -> &str {
@@ -185,8 +234,8 @@ impl Editor {
         if self.pointer.is_some() {
             return;
         }
-        if let Some(index) = self.buttons().iter().position(|r| r.contains(x, y)) {
-            self.pointer = Some(EditorPointer::Button { id, index });
+        if let Some((_, button)) = self.buttons().into_iter().find(|(r, _)| r.contains(x, y)) {
+            self.pointer = Some(EditorPointer::Button { id, button });
             return;
         }
         if let Some(corner) = self
@@ -343,17 +392,35 @@ impl Editor {
             return None;
         }
         self.pointer = None;
-        let EditorPointer::Button { index, .. } = pointer else {
+        let EditorPointer::Button { button, .. } = pointer else {
             return None;
         };
-        if !self.buttons()[index].contains(x, y) {
+        if !self
+            .buttons()
+            .iter()
+            .any(|(r, b)| *b == button && r.contains(x, y))
+        {
             return None;
         }
-        match index {
-            0 => self.selected = (self.selected + 1) % (self.layout.element_count() + 1),
-            1 => return Some(EditResult::Cancel),
-            2 => return Some(EditResult::Done),
-            _ => {}
+        match button {
+            EditorButton::Next => {
+                self.selected = (self.selected + 1) % (self.layout.element_count() + 1)
+            }
+            EditorButton::Reset => {
+                if self.selected < self.layout.element_count() {
+                    self.layout.set_element(
+                        self.selected,
+                        Layout::new(self.width, self.height).element(self.selected),
+                    );
+                    self.preset.capture(&self.layout, self.width, self.height);
+                } else {
+                    self.preset.game_scale = 1.;
+                    self.preset.game_offset = [0.5, 0.5];
+                }
+                self.layout = self.preset.layout(self.width, self.height);
+            }
+            EditorButton::Cancel => return Some(EditResult::Cancel),
+            EditorButton::Done => return Some(EditResult::Done),
         }
         None
     }
@@ -365,6 +432,64 @@ impl Editor {
 #[cfg(test)]
 mod editor_tests {
     use super::*;
+
+    #[test]
+    fn reset_is_contextual_and_preserves_other_custom_elements() {
+        let mut editor = Editor::new(Preset::default(), 852., 817.);
+        let has_reset = |editor: &Editor| {
+            editor
+                .buttons()
+                .iter()
+                .any(|(_, b)| *b == EditorButton::Reset)
+        };
+        assert!(!has_reset(&editor));
+        let original_face = editor.layout.element(1);
+        let custom_face = Rect::new(
+            original_face.x - 30.,
+            original_face.y,
+            original_face.w,
+            original_face.h,
+        );
+        editor.layout.set_element(1, custom_face);
+        let original_pad = editor.layout.dpad;
+        editor.layout.dpad.x += 40.;
+        editor
+            .preset
+            .capture(&editor.layout, editor.width, editor.height);
+        assert!(has_reset(&editor));
+        let (reset, _) = editor
+            .buttons()
+            .into_iter()
+            .find(|(_, b)| *b == EditorButton::Reset)
+            .unwrap();
+        let (x, y) = (reset.x + reset.w / 2., reset.y + reset.h / 2.);
+        editor.down(1, x, y);
+        editor.up(1, x, y);
+        assert!(editor.layout.dpad.same_bounds(original_pad));
+        assert!(editor.layout.element(1).same_bounds(custom_face));
+        assert!(!has_reset(&editor));
+        assert!(!editor.preset.is_default(editor.width, editor.height));
+        editor.selected = 1;
+        assert!(has_reset(&editor));
+        editor.down(1, x, y);
+        editor.up(1, x, y);
+        assert!(editor.preset.is_default(editor.width, editor.height));
+        assert!(!has_reset(&editor));
+    }
+
+    #[test]
+    fn small_preview_controls_can_move_from_the_center() {
+        let mut editor = Editor::new(Preset::default(), 360., 740.);
+        editor.selected = 1;
+        let original = editor.layout.element(1);
+        let preview = editor.map(original);
+        let (x, y) = (preview.x + preview.w / 2., preview.y + preview.h / 2.);
+        editor.down(1, x, y);
+        editor.motion(1, x - 20., y);
+        editor.up(1, x - 20., y);
+        assert!((editor.layout.element(1).w - original.w).abs() < 0.01);
+        assert!(editor.layout.element(1).x < original.x - 10.);
+    }
 
     #[test]
     fn corner_drags_anchor_the_opposite_corner_and_ignore_other_fingers() {
@@ -429,7 +554,7 @@ impl Row {
     pub fn text(line: String) -> Self {
         Self {
             title: line,
-            height: 28.,
+            height: 24.,
             ..Self::default()
         }
     }
@@ -439,9 +564,12 @@ impl Row {
 pub struct Menu {
     pub title: String,
     pub description: String,
+    pub description_lines: Vec<String>,
     pub rows: Vec<Row>,
     pub back: String,
     pub scroll: f32,
+    pub home: bool,
+    pub settings: Option<usize>,
     pointer: Option<(i32, f32, f32, bool)>,
 }
 
@@ -452,9 +580,15 @@ impl Menu {
         rows: Vec<Row>,
         back: &str,
     ) -> Self {
+        let description = description.into();
         Self {
             title: title.into(),
-            description: description.into(),
+            description_lines: if description.is_empty() {
+                Vec::new()
+            } else {
+                vec![description.clone()]
+            },
+            description,
             rows,
             back: back.into(),
             ..Self::default()
@@ -462,24 +596,47 @@ impl Menu {
     }
 
     pub fn column(width: f32) -> Rect {
-        let w = (width - 32.).clamp(0., 680.);
+        let w = (width - 32.).clamp(0., 720.);
         Rect::new((width - w) / 2., 0., w, 0.)
     }
 
-    pub fn viewport(width: f32, height: f32) -> Rect {
+    pub fn viewport(&self, width: f32, height: f32) -> Rect {
         let column = Self::column(width);
-        Rect::new(column.x, 164., column.w, (height - 244.).max(0.))
+        let top = 72.
+            + if self.description_lines.is_empty() {
+                0.
+            } else {
+                12. + self.description_lines.len().min(4) as f32 * 20.
+            };
+        let bottom = if self.has_footer() { 76. } else { 12. };
+        Rect::new(column.x, top, column.w, (height - top - bottom).max(0.))
+    }
+
+    pub fn has_footer(&self) -> bool {
+        !self.home && !matches!(self.back.as_str(), "Back" | "Back to games")
+    }
+    pub fn navigation_rect(width: f32) -> Rect {
+        Rect::new(Self::column(width).x - 8., 8., 48., 48.)
+    }
+    pub fn add_rect(width: f32) -> Rect {
+        let column = Self::column(width);
+        Rect::new(column.x + column.w - 104., 8., 48., 48.)
+    }
+    pub fn settings_rect(width: f32) -> Rect {
+        let column = Self::column(width);
+        Rect::new(column.x + column.w - 48., 8., 48., 48.)
     }
 
     pub fn back_rect(width: f32, height: f32) -> Rect {
         let column = Self::column(width);
-        Rect::new(column.x, height - 64., column.w, 52.)
+        let w = column.w.min(320.);
+        Rect::new((width - w) / 2., height - 60., w, 48.)
     }
 
     pub fn clamp_scroll(&mut self, width: f32, height: f32) {
         self.scroll = self.scroll.clamp(
             0.,
-            (self.rows.iter().map(|r| r.height).sum::<f32>() - Self::viewport(width, height).h)
+            (self.rows.iter().map(|r| r.height).sum::<f32>() - self.viewport(width, height).h)
                 .max(0.),
         );
     }
@@ -505,7 +662,7 @@ impl Menu {
         self.clamp_scroll(width, height);
     }
 
-    /// usize::MAX is the persistent bottom navigation button.
+    /// MAX is the primary action; MAX-1 is app-bar back. Other values are rows.
     pub fn up(&mut self, id: i32, x: f32, y: f32, width: f32, height: f32) -> Option<usize> {
         let (active, start_x, start_y, moved) = self.pointer?;
         if active != id {
@@ -515,10 +672,20 @@ impl Menu {
         if moved || (start_x - x).abs() > 10. || (start_y - y).abs() > 10. {
             return None;
         }
-        if Self::back_rect(width, height).contains(x, y) {
+        if self.home {
+            if Self::settings_rect(width).contains(x, y) {
+                return self.settings;
+            }
+            if Self::add_rect(width).contains(x, y) {
+                return Some(usize::MAX);
+            }
+        } else if Self::navigation_rect(width).contains(x, y) {
+            return Some(usize::MAX - 1);
+        }
+        if self.has_footer() && Self::back_rect(width, height).contains(x, y) {
             return Some(usize::MAX);
         }
-        let viewport = Self::viewport(width, height);
+        let viewport = self.viewport(width, height);
         if !viewport.contains(x, y) {
             return None;
         }
@@ -547,7 +714,7 @@ mod tests {
             "Games",
             "",
             (0..20).map(|i| Row::action(i.to_string(), "")).collect(),
-            "Back",
+            "Done",
         );
         menu.down(4, 100., 250.);
         assert_eq!(menu.up(9, 100., 250., 420., 800.), None);
@@ -556,5 +723,29 @@ mod tests {
         assert_eq!(menu.up(4, 100., 180., 420., 800.), None);
         menu.down(4, 100., 760.);
         assert_eq!(menu.up(4, 100., 760., 420., 800.), Some(usize::MAX));
+    }
+    #[test]
+    fn app_bar_navigation_is_distinct_from_the_primary_action() {
+        let mut menu = Menu::new("Choose games", "", vec![], "Add selected");
+        let back = Menu::navigation_rect(420.);
+        menu.down(1, back.x + 24., back.y + 24.);
+        assert_eq!(
+            menu.up(1, back.x + 24., back.y + 24., 420., 800.),
+            Some(usize::MAX - 1)
+        );
+        menu.home = true;
+        menu.settings = Some(7);
+        let settings = Menu::settings_rect(420.);
+        menu.down(1, settings.x + 24., settings.y + 24.);
+        assert_eq!(
+            menu.up(1, settings.x + 24., settings.y + 24., 420., 800.),
+            Some(7)
+        );
+        let add = Menu::add_rect(420.);
+        menu.down(1, add.x + 24., add.y + 24.);
+        assert_eq!(
+            menu.up(1, add.x + 24., add.y + 24., 420., 800.),
+            Some(usize::MAX)
+        );
     }
 }

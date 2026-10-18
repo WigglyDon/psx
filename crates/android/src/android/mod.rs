@@ -434,6 +434,9 @@ impl Player {
         }
         self.layout = self.controller_settings.preset(w, h).layout(w, h);
         if let Some(menu) = &mut self.menu {
+            menu.description_lines = self
+                .graphics
+                .menu_description(&menu.description, Menu::column(w).w);
             menu.cancel();
             menu.clamp_scroll(w, h);
         }
@@ -524,6 +527,8 @@ impl Player {
                             if let Some(index) = menu.up(pointer.pointer_id(), x, y, w, h) {
                                 action = if index == usize::MAX {
                                     Some(self.back_action.clone())
+                                } else if index == usize::MAX - 1 {
+                                    Some(Action::Back)
                                 } else {
                                     self.actions.get(index).cloned()
                                 };
@@ -885,9 +890,9 @@ impl Player {
                         Action::ChooseGame(i),
                         game.title.clone(),
                         if discs.len() > 1 {
-                            format!("{} discs · choose a disc", discs.len())
+                            format!("{} discs", discs.len())
                         } else {
-                            "Play".into()
+                            String::new()
                         },
                     );
                 }
@@ -897,11 +902,19 @@ impl Player {
                     "Controllers, firmware, source and licenses".into(),
                 );
                 (
-                    "Your games".into(),
-                    if self.message.is_empty() {
-                        "Scan storage, choose your games, and keep them here.".into()
+                    "Games".into(),
+                    if self.library.games.is_empty() {
+                        "Add games to scan storage or choose files.".into()
                     } else {
-                        self.message.clone()
+                        format!(
+                            "{} games · {} discs",
+                            self.library.games.len(),
+                            self.library
+                                .games
+                                .iter()
+                                .map(|g| g.disc_list().len())
+                                .sum::<usize>()
+                        )
                     },
                     "Add games".into(),
                     Action::Scan,
@@ -949,7 +962,11 @@ impl Player {
                 }
                 (
                     "Settings".into(),
-                    self.message.clone(),
+                    if self.core.is_some() {
+                        self.message.clone()
+                    } else {
+                        String::new()
+                    },
                     if self.core.is_some() {
                         "Resume game".into()
                     } else {
@@ -1098,21 +1115,20 @@ impl Player {
                 );
                 add(
                     Action::ToggleOverlap,
-                    format!(
-                        "Allow overlap: {}",
-                        if preset.allow_overlap { "On" } else { "Off" }
-                    ),
+                    "Allow overlap".into(),
                     if preset.allow_overlap {
                         "Controls may cover the game picture".into()
                     } else {
                         "The picture stays clear of every control".into()
                     },
                 );
-                add(
-                    Action::ResetControls,
-                    "Reset this layout".into(),
-                    "Restore separated controls at comfortable sizes".into(),
-                );
+                if !preset.is_default(w, h) {
+                    add(
+                        Action::ResetControls,
+                        "Reset to defaults".into(),
+                        "Restore this display's whole layout".into(),
+                    );
+                }
                 (
                     "Controllers".into(),
                     format!(
@@ -1185,10 +1201,23 @@ impl Player {
                     &self.root.join("saves").join(format!("{}.srm", game.id)),
                 ));
             }
+            rows.pop(); // Settings lives in the app bar; its action index stays stable.
         }
         self.actions = actions;
         self.back_action = back_action;
-        self.menu = Some(Menu::new(title, description, rows, &back));
+        let mut menu = Menu::new(title, description, rows, &back);
+        menu.home = self.screen == Screen::Home;
+        menu.settings = menu.home.then_some(self.library.games.len());
+        if self.screen == Screen::Controllers {
+            if let Some(row) = menu.rows.get_mut(1) {
+                let (w, h) = self.dimensions();
+                row.toggle = Some(self.controller_settings.preset(w, h).allow_overlap);
+            }
+        }
+        menu.description_lines = self
+            .graphics
+            .menu_description(&menu.description, Menu::column(self.dimensions().0).w);
+        self.menu = Some(menu);
         self.dirty = true;
     }
     fn start(&mut self, game: Game) -> Result<(), String> {

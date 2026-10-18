@@ -15,7 +15,8 @@ Save/restart and fold/lifecycle acceptance are still being checked; see
 The Rust-rendered interface now includes a persistent game collection,
 explicit storage scanning/selection, multi-disc menus, local thumbnails and
 controller layout editing with separate picture/control space by default.
-Direct corner resizing and final save/lifecycle checks are in progress.
+Corner resizing, contextual reset and layout persistence have run on the
+Fold. Final save/lifecycle acceptance remains in progress.
 The first implementation target is a stock Android foldable.
 The product is intended for eventual Google Play and Apple App Store release.
 Store acceptance and iOS performance have not been established.

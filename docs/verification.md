@@ -156,6 +156,26 @@ The current USB connection was lost before that installation. Ordinary
 in-game save/restart, direct corner gestures/persistence and the updated
 fold/lifecycle flow remain under device acceptance. The issue stays open.
 
+## Compact mobile interface and reset behavior
+
+Installed APK SHA-256:
+`aa9d847b2669fad892ff7f26c9dad884326f3b2e6ef82a215737aa13ee86ee8c`.
+The library uses a compact app bar with Add/Settings icons, smaller local
+thumbnails and grouped rows. Subpages have back arrows; primary actions are
+separate from back navigation. Controller overlap is a switch. These paths
+render and respond on the inner display, including another selected addition
+through the revised scan flow. Existing card identities are retained.
+
+A corner drag resized the direction pad, and Done persisted it through a
+fresh APK/process. Reset restored only that selection and disappeared when
+it matched its default. Cancel kept the previous on-disk layout byte-identical.
+Repeating Reset then Done restored the 200-point default pad, and the whole-
+layout reset row disappeared. Enabling overlap exposed the reset row again;
+whole-layout reset turned overlap off and hid the row. Only task-created
+layout experiments were reset. Twenty host tests, host/Android Clippy,
+formatting and APK signature/alignment checks pass. Ordinary save/restart
+and updated fold/lifecycle checks are still pending.
+
 ## Store limits
 
 16 KB alignment is verified; 16 KB runtime/performance is not. Physical

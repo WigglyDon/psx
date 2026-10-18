@@ -74,10 +74,14 @@ Complete the native Rust-rendered interface: embedded home/game menus,
 clear errors and source/license pages, an ergonomic full game view, proper
 controller symbols, discrete press haptics, clean sans-serif typography and
 a cog for the app menu. Preserve the game aspect ratio while maximizing its
-view **clear of every control by default**. Controller settings provide a
+view. Give the embedded interface a mobile OS feel with compact app bars,
+back navigation, icon actions, grouped rows and switches. Keep the picture
+**clear of every control by default**. Controller settings provide a
 preview editor for moving/resizing individual controls and the game picture.
 Tap selects an element, dragging moves it, and dragging a corner grip resizes
-it continuously; retain Save/Cancel behavior. Provide
+it continuously; retain Save/Cancel behavior. Show Reset only for a changed
+selection and restore just that element; offer a whole-layout reset in
+controller settings only when the profile differs from defaults. Provide
 an explicit **Allow overlap** toggle (off by default), and reset. Persist
 separate tall, square and wide layouts. Keep this customization behind the
 cog rather than crowding ordinary play. Bluetooth/USB controller support is

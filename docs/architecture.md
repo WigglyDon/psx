@@ -117,12 +117,17 @@ Do not let an old save state silently roll back newer memory-card progress.
 ## Everyday use
 
 The first screen offers saved games and Add games. The cog opens embedded
-settings and pauses the session. Controls occupy separate space by default;
+settings and pauses the session. Embedded navigation uses compact mobile
+app bars, back arrows, grouped rows and explicit switches. The library's
+Add and Settings icons live in its app bar; primary actions stay distinct
+from back navigation. Controls occupy separate space by default;
 the largest clear 4:3 picture is computed from their rectangular targets.
 The controller editor selects elements by tap, moves them by dragging, and
 resizes them through corner grips, keeping the opposite corner anchored.
-The game picture keeps its aspect ratio. An explicit overlap option and reset
-remain behind controller settings. Tall, square and wide
+The game picture keeps its aspect ratio. Reset appears only for a changed
+selection and restores that element's draft until Done; Cancel discards it.
+Controller settings offer a whole-layout reset only for a changed profile.
+An explicit overlap option remains there. Tall, square and wide
 profiles are persisted in logical coordinates. A display change cancels an
 unfinished edit; committed profiles survive it. Bluetooth/USB controllers
 will later feed the same logical input state; no transport UI is added yet.

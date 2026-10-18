@@ -381,10 +381,13 @@ impl Graphics {
     }
 
     pub fn text_rows(&self, body: &str, width: f32) -> Vec<Row> {
-        wrap(&self.text, body, width, 22.)
+        wrap(&self.text, body, width, 18.)
             .into_iter()
             .map(Row::text)
             .collect()
+    }
+    pub fn menu_description(&self, body: &str, width: f32) -> Vec<String> {
+        wrap(&self.text, body, width, 15.)
     }
 }
 
@@ -453,11 +456,12 @@ impl Canvas<'_> {
             self.ring(x, y, r.w * 0.40, 1.5, [0.8, 0.91, 1., 0.45]);
             self.disc(x, y, r.w * 0.24, [red * 0.6, green * 0.6, blue * 0.6, 1.]);
             let initial = artwork.initial.to_string();
+            let size = r.w * 0.45;
             self.text(
-                x - self.font.measure(&initial, 29.) / 2.,
-                y - 15.,
+                x - self.font.measure(&initial, size) / 2.,
+                y - size / 2.,
                 &initial,
-                29.,
+                size,
                 [0.94, 0.97, 1., 1.],
             );
         }
@@ -525,7 +529,8 @@ impl Canvas<'_> {
             17.,
             [0.64, 0.76, 0.83, 1.],
         );
-        for (rect, label) in editor.buttons().into_iter().zip(["Next", "Cancel", "Done"]) {
+        for (rect, button) in editor.buttons() {
+            let label = button.label();
             self.rounded(
                 rect,
                 if label == "Done" {
@@ -545,35 +550,43 @@ impl Canvas<'_> {
     }
     fn menu(&mut self, menu: &Menu, time: f64) {
         let column = Menu::column(self.w);
-        let viewport = Menu::viewport(self.w, self.h);
+        let viewport = menu.viewport(self.w, self.h);
         let background = [0.035, 0.045, 0.065, 1.];
         self.polygon(
             &[(0., 0.), (self.w, 0.), (self.w, self.h), (0., self.h)],
-            [0.025, 0.035, 0.055, 0.94],
+            [0.035, 0.045, 0.065, 0.98],
         );
+        let total = menu.rows.iter().map(|r| r.height).sum::<f32>();
+        if total > 0. && menu.rows.iter().any(|r| r.enabled) {
+            self.rounded(
+                Rect::new(column.x, viewport.y - menu.scroll, column.w, total),
+                [0.075, 0.09, 0.115, 1.],
+            );
+        }
         let mut y = viewport.y - menu.scroll;
-        for row in &menu.rows {
+        for (index, row) in menu.rows.iter().enumerate() {
             if y + row.height > viewport.y && y < viewport.y + viewport.h {
                 if row.enabled {
-                    self.rounded(
-                        Rect::new(column.x, y + 4., column.w, row.height - 8.),
-                        [0.075, 0.095, 0.125, 1.],
-                    );
                     let x = column.x
                         + if row.artwork.is_some() {
-                            96.
+                            80.
                         } else if row.checked.is_some() {
-                            54.
+                            52.
                         } else {
-                            18.
+                            16.
                         };
                     if let Some(artwork) = &row.artwork {
-                        self.artwork(Rect::new(column.x + 12., y + 12., 64., 64.), artwork, time);
+                        self.artwork(Rect::new(column.x + 16., y + 12., 48., 48.), artwork, time);
                     }
                     if let Some(checked) = row.checked {
-                        let r = Rect::new(column.x + 16., y + 28., 24., 24.);
-                        self.rounded(
-                            r,
+                        let r = Rect::new(column.x + 16., y + 26., 20., 20.);
+                        self.polygon(
+                            &[
+                                (r.x, r.y),
+                                (r.x + r.w, r.y),
+                                (r.x + r.w, r.y + r.h),
+                                (r.x, r.y + r.h),
+                            ],
                             if checked {
                                 [0.18, 0.75, 0.63, 1.]
                             } else {
@@ -582,36 +595,81 @@ impl Canvas<'_> {
                         );
                         if checked {
                             self.line(
-                                (r.x + 5., r.y + 12.),
-                                (r.x + 10., r.y + 17.),
-                                2.5,
+                                (r.x + 4., r.y + 10.),
+                                (r.x + 8., r.y + 14.),
+                                2.,
                                 [0.02, 0.1, 0.1, 1.],
                             );
                             self.line(
-                                (r.x + 10., r.y + 17.),
-                                (r.x + 20., r.y + 6.),
-                                2.5,
+                                (r.x + 8., r.y + 14.),
+                                (r.x + 16., r.y + 5.),
+                                2.,
                                 [0.02, 0.1, 0.1, 1.],
                             );
                         }
                     }
-                    let width = column.x + column.w - x - 18.;
+                    let right = column.x + column.w - 16.;
+                    let accessory = if row.toggle.is_some() {
+                        56.
+                    } else if row.checked.is_none() {
+                        24.
+                    } else {
+                        0.
+                    };
+                    let width = right - x - accessory;
                     self.text(
                         x,
-                        y + 12.,
-                        &elide(self.font, &row.title, width, 26.),
-                        26.,
+                        y + if row.detail.is_empty() { 26. } else { 14. },
+                        &elide(self.font, &row.title, width, 18.),
+                        18.,
                         [0.94, 0.96, 1., 1.],
                     );
                     self.text(
                         x,
-                        y + 47.,
-                        &elide(self.font, &row.detail, width, 20.),
-                        20.,
+                        y + 40.,
+                        &elide(self.font, &row.detail, width, 14.),
+                        14.,
                         [0.61, 0.69, 0.78, 1.],
                     );
+                    if let Some(on) = row.toggle {
+                        self.rounded(
+                            Rect::new(right - 40., y + 24., 40., 24.),
+                            if on {
+                                [0.12, 0.55, 0.46, 1.]
+                            } else {
+                                [0.25, 0.29, 0.34, 1.]
+                            },
+                        );
+                        self.disc(
+                            right - if on { 12. } else { 28. },
+                            y + 36.,
+                            9.,
+                            [0.9, 0.96, 0.94, 1.],
+                        );
+                    } else if row.checked.is_none() {
+                        self.line(
+                            (right - 8., y + 31.),
+                            (right - 3., y + 36.),
+                            1.5,
+                            [0.5, 0.58, 0.67, 1.],
+                        );
+                        self.line(
+                            (right - 3., y + 36.),
+                            (right - 8., y + 41.),
+                            1.5,
+                            [0.5, 0.58, 0.67, 1.],
+                        );
+                    }
+                    if index + 1 < menu.rows.len() {
+                        self.line(
+                            (x, y + row.height),
+                            (right, y + row.height),
+                            0.6,
+                            [0.17, 0.20, 0.25, 1.],
+                        );
+                    }
                 } else {
-                    self.text(column.x + 4., y, &row.title, 22., [0.72, 0.79, 0.86, 1.]);
+                    self.text(column.x, y, &row.title, 18., [0.72, 0.79, 0.86, 1.]);
                 }
             }
             y += row.height;
@@ -635,38 +693,55 @@ impl Canvas<'_> {
             ],
             background,
         );
-        self.text(column.x + 4., 14., "psx", 22., [0.25, 0.79, 0.69, 1.]);
+        if menu.home {
+            let add = Menu::add_rect(self.w);
+            let (x, y) = (add.x + 24., add.y + 24.);
+            self.line((x - 9., y), (x + 9., y), 2., [0.85, 0.94, 0.96, 1.]);
+            self.line((x, y - 9.), (x, y + 9.), 2., [0.85, 0.94, 0.96, 1.]);
+            let settings = Menu::settings_rect(self.w);
+            self.cog(settings.x + 24., settings.y + 24.);
+        } else {
+            let back = Menu::navigation_rect(self.w);
+            let (x, y) = (back.x + 24., back.y + 24.);
+            self.line((x + 8., y), (x - 8., y), 2., [0.85, 0.94, 0.96, 1.]);
+            self.line((x - 8., y), (x - 1., y - 7.), 2., [0.85, 0.94, 0.96, 1.]);
+            self.line((x - 8., y), (x - 1., y + 7.), 2., [0.85, 0.94, 0.96, 1.]);
+        }
+        let title_x = column.x + if menu.home { 0. } else { 48. };
         self.text(
-            column.x + 4.,
-            44.,
-            &elide(self.font, &menu.title, column.w - 8., 36.),
-            36.,
+            title_x,
+            17.,
+            &elide(
+                self.font,
+                &menu.title,
+                column.w - if menu.home { 112. } else { 48. },
+                26.,
+            ),
+            26.,
             [0.95, 0.97, 1., 1.],
         );
-        for (i, line) in wrap(self.font, &menu.description, column.w - 8., 21.)
-            .iter()
-            .take(3)
-            .enumerate()
-        {
+        for (i, line) in menu.description_lines.iter().take(4).enumerate() {
             self.text(
-                column.x + 4.,
-                94. + i as f32 * 22.,
+                column.x,
+                76. + i as f32 * 20.,
                 line,
-                21.,
+                15.,
                 [0.64, 0.72, 0.81, 1.],
             );
         }
-        let back = Menu::back_rect(self.w, self.h);
-        self.rounded(back, [0.11, 0.45, 0.40, 1.]);
-        let size = 25.;
-        self.text(
-            back.x + (back.w - self.font.measure(&menu.back, size)) / 2.,
-            back.y + 11.,
-            &menu.back,
-            size,
-            [0.94, 1., 0.98, 1.],
-        );
-        let total = menu.rows.iter().map(|r| r.height).sum::<f32>();
+        if menu.has_footer() {
+            let back = Menu::back_rect(self.w, self.h);
+            if menu.back != "Cancel" {
+                self.rounded(back, [0.11, 0.45, 0.40, 1.]);
+            }
+            self.text(
+                back.x + (back.w - self.font.measure(&menu.back, 17.)) / 2.,
+                back.y + 13.,
+                &menu.back,
+                17.,
+                [0.89, 0.98, 0.96, 1.],
+            );
+        }
         if total > viewport.h {
             let thumb = (viewport.h * viewport.h / total).max(24.);
             let top = viewport.y + menu.scroll / (total - viewport.h) * (viewport.h - thumb);
@@ -878,22 +953,7 @@ impl Canvas<'_> {
         }
         self.rounded(r, background);
         if label == "MENU" {
-            // Eight-tooth cog, with an open center. Rust vector geometry.
-            for i in 0..32 {
-                let a = i as f32 / 32. * std::f32::consts::TAU;
-                let b = (i + 1) as f32 / 32. * std::f32::consts::TAU;
-                let ra = if i % 4 < 2 { 12. } else { 9.5 };
-                let rb = if (i + 1) % 4 < 2 { 12. } else { 9.5 };
-                self.polygon(
-                    &[
-                        (x + a.cos() * ra, y + a.sin() * ra),
-                        (x + b.cos() * rb, y + b.sin() * rb),
-                        (x + b.cos() * 4.5, y + b.sin() * 4.5),
-                        (x + a.cos() * 4.5, y + a.sin() * 4.5),
-                    ],
-                    [0.90, 0.95, 1., 0.95],
-                );
-            }
+            self.cog(x, y);
             return;
         }
         let size = 22_f32.min(r.h * 0.5);
@@ -904,6 +964,23 @@ impl Canvas<'_> {
             size,
             [0.85, 0.92, 0.98, 1.],
         );
+    }
+    fn cog(&mut self, x: f32, y: f32) {
+        for i in 0..32 {
+            let a = i as f32 / 32. * std::f32::consts::TAU;
+            let b = (i + 1) as f32 / 32. * std::f32::consts::TAU;
+            let ra = if i % 4 < 2 { 12. } else { 9.5 };
+            let rb = if (i + 1) % 4 < 2 { 12. } else { 9.5 };
+            self.polygon(
+                &[
+                    (x + a.cos() * ra, y + a.sin() * ra),
+                    (x + b.cos() * rb, y + b.sin() * rb),
+                    (x + b.cos() * 4.5, y + b.sin() * 4.5),
+                    (x + a.cos() * 4.5, y + a.sin() * 4.5),
+                ],
+                [0.90, 0.95, 1., 0.95],
+            );
+        }
     }
 }
 

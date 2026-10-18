@@ -27,6 +27,12 @@ impl Rect {
             && self.y < other.y + other.h - 0.01
             && self.y + self.h > other.y + 0.01
     }
+    pub fn same_bounds(self, other: Self) -> bool {
+        (self.x - other.x).abs() < 0.01
+            && (self.y - other.y).abs() < 0.01
+            && (self.w - other.w).abs() < 0.01
+            && (self.h - other.h).abs() < 0.01
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -236,6 +242,14 @@ impl Default for Preset {
     }
 }
 impl Preset {
+    pub fn is_default(&self, w: f32, h: f32) -> bool {
+        let layout = self.layout(w, h);
+        let defaults = Layout::new(w, h);
+        !self.allow_overlap
+            && layout.game.same_bounds(defaults.game)
+            && (0..layout.element_count())
+                .all(|i| layout.element(i).same_bounds(defaults.element(i)))
+    }
     pub fn layout(&self, w: f32, h: f32) -> Layout {
         let mut layout = Layout::new(w, h);
         for (i, r) in self
