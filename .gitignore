@@ -1,0 +1,16 @@
+/target/
+/build/
+/.local/
+/games/
+/firmware/
+/saves/
+/artifacts/private/
+.gradle/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+.env
+.env.*
+

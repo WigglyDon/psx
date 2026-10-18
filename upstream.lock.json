@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "core": {
+    "name": "SwanStation",
+    "selectionStatus": "Android prototype candidate; iOS execution and store distribution unverified",
+    "repository": "https://github.com/libretro/swanstation.git",
+    "revision": "e436e9b85374def58d211df7f78880f0f4a917b4",
+    "interface": "libretro C ABI",
+    "plannedPath": "vendor/swanstation",
+    "upstreamLicense": "GPL-3.0; retain exact upstream and per-file terms",
+    "licensePath": "LICENSE",
+    "licenseGitBlob": "94a9ed024d3859793618152ea559a168bbcbb5e2",
+    "licenseSha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "licenseSizeBytes": 35147,
+    "retainedLicense": "LICENSES/SwanStation-GPL-3.0.txt"
+  }
+}
+
