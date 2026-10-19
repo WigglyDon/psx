@@ -402,6 +402,10 @@ Per-entry firmware selection and settings changes occur under the same writer
 as cards/checkpoints. The explicit donor BIOS option and resume identity use
 that entry's pinned filename/hash; directory discovery cannot silently change
 an existing session after another firmware import.
+Failed checkpoint restoration leaves the owned runtime unavailable. Pause,
+focus or repeated launch requests cannot make it runnable, and it cannot
+write a replacement checkpoint. The recovery sheet offers explicit restart
+with the current card; ordinary audio-interruption recovery is unaffected.
 Dual-analog/digital touch and normalized editor profiles have separate PS2
 storage, retaining all existing PS1 profile names and element positions.
 PS2 defaults reuse the PS1 controls and cap styling, adding primary lower

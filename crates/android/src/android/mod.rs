@@ -1082,6 +1082,9 @@ impl Player {
         if self.import.is_some() {
             return Ok(());
         }
+        if matches!(action, Action::Resume | Action::TogglePause) {
+            self.ensure_session_available()?;
+        }
         match action {
             Action::Scan => {
                 if self.work.is_some() || self.import.is_some() {
@@ -1876,6 +1879,20 @@ impl Player {
                 for _ in &rows {
                     actions.push(Action::Back);
                 }
+                if self
+                    .session
+                    .as_ref()
+                    .is_some_and(|s| s.state == SessionState::Unavailable)
+                {
+                    rows.insert(
+                        0,
+                        Row::action(
+                            "Restart game",
+                            "Use the current card; discard this saved machine state",
+                        ),
+                    );
+                    actions.insert(0, Action::Restart);
+                }
                 (
                     "Could not continue".into(),
                     "Details".into(),
@@ -2006,6 +2023,7 @@ impl Player {
         }
         let id = GameId::parse(&game.id)?;
         if self.core.is_some() && self.session.as_ref().is_some_and(|s| s.saved.game == id) {
+            self.ensure_session_available()?;
             self.closing_menu = self.menu.take();
             self.dirty = true;
             return Ok(());
@@ -2096,14 +2114,17 @@ impl Player {
         self.queue.set_sample_rate(av.timing.sample_rate as usize);
         self.core = Some(core);
         self.session = Some(session);
+        // A failed restore must stay unavailable, including after ordinary
+        // pause/focus updates. It cannot run or overwrite the retained state.
+        self.session.as_mut().unwrap().state = SessionState::Unavailable;
         self.card = card;
+        self.game = Some(game.clone());
         self.controller_settings = if game.system == System::Ps2 {
             ControllerSettings::load_ps2(&self.root.join("ps2-controls"))
         } else {
             ControllerSettings::load(&self.root)
         }
         .map_err(|e| e.to_string())?;
-        self.game = Some(game.clone());
         self.library.put(game.clone());
         self.library.save(&self.root).map_err(|e| e.to_string())?;
         self.activity.user_paused = false;
@@ -2133,9 +2154,17 @@ impl Player {
         self.frames = 0;
         self.run_time = Duration::ZERO;
         self.message = game.title;
+        self.session.as_mut().unwrap().state = SessionState::Restoring;
+        Ok(())
+    }
+    fn ensure_session_available(&self) -> Result<(), String> {
+        if let Some(session) = &self.session {
+            session.ensure_available().map_err(str::to_owned)?;
+        }
         Ok(())
     }
     fn tick(&mut self) -> Result<(), String> {
+        self.ensure_session_available()?;
         self.dirty = true;
         let core = self.core.as_mut().unwrap();
         core.set_speed(self.playback.speed.multiplier())?;
@@ -2243,6 +2272,9 @@ impl Player {
         Ok(())
     }
     fn queue_checkpoint(&mut self) -> Result<(), String> {
+        if self.ensure_session_available().is_err() {
+            return Ok(());
+        }
         if self.checkpoint_work.is_some() {
             return Ok(());
         }

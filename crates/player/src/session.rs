@@ -154,11 +154,21 @@ impl Runtime {
         self.token
     }
     pub fn update(&mut self, can_run: bool) {
+        if self.state == State::Unavailable {
+            return;
+        }
         self.state = if can_run {
             State::ForegroundRunning
         } else {
             State::PausedResident
         };
+    }
+    pub fn ensure_available(&self) -> Result<(), &'static str> {
+        if self.state == State::Unavailable {
+            Err("This session could not resume. Restart game to use its current card. The old checkpoint is kept until you choose Restart.")
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -276,6 +286,12 @@ mod tests {
         assert!(Runtime::restoring(&root, a.clone()).is_err());
         first.update(false);
         assert_eq!(first.state, State::PausedResident);
+        assert!(first.ensure_available().is_ok());
+        first.state = State::Unavailable;
+        first.update(true);
+        assert_eq!(first.state, State::Unavailable);
+        assert!(first.ensure_available().is_err());
+        assert!(Runtime::restoring(&root, a.clone()).is_err());
         let first_token = first.token();
         drop(first);
         let mut second = Runtime::restoring(&root, b).unwrap();
