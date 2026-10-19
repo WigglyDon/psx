@@ -178,9 +178,10 @@ touches clear of the system navigation strip. Preserve camera-safe placement
 and verify the resulting folded-landscape spacing.
 
 Replace prototype branding with original app/repository artwork and favicon
-assets using a generic digital-controller silhouette. Remove obsolete paths,
-redundant state writes and stale public-facing
-copy while preserving existing data, borrowed notices and useful verification.
+assets using a blue Cross on a black circular button in grey plastic,
+as requested by the owner after reviewing the controller silhouette. Remove
+obsolete paths, redundant state writes and stale public-facing copy while
+preserving existing data, borrowed notices and useful verification.
 
 ## Required local resources
 

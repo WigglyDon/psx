@@ -1,9 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" fill="none">
   <title>psx — a native PS1 player</title>
   <rect width="1200" height="320" rx="20" fill="#0B1018"/>
-  <g transform="translate(42 44) scale(2)">
-    <path fill="#EDF2EC" fill-rule="evenodd" d="M38 36H70C76 36 80 40 82 48L86 68C88 78 80 82 74 74L66 65H42L34 74C28 82 20 78 22 68L26 48C28 40 32 36 38 36ZM36 43V49H30V55H36V61H42V55H48V49H42V43ZM50 59H54V62H50ZM57 59H61V62H57ZM73.5 44A4.5 4.5 0 1 0 64.5 44A4.5 4.5 0 1 0 73.5 44ZM81.5 52A4.5 4.5 0 1 0 72.5 52A4.5 4.5 0 1 0 81.5 52ZM73.5 60A4.5 4.5 0 1 0 64.5 60A4.5 4.5 0 1 0 73.5 60ZM65.5 52A4.5 4.5 0 1 0 56.5 52A4.5 4.5 0 1 0 65.5 52Z"/>
-    <path fill="#91F5B6" d="M72.5 44A3.5 3.5 0 1 0 65.5 44A3.5 3.5 0 1 0 72.5 44ZM80.5 52A3.5 3.5 0 1 0 73.5 52A3.5 3.5 0 1 0 80.5 52ZM72.5 60A3.5 3.5 0 1 0 65.5 60A3.5 3.5 0 1 0 72.5 60ZM64.5 52A3.5 3.5 0 1 0 57.5 52A3.5 3.5 0 1 0 64.5 52Z"/>
+  <defs>
+    <linearGradient id="plastic" x1="54" y1="0" x2="54" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C4C4BE"/>
+      <stop offset="1" stop-color="#AEAEA7"/>
+    </linearGradient>
+    <linearGradient id="cap" x1="54" y1="19" x2="54" y2="89" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2D3034"/>
+      <stop offset="1" stop-color="#141619"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(42 52) scale(2)">
+    <rect width="108" height="108" rx="12" fill="url(#plastic)"/>
+    <circle cx="54" cy="56" r="38" fill="#90918A"/>
+    <circle cx="54" cy="54" r="38" fill="#777972"/>
+    <circle cx="54" cy="53" r="36" fill="#42464A"/>
+    <circle cx="54" cy="54" r="34.5" fill="url(#cap)"/>
+    <path fill="#7B9DCF" d="M41 37L54 50L67 37L71 41L58 54L71 67L67 71L54 58L41 71L37 67L50 54L37 41Z"/>
   </g>
   <g fill="#EDF2EC" fill-rule="evenodd" transform="translate(302 93)">
     <path d="M0 24H17V31Q25 22 39 22Q66 22 66 52Q66 83 39 83Q26 83 18 74V108H0ZM18 52Q18 68 32 68Q47 68 47 52Q47 37 32 37Q18 37 18 52Z"/>
@@ -11,5 +25,5 @@
     <path d="M146 24H167L180 43L193 24H214L191 52L215 81H194L180 62L166 81H145L169 52Z"/>
   </g>
   <text x="302" y="248" fill="#A7B6BE" font-family="sans-serif" font-size="26" letter-spacing=".2">A native PS1 player.</text>
-  <text x="1140" y="265" text-anchor="end" fill="#91F5B6" font-family="sans-serif" font-size="16" letter-spacing="2">MACHINE RHYTHM</text>
+  <text x="1140" y="265" text-anchor="end" fill="#7B9DCF" font-family="sans-serif" font-size="16" letter-spacing="2">MACHINE RHYTHM</text>
 </svg>

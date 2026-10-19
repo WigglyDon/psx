@@ -181,6 +181,16 @@ card and session data remain private.
 
 ## Corresponding source and release limits
 
+The owner subsequently requested a single blue Cross button on grey plastic.
+The standalone, favicon, masthead and Android adaptive/themed artwork now use
+that geometry. The 512-pixel export, 16-pixel favicon and masthead were visually
+inspected off-device. Android resources compiled, and the signed APK passed
+its notice/resource, ABI and ZIP/ELF alignment checks. Its SHA-256 is
+`f2e51a184bb6a01a6fd1c1e2ef79780dbbc8fd59768e8c0dbf4c729f295f3185`.
+This artwork-only update has not been installed or inspected in a launcher;
+the owner will announce when the Fold is available. No phone access was used
+to prepare it, and no gameplay or borrowed core code changed.
+
 `cargo xtask source` exports committed project/core files and locked Rust
 sources with their original notices. The clean extracted `9dbbb20` archive ran
 37 tests offline, verified the core inventory and built a complete signed
