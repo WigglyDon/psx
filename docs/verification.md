@@ -179,6 +179,14 @@ The matching artwork revision `7c050369a20b` source archive has SHA-256
 Its brand inputs match the installed APK's source revision; it retains the
 same runtime and borrowed notices.
 
+The controller/fast-boot source revision is `620430b5b936`, matching the prepared
+APK `2c82a160…fa0dc0` above. Its corresponding-source archive has SHA-256
+`e12aeaaadf2742475fd08f36f5198efadec6e429c0f64ee80d1483c66b9689c7`.
+The clean Gitless tree ran all 48 host tests offline. Its free firmware image
+and license compare exactly with the committed inputs; the archive inventory
+excludes private/build root directories. Borrowed source retains its exact
+upstream bytes, including inherited whitespace.
+
 The donor's fast-boot patch does not support its included OpenBIOS. The revised
 source instead prepares a separately pinned, unmodified OpenBIOS image built
 with upstream's documented `BOOT_MODE=fast`, omitting the shell/intro entirely.
