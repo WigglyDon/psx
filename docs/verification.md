@@ -229,10 +229,29 @@ stream through intentional pause, and no longer waits for the storage worker
 after toolbar toggles. Core snapshot preparation remains on the sole execution
 owner after presentation; timing is logged for diagnosis. Minimize/focus-loss
 audio closure and synchronous interruption saves are preserved. Host tests and
-Clippy pass; this refinement has not yet been accepted on-device.
-The prepared APK SHA-256 is
+Clippy pass. This APK was installed with current app data backed up before and
+after. The owner tried rapid toggles and reported that the response was immediate.
+The matching log batch contains repeated checkpoints without AAudio reopening
+between those toggles. Snapshot preparation measured 7.19–11.77 ms; storage
+completed separately on the worker. This is not an input-to-haptic timing
+measurement. The inward Start/Select placement was inspected on the outer
+landscape display, with controls still separate from the picture.
+The installed APK SHA-256 is
 `30945e673a712b525a957c8f427a925387220d2be98c94c12de2e0c8baacb3f7`;
 signature, notices/resources, native ABI and ZIP/ELF alignment checks pass.
+
+The same check exposed a fullscreen regression: status and navigation bars
+could remain shown, including after unfolding. A proposed source fix retains
+the first-swipe navigation mode but observes bar visibility and re-hides after
+a short delay, reapplying fullscreen after display changes. Android ARM64 Clippy
+passes. This fix still needs device qualification. The final fresh-process
+return check was deferred when the regression was observed; the current session
+was checkpointed and backed up. psx was stopped. The phone repeatedly woke and
+unlocked during lock verification; the owner explicitly authorized release
+without verified locking, and the device transaction was released.
+The prepared fullscreen-fix APK SHA-256 is
+`5bccf32af19d0a1f049288ca2a27fbf5f3aabc5879da75207490517f67111c6f`;
+its signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
 
 The owner's single blue Cross button on grey plastic is the current identity.
 The standalone, favicon, masthead and Android adaptive/themed artwork now use

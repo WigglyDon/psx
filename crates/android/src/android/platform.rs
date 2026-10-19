@@ -25,7 +25,7 @@ pub enum Event {
     Background(bool),
     PauseBackground,
     Error(String),
-    Insets([i32; 2], f32, [i32; 4], Vec<[i32; 4]>, bool),
+    Insets([i32; 2], f32, [i32; 4], Vec<[i32; 4]>, bool, bool),
 }
 static EVENTS: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
 pub(super) fn post(event: Event) {
@@ -379,6 +379,7 @@ impl Platform {
             // A cutout margin is reusable only when no system decoration owns
             // its top edge. Requested immersive flags alone do not establish
             // this: Android can keep a call indicator/status bar visible.
+            let mut hidden_bars_visible = false;
             let top_margin_available = if sdk >= 30 {
                 let bars = env
                     .call_static_method("android/view/WindowInsets$Type", "systemBars", "()I", &[])?
@@ -397,6 +398,20 @@ impl Platform {
                 let status_visible = env
                     .call_method(&insets, "isVisible", "(I)Z", &[JValue::Int(status)])?
                     .z()?;
+                if sdk >= 31 {
+                    let navigation = env
+                        .call_static_method(
+                            "android/view/WindowInsets$Type",
+                            "navigationBars",
+                            "()I",
+                            &[],
+                        )?
+                        .i()?;
+                    hidden_bars_visible = status_visible
+                        || env
+                            .call_method(&insets, "isVisible", "(I)Z", &[JValue::Int(navigation)])?
+                            .z()?;
+                }
                 // Transient bars can be visible without contributing layout
                 // insets. Query status-bar visibility separately as well.
                 !status_visible && env.get_field(occupied, "top", "I")?.i()? == 0
@@ -521,6 +536,7 @@ impl Platform {
                 edges,
                 cutouts,
                 top_margin_available,
+                hidden_bars_visible,
             ));
             Ok(())
         });

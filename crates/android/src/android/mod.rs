@@ -108,6 +108,7 @@ struct Player {
     insets: [i32; 4],
     inset_size: [i32; 2],
     last_insets_request: Instant,
+    rehide_bars_at: Option<Instant>,
     playback_changed: Option<Instant>,
     cutouts: Vec<[i32; 4]>,
     top_margin_available: bool,
@@ -181,6 +182,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         insets: [0; 4],
         inset_size: [0; 2],
         last_insets_request: now,
+        rehide_bars_at: None,
         playback_changed: None,
         cutouts: Vec::new(),
         top_margin_available: false,
@@ -252,11 +254,29 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 }
                 player.dirty = true;
             }
-            if player.inset_size != [player.graphics.width, player.graphics.height]
-                && player.last_insets_request.elapsed() >= Duration::from_millis(100)
+            // Revealed bars may overlay the window without a resize callback.
+            // Observe visibility at a bounded rate, including while paused.
+            if (player.inset_size != [player.graphics.width, player.graphics.height]
+                && player.last_insets_request.elapsed() >= Duration::from_millis(100))
+                || (player.activity.foreground
+                    && player.last_insets_request.elapsed() >= Duration::from_millis(500))
             {
                 player.platform.insets(&app);
                 player.last_insets_request = Instant::now();
+            }
+        }
+        if player
+            .rehide_bars_at
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            player.rehide_bars_at = None;
+            if player.activity.foreground
+                && player.activity.focused
+                && !player.picker
+                && (player.core.is_none() || player.activity.audio_focus)
+            {
+                player.platform.fullscreen(&app);
+                player.platform.insets(&app);
             }
         }
         if player
@@ -487,6 +507,17 @@ impl Player {
                 self.touches.cancel();
                 self.resize(app)?;
                 self.platform.insets(app);
+                // Rotation/folding can recreate per-window bar control while
+                // the activity retains focus. Visibility polling covers any
+                // later controller handoff without continuously forcing flags.
+                if matches!(
+                    event,
+                    MainEvent::ConfigChanged { .. } | MainEvent::WindowResized { .. }
+                ) && self.activity.foreground
+                    && self.activity.focused
+                {
+                    self.platform.fullscreen(app);
+                }
             }
             MainEvent::GainedFocus => {
                 self.activity.focused = true;
@@ -495,6 +526,7 @@ impl Player {
             }
             MainEvent::LostFocus => {
                 self.activity.focused = false;
+                self.rehide_bars_at = None;
                 if self.activity.background_playback {
                     self.cancel_input();
                 } else {
@@ -908,7 +940,24 @@ impl Player {
                     self.fail(error);
                 }
             }
-            Event::Insets(size, density, edges, cutouts, top_margin_available) => {
+            Event::Insets(
+                size,
+                density,
+                edges,
+                cutouts,
+                top_margin_available,
+                hidden_bars_visible,
+            ) => {
+                if hidden_bars_visible
+                    && self.activity.foreground
+                    && self.activity.focused
+                    && !self.picker
+                {
+                    self.rehide_bars_at
+                        .get_or_insert_with(|| Instant::now() + Duration::from_millis(1200));
+                } else {
+                    self.rehide_bars_at = None;
+                }
                 if edges != self.insets
                     || size != self.inset_size
                     || density != self.density

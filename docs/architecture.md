@@ -171,6 +171,16 @@ which previously needed a reveal swipe on the Fold. A single swipe from the
 hidden-handle landscape surface reached Home on the Fold, and reopening reused
 the same paused scene and process.
 [Android system-bar behavior](https://developer.android.com/reference/android/view/WindowInsetsController#BEHAVIOR_DEFAULT)
+
+That mode does not automatically hide revealed bars. While the app is focused
+and visible, Rust observes their visibility at most twice per second and
+reapplies per-window fullscreen after 1.2 seconds of revealed bars. It also
+reapplies after window/configuration changes. Focus loss and document picking
+cancel the timeout; a game without audio focus does not re-hide system UI.
+This keeps the gesture strip reserved and the first Home gesture available,
+without forcing device-wide settings or using a painted-over system handle.
+The return-to-fullscreen behavior still requires device acceptance.
+
 The less-used system buttons keep their own separate row. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture
 height. The small pause/play, speed, volume and settings toolbar uses a clear
