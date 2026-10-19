@@ -510,6 +510,7 @@ dependencies = [
 name = "psx-player"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "libloading",
  "serde",
  "serde_json",

@@ -23,6 +23,13 @@ to the fresh backup. The phone was returned locked and screen-off. A focused
 regression now covers saved PS1/PS2 controls through tiny transient surfaces;
 the corrected candidate still requires device qualification.
 
+The next candidate passed transient-surface startup, then refused session
+ownership because `std::fs::File::try_lock` is unsupported on Android. A
+bounded same-app-UID probe verified native `flock` succeeds on the Fold.
+The Unix Rust adapter now calls descriptor-owned `flock` directly, also used
+by the host competing-writer/process-death fixtures. Contention and underlying
+I/O failures have distinct messages; ownership protection is retained.
+
 ## Implemented, awaiting device qualification
 
 Rust distinguishes a validated stable game ID, durable saved session and

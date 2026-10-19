@@ -101,6 +101,14 @@ and retains document import; see [build.md](build.md) and the unresolved
 Play permission gate in [distribution.md](distribution.md). Uninstalling the
 app deletes its private data; development updates must preserve it.
 
+For eventual phone replacement, plan a user-selected local export/import
+bundle containing stable entry IDs, ordinary cards, layouts and a manifest
+with hashes and console/core revisions. Games and firmware stay separate.
+Import must validate the bundle, stop the affected runtime and retain existing
+progress until the owner explicitly resolves conflicts. Incompatible states
+remain optional retained data; ordinary cards remain authoritative. This UI
+is future work, not a current export capability or a cloud requirement.
+
 ## PLAYER-2 additions under validation
 
 ISO/raw-sector images and CUE data tracks now inspect bounded ISO9660

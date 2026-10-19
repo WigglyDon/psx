@@ -96,13 +96,39 @@ impl Writer {
             .read(true)
             .write(true)
             .open(directory.join(format!("{}.lock", id.as_str())))?;
-        file.try_lock().map_err(|e| {
-            io::Error::other(format!(
-                "This game's saved session already has a writer: {e}"
-            ))
+        try_writer_lock(&file).map_err(|e| {
+            if e.kind() == io::ErrorKind::WouldBlock {
+                io::Error::new(e.kind(), "This game's saved session already has a writer.")
+            } else {
+                io::Error::new(
+                    e.kind(),
+                    format!("This game's saved session could not be locked: {e}"),
+                )
+            }
         })?;
         Ok(Self { _file: file })
     }
+}
+
+// std::fs::File::try_lock is unsupported on Android. Use the same supported
+// descriptor-owned flock on Unix hosts so the real adapter is exercised by
+// competing-writer and process-death fixtures. Closing the file releases it.
+#[cfg(unix)]
+fn try_writer_lock(file: &File) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: file owns a live descriptor for the duration of this call.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+#[cfg(not(unix))]
+fn try_writer_lock(file: &File) -> io::Result<()> {
+    file.try_lock().map_err(|error| match error {
+        fs::TryLockError::WouldBlock => io::ErrorKind::WouldBlock.into(),
+        fs::TryLockError::Error(error) => error,
+    })
 }
 
 pub struct Runtime {
