@@ -158,16 +158,18 @@ then finds the largest clear 4:3 picture around controls and camera rectangles.
 The default picture centers on the full available display width when it fits.
 Camera avoidance is derived for the current window without overwriting saved
 control positions. The editor uses the same placement/defaults, and anchored
-volume panels slide clear of camera bounds. Shoulder caps are mirrored,
-staggered physical-key shapes; Start/Select have smaller pill faces inside
+volume panels slide clear of camera bounds. Shoulder caps have simple symmetric
+rounded faces. Landscape pairs sit level, with L1/R1 outside and L2/R2 inside;
+Start/Select have smaller pill faces inside
 their retained touch targets. Rendering and hit areas remain distinct.
 
 On Android 12 and later, `BEHAVIOR_DEFAULT` requests hidden navigation with
 gesture navigation still available on the first swipe. Navigation's insets
 ignoring visibility keep control targets out of the system gesture strip.
 Older releases retain visible navigation. This supersedes transient-bars mode,
-which previously needed a reveal swipe on the Fold; actual first-swipe behavior
-must be rechecked on the new build.
+which previously needed a reveal swipe on the Fold. A single swipe from the
+hidden-handle landscape surface reached Home on the Fold, and reopening reused
+the same paused scene and process.
 [Android system-bar behavior](https://developer.android.com/reference/android/view/WindowInsetsController#BEHAVIOR_DEFAULT)
 The less-used system buttons keep their own separate row. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture
@@ -182,8 +184,11 @@ orientation: all four rotations when
 the user permits rotation, respecting their rotation lock.
 [Android orientation contract](https://developer.android.com/guide/topics/manifest/activity-element#screen)
 
-Intentional pause adds a fading PAUSED panel over the frozen picture; audio-focus
-interruption has its own label. Opening settings still preserves pause intent.
+Intentional pause adds the PAUSED panel on the same presentation as the frozen
+picture and changed toolbar; audio-focus interruption has its own label. These
+state indicators do not fade. A toolbar pause presents before serializing and
+waiting for its durable checkpoint. Lifecycle interruptions still checkpoint
+synchronously. Opening settings preserves pause intent.
 
 Audio-focus denial before the first frame leaves the play controls visible
 with an interruption message. Play retries focus; it never overrides another

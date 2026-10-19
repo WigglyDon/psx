@@ -134,6 +134,7 @@ struct Player {
     last_flush: Instant,
     last_checkpoint: Instant,
     checkpoint_dirty: bool,
+    checkpoint_after_present: bool,
     checkpoint_work: Option<mpsc::Receiver<Result<(), String>>>,
     restore_pending: bool,
     background_requested: bool,
@@ -206,6 +207,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         last_flush: now,
         last_checkpoint: now,
         checkpoint_dirty: false,
+        checkpoint_after_present: false,
         checkpoint_work: None,
         restore_pending: true,
         background_requested: false,
@@ -384,6 +386,12 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                     .is_some_and(|i| i.frames.len() > 1)
             })
         });
+        player.visuals.has_game = player.core.is_some();
+        player.visuals.audio_blocked = !player.activity.audio_focus;
+        player.visuals.playback_paused =
+            player.activity.user_paused || !player.activity.audio_focus;
+        player.visuals.playback_speed = player.playback.speed.multiplier();
+        player.visuals.muted = player.playback.muted || player.playback.volume == 0;
         player.visual_animating = player.visuals.advance(
             (now - player.last_visual).as_secs_f32(),
             player.touches.mask(),
@@ -392,12 +400,6 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             player.touches.dpad_feedback(),
         );
         player.last_visual = now;
-        player.visuals.has_game = player.core.is_some();
-        player.visuals.audio_blocked = !player.activity.audio_focus;
-        player.visuals.playback_paused =
-            player.activity.user_paused || !player.activity.audio_focus;
-        player.visuals.playback_speed = player.playback.speed.multiplier();
-        player.visuals.muted = player.playback.muted || player.playback.volume == 0;
         player.dirty |= player.visual_animating;
         if player.visuals.overlay == 0. && player.menu.is_none() {
             player.closing_menu = None;
@@ -427,6 +429,13 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.activity.surface = false;
             }
             player.dirty = false;
+            // Present the pause change before serializing or waiting for
+            // durable storage. Lifecycle interruption still saves synchronously.
+            if std::mem::take(&mut player.checkpoint_after_present) {
+                if let Err(error) = player.checkpoint() {
+                    player.fail(error);
+                }
+            }
         }
     }
     player.stop_sound();
@@ -1071,16 +1080,21 @@ impl Player {
                 }
             }
             Action::TogglePause => {
+                self.frames = 0;
+                self.run_time = Duration::ZERO;
+                self.last_report = Instant::now();
                 if self.activity.user_paused || !self.activity.audio_focus {
                     self.activity.user_paused = false;
                     self.platform.focus(app, true);
                     self.next_frame = Instant::now();
                 } else {
                     self.activity.user_paused = true;
-                    self.interrupt()?;
+                    self.cancel_input();
+                    self.stop_sound();
                 }
                 self.checkpoint_dirty = self.core.is_some();
-                self.checkpoint()?;
+                self.checkpoint_after_present = true;
+                self.next_present = Instant::now();
                 self.dirty = true;
                 if self.menu.is_some() {
                     self.refresh_menu(app);

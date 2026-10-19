@@ -211,10 +211,10 @@ impl Layout {
                 "O" => (fx + offset - size / 2., fy - size / 2., size, size),
                 "X" => (fx - size / 2., fy + offset - size / 2., size, size),
                 "SQ" => (fx - offset - size / 2., fy - size / 2., size, size),
-                "L2" => (16., 60., shoulder, 48.),
-                "L1" => (24. + shoulder, 82., shoulder, 48.),
-                "R1" => (w - 16. - cluster, 82., shoulder, 48.),
-                "R2" => (w - 16. - shoulder, 60., shoulder, 48.),
+                "L1" => (16., 64., shoulder, 48.),
+                "L2" => (24. + shoulder, 64., shoulder, 48.),
+                "R2" => (w - 16. - cluster, 64., shoulder, 48.),
+                "R1" => (w - 16. - shoulder, 64., shoulder, 48.),
                 "SELECT" => (
                     if layout.dpad.y >= 200. {
                         24.
@@ -945,6 +945,18 @@ mod tests {
         let layout = Layout::new(886., 443.);
         assert!(layout.game.h > 443. * 0.9);
         assert!(layout.dpad.w >= 160.);
+        let bounds = |label| {
+            layout
+                .controls
+                .iter()
+                .find(|c| c.label == label)
+                .unwrap()
+                .bounds
+        };
+        assert!(bounds("L1").x < bounds("L2").x);
+        assert!(bounds("R1").x > bounds("R2").x);
+        assert_eq!(bounds("L1").y, bounds("L2").y);
+        assert_eq!(bounds("R1").y, bounds("R2").y);
         for control in &layout.controls {
             assert!(!layout.game.overlaps(control.bounds));
             assert!(control.bounds.w >= 48. && control.bounds.h >= 48.);

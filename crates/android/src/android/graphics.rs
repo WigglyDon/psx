@@ -1096,35 +1096,25 @@ impl Canvas<'_> {
                 [0.54, 0.59, 0.65, 0.6],
             );
         } else {
-            let trigger = label.ends_with('2');
             let cap = Rect::new(
                 r.x + 1.,
-                r.y + r.h * if trigger { 1. / 12. } else { 1. / 6. } + strength,
+                r.y + r.h / 12. + strength,
                 r.w - 2.,
-                r.h * if trigger { 5. / 6. } else { 2. / 3. },
+                r.h * 5. / 6.,
             );
-            let shape = [
-                (0.12, 0.12),
-                (0.80, 0.),
-                (0.96, 0.15),
-                (1., 0.70),
-                (0.90, 0.96),
-                (0.12, 1.),
-                (0., 0.78),
-                (0.02, 0.34),
-            ];
-            let points = shape.map(|(x, y)| {
-                (
-                    cap.x + cap.w * if label.starts_with('R') { 1. - x } else { x },
-                    cap.y + cap.h * y,
-                )
-            });
-            let shadow = points.map(|(x, y)| (x, y + 2.));
-            self.polygon(&shadow, [0.015, 0.02, 0.025, 0.95]);
-            self.polygon(&points, body);
-            for i in 0..2 {
-                self.line(points[i], points[i + 1], 0.9, [0.54, 0.59, 0.65, 0.65]);
-            }
+            let radius = (cap.h * 0.2).min(8.);
+            self.rounded_radius(
+                Rect::new(cap.x, cap.y + 2., cap.w, cap.h),
+                [0.015, 0.02, 0.025, 0.95],
+                radius,
+            );
+            self.rounded_radius(cap, body, radius);
+            self.line(
+                (cap.x + radius, cap.y + 1.),
+                (cap.x + cap.w - radius, cap.y + 1.),
+                0.9,
+                [0.54, 0.59, 0.65, 0.65],
+            );
         }
         let size = if matches!(label, "START" | "SELECT") {
             12_f32

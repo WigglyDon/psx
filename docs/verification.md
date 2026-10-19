@@ -14,7 +14,7 @@ classes forward indispensable activity/service callbacks. SwanStation remains
 unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
 [build.md](build.md), `rust-toolchain.toml` and `Cargo.lock` record reproduction.
 
-- All 52 host tests pass, including atomic card reopening, bounded audio and
+- All 53 host tests pass, including atomic card reopening, bounded audio and
   live speed changes, captured simultaneous touch, following-thumb behavior,
   clear picture/control geometry, saved display profiles, stale-inset handling,
   corner editing/reset, continuous volume, centered panels, library migration,
@@ -23,7 +23,8 @@ unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
   snapping with slow-drag escape, returning from background audio headroom,
   the pinned free firmware without replacing supplied files, and centered
   landscape picture/control placement around either side's camera, short
-  landscape system-key clearance, editor reset and camera-safe live volume.
+  landscape system-key clearance, editor reset, camera-safe live volume and
+  pause indication with no elapsed animation time.
 - Host and Android ARM64 Clippy pass with warnings denied; formatting passes.
 - APK signature, resources/notices, ARM64 ABI, EGL dependency and 16 KB
   ZIP/ELF LOAD alignment checks pass. C++ runtime linkage is static.
@@ -198,11 +199,26 @@ part of that side. New source uses local side-camera obstacles, staggered
 shoulder caps and Start/Select pills, plus the shared camera-aware editor and
 volume panel. A host geometry preview at the measured dimensions yields a
 1361×1021 picture centered at physical x=1171, with every target clear of the
-camera; this is a model result, not a new device measurement. The hidden-handle
-navigation mode and changed landscape UI require their own device pass.
-The prepared landscape APK SHA-256 is
+camera. The landscape APK was then installed with app data backed up before
+and after. Crash restored paused; the actual content expanded to 2342×1021,
+and its approximately 1361×1021 picture was visually centered on the physical
+display with the controls clear of the camera. The owner reported that it
+looked great. One bottom-edge swipe while the handle was invisible reached
+Home; reopening reused the existing process and paused scene. Only psx was
+stopped, and locked/screen-off handback was verified. No new sustained-speed,
+audible-audio, editor-snapping or background-audio claim follows from this check.
+The installed landscape APK SHA-256 is
 `65c6af3fe5a98d5c022f120a20ddcd1f58af3232036e64ee434c8eae46b1e6d4`;
 resource/notices, signature, native ABI and ZIP/ELF alignment checks pass.
+
+The owner then requested simpler level shoulder caps, with L1/R1 outside in
+landscape, and immediate pause feedback. Follow-up source changes those defaults,
+updates pause visuals from the current state before presentation, and presents
+the pause frame before waiting for its checkpoint. Host checks pass; this
+follow-up still needs its own installed-device check.
+Its signed APK SHA-256 is
+`01e6459fa6cbb311c341643b46794b8af25366be13f9f83efeeafdeed0eae0b2`;
+the signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
 
 The owner's single blue Cross button on grey plastic is the current identity.
 The standalone, favicon, masthead and Android adaptive/themed artwork now use

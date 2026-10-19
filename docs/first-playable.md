@@ -98,15 +98,17 @@ forgiving in unused control space without taking touches from the picture.
 Treat ordinary phone landscape as a primary layout. Center the picture against
 the display width, using local camera bounds instead of excluding a whole
 side strip where the platform supports it. Keep the camera clear of controls
-and game content. Replace stacked shoulder/system rectangles with staggered
-shoulder caps and separate Start/Select keys while retaining usable touch areas.
+and game content. Give shoulder keys simple symmetric faces and separate
+Start/Select keys while retaining usable touch areas. Landscape shoulder pairs
+sit level, with L1/R1 outside and L2/R2 inside.
 
 Settings during play are a native sheet over the running game. Opening the
 cog releases held input and preserves explicit pause intent. Provide a
 small separate pause/play, speed, volume and settings controls near the
 top, using spare camera-margin space where safe. Tap the speaker to mute or
 unmute; hold it to open the compact live volume slider. Zero mutes and raising
-the slider restores sound. Make intentional pause obvious on the frozen picture.
+the slider restores sound. Show intentional pause immediately on the frozen
+picture, without an indicator fade or waiting for checkpoint storage first.
 Persist a useful perceptual volume range. Tap speed to cycle only 1x, 2x and
 5x, retaining pitched audio unless muted. Achieved speed depends on the
 game/device; measure the actual modes. Keep the main settings sheet small.

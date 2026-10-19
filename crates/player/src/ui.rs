@@ -163,16 +163,15 @@ impl Visuals {
         let previous_icon_frames = ((self.time / 0.32) as u64, (self.time / 0.22) as u64);
         self.time += dt as f64;
         let mut active = false;
-        active |= approach(
-            &mut self.pause_overlay,
-            if self.has_game && self.playback_paused && !menu {
-                1.
-            } else {
-                0.
-            },
-            dt,
-            0.055,
-        );
+        // Pause is a machine state, so its indicator changes on the same
+        // presentation as the toolbar. Only decorative transitions ease.
+        let pause = if self.has_game && self.playback_paused && !menu {
+            1.
+        } else {
+            0.
+        };
+        active |= self.pause_overlay != pause;
+        self.pause_overlay = pause;
         active |= approach(
             &mut self.dpad.active,
             if dpad.is_some() { 1. } else { 0. },
@@ -213,6 +212,23 @@ fn approach(value: &mut f32, target: f32, dt: f32, response: f32) -> bool {
 #[cfg(test)]
 mod animation_tests {
     use super::*;
+    #[test]
+    fn pause_indicator_matches_state_without_elapsed_animation_time() {
+        let mut visual = Visuals {
+            has_game: true,
+            playback_paused: true,
+            ..Visuals::default()
+        };
+        assert!(visual.advance(0., 0, false, false, None));
+        assert_eq!(visual.pause_overlay, 1.);
+        visual.playback_paused = false;
+        assert!(visual.advance(0., 0, false, false, None));
+        assert_eq!(visual.pause_overlay, 0.);
+        visual.playback_paused = true;
+        visual.advance(0., 0, true, false, None);
+        assert_eq!(visual.pause_overlay, 0.);
+    }
+
     #[test]
     fn press_and_menu_fades_reverse_without_jumping() {
         let mut visual = Visuals::default();
