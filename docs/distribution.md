@@ -163,6 +163,14 @@ The qualification build disables floating native patch downloads and bundles
 its native code and matching resources. Proprietary PS2 firmware and games
 remain owner-provided private inputs.
 
+The active Master correction permits maintaining targeted core changes and
+substantive Rust replacements. Record their exact source and derivation;
+modified or translated GPL-covered code retains its applicable obligations.
+BIOS-free operation is a desired product behavior, not a qualified capability.
+A licensed replacement or first-party boot/HLE route needs real compatibility
+and provenance evidence before becoming a default. Existing sessions must not
+silently change firmware. No proprietary firmware may enter public artifacts.
+
 The current PS2 Android candidate uses the existing ARM64 recompilers and a
 4 KiB host-page configuration. Its GLES, real gameplay, performance and save
 results require their own device observations. No stock-iOS non-JIT result,

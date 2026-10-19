@@ -13,9 +13,17 @@ PLAYER-2 (GitHub issue #2 and its active Master dispatch). The first target is A
 ARM64 on a stock foldable; eventual Google Play and Apple App Store release
 are product requirements. All new product and host logic is Rust. Start with
 the pinned SwanStation C++ core candidate through a narrow libretro C ABI;
-do not translate or redesign its emulation internals. Qualify the pinned
+retain its valuable implementation and qualify the pinned
 ARMSX2 libretro ARM64 candidate for PS2 before expanding the host boundary.
 Retain its original C/C++ and exact dependency/license provenance.
+
+The active Master engineering correction on #2 permits targeted core repairs,
+boot/HLE work and justified Rust subsystem replacements for concrete product
+needs. Prefer the smallest coherent, testable solution wherever it belongs;
+do not treat a vendor boundary as a prohibition or add compulsory engine tours.
+All new substantive first-party implementation is Rust. Small retained-donor
+C/C++ repairs and necessary C-ABI/build glue are allowed. This does not authorize
+a whole-core rewrite or erase the licensing of modified/translated borrowed work.
 
 Use established Rust Android/NDK bindings. A minimal platform-generated or
 callback shim may be needed where Android cannot expose a required callback

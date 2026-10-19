@@ -2016,7 +2016,11 @@ impl Player {
             fs::File::open(&disc.path).map_err(|_| "This game's files are unavailable. Locate the game to keep its existing progress.".to_string())?;
         }
         let ps2_system = if game.system == System::Ps2 {
-            Some(psx_player::ps2::prepare(&self.root, &id)?)
+            Some(psx_player::ps2::prepare(
+                &self.root,
+                &id,
+                &self.graphics.renderer(),
+            )?)
         } else {
             None
         };
@@ -2176,7 +2180,10 @@ impl Player {
                 core.state().av.timing.sample_rate as i32,
             )?);
         }
-        if self.last_flush.elapsed() >= Duration::from_secs(1) {
+        // PS1 exposes card RAM that Rust must poll. PS2 owns files and flushes
+        // each page write itself; pausing its VM every second stalls audio.
+        // Full native flush/sync still happens at checkpoints/interruptions.
+        if self.card.is_some() && self.last_flush.elapsed() >= Duration::from_secs(1) {
             self.flush()?;
             self.last_flush = Instant::now();
         }

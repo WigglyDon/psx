@@ -40,10 +40,32 @@ intents and missing-entry recovery ran without replacing the paused scene.
 The first PS2 launch then failed before emulation: the new adapter functions
 lacked explicit C linkage and were hidden by the donor's `retro_*` export
 map. The adapter now declares C linkage, and package verification rejects
-missing adapter exports. This check rejected the failing artifact. PS2
-gameplay, sound, saving, measured speed and both engine-switch directions
-remain unverified. The working PS1 candidate was retained and the third
+missing adapter exports. This check rejected the failing artifact. The working
+PS1 candidate was retained and the third
 device window ended with verified locked/screen-off return.
+
+Candidate `140092049f22` reached Baldur's Gate's memory-card menus using
+ARM64 EE JIT and hardware GLES 3.2 through ANGLE/PowerVR, with 48 kHz output.
+Its EXT framebuffer-fetch shaders initially failed, leaving text invisible;
+selecting the donor's existing framebuffer-copy path restored readable text.
+PS2 → FF7 → PS2 and repeated switches restored their paused scenes in one
+process, including separate PS2 menu checkpoints. These are menu/state/switch
+observations, not moving gameplay or an ordinary-save pass.
+
+The game's first attempt to initialize its new isolated card reported an
+access error. That card and checkpoint are retained privately; a clean disc
+restart using the current card is the next diagnostic. Own-process logs also
+exposed the host's unnecessary one-second PS2 pause/flush, now removed from
+the PS1 RAM-card polling path. Menu samples before that repair commonly showed
+94–95% native speed with audio underruns; neither useful gameplay performance
+nor audible PS2 sound has been established. The fourth window ended October
+19 at 21:17 UTC with verified locked/screen-off return and no psx process.
+
+The latest Master engineering correction permits targeted core repairs and
+Rust subsystem/boot work when justified. Continue the current integration;
+additional engine/firmware evaluations are optional evidence, not a mandatory
+sequence before fixing a concrete defect. BIOS-free default operation is
+unqualified and must preserve existing firmware-bound sessions.
 
 ## Implemented, awaiting device qualification
 

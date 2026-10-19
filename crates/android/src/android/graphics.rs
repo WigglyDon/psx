@@ -191,6 +191,9 @@ impl Graphics {
     pub fn framebuffer(&self) -> usize {
         self.fbo.0.get() as usize
     }
+    pub fn renderer(&self) -> String {
+        unsafe { self.gl.get_parameter_string(glow::RENDERER) }
+    }
     pub fn gles_version(&self) -> [u32; 2] {
         unsafe {
             [
@@ -1115,7 +1118,7 @@ impl Canvas<'_> {
             0.14 + strength * 0.12,
             0.96,
         ];
-        if matches!(label, "START" | "SELECT") {
+        if matches!(label, "START" | "SELECT" | "L3" | "R3") {
             let inset = (r.w * 0.05).min(4.);
             let cap = Rect::new(
                 r.x + inset,
@@ -1156,7 +1159,7 @@ impl Canvas<'_> {
                 [0.54, 0.59, 0.65, 0.65],
             );
         }
-        let size = if matches!(label, "START" | "SELECT") {
+        let size = if matches!(label, "START" | "SELECT" | "L3" | "R3") {
             12_f32
         } else {
             16_f32
@@ -1254,7 +1257,10 @@ impl Canvas<'_> {
         }
     }
     fn button(&mut self, r: Rect, label: &str, strength: f32) {
-        if matches!(label, "L1" | "L2" | "R1" | "R2" | "START" | "SELECT") {
+        if matches!(
+            label,
+            "L1" | "L2" | "R1" | "R2" | "START" | "SELECT" | "L3" | "R3"
+        ) {
             self.hardware_key(r, label, strength);
             return;
         }

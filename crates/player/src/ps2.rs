@@ -528,7 +528,7 @@ impl Drop for Core {
 
 /// Private per-entry roots keep donor-owned card names independent. Only pinned
 /// resources and user-supplied firmware are shared; cards never are.
-pub fn prepare(root: &Path, id: &GameId) -> Result<PathBuf> {
+pub fn prepare(root: &Path, id: &GameId, renderer: &str) -> Result<PathBuf> {
     let system = root.join("ps2").join(id.as_str());
     let pcsx2 = system.join("pcsx2");
     fs::create_dir_all(pcsx2.join("memcards")).map_err(|e| e.to_string())?;
@@ -560,12 +560,17 @@ pub fn prepare(root: &Path, id: &GameId) -> Result<PathBuf> {
     // Source-bound settings version. Retain donor defaults for unspecified
     // keys, and explicitly disable adaptive guest clocks for qualification.
     let previous = fs::read_to_string(&ini).unwrap_or_default();
-    let contents = qualification_settings(&previous);
+    let contents = qualification_settings(&previous, needs_fetch_copy(renderer));
     atomic_write(&ini, contents.as_bytes()).map_err(|e| e.to_string())?;
     Ok(system)
 }
-fn qualification_settings(previous: &str) -> String {
-    let overrides = [
+fn needs_fetch_copy(renderer: &str) -> bool {
+    // Observed ANGLE/PowerVR EXT framebuffer-fetch shader compilation failure.
+    // Use the donor's existing copy path; leave other drivers' defaults alone.
+    renderer.contains("ANGLE") && (renderer.contains("PowerVR") || renderer.contains("Imagination"))
+}
+fn qualification_settings(previous: &str, fetch_copy: bool) -> String {
+    let mut overrides = vec![
         ("UI", "SettingsVersion", "1"),
         ("EmuCore", "AutoTune", "false"),
         ("EmuCore", "EnableFastBootFastForward", "false"),
@@ -573,6 +578,9 @@ fn qualification_settings(previous: &str) -> String {
         ("EmuCore/Speedhacks", "EECycleSkip", "0"),
         ("EmuCore/Speedhacks", "DynamicEECycleRate", "false"),
     ];
+    if fetch_copy {
+        overrides.push(("EmuCore/GS", "DisableFramebufferFetch", "true"));
+    }
     let mut sections = BTreeMap::<&str, Vec<&str>>::new();
     let mut section = "";
     for line in previous.lines() {
@@ -721,10 +729,19 @@ mod tests {
     }
     #[test]
     fn settings_keep_other_values_and_disable_adaptive_clocks() {
-        let s = qualification_settings("[EmuCore]\nAutoTune=true\nOther=keep\n");
+        let s = qualification_settings("[EmuCore]\nAutoTune=true\nOther=keep\n", false);
         assert!(!s.contains("AutoTune=true"));
         assert!(s.contains("Other=keep"));
         assert!(s.contains("AutoTune = false"));
-        assert_eq!(qualification_settings(&s), s);
+        assert_eq!(qualification_settings(&s, false), s);
+        let renderer = "ANGLE (Imagination Technologies, PowerVR C-Series Vulkan Driver)";
+        assert!(needs_fetch_copy(renderer));
+        assert!(!needs_fetch_copy("Mali-G78"));
+        assert!(!needs_fetch_copy("ANGLE (Qualcomm Adreno)"));
+        let compatible = qualification_settings(&s, needs_fetch_copy(renderer));
+        assert!(compatible.contains("DisableFramebufferFetch = true"));
+        assert!(compatible.contains("AutoTune = false"));
+        assert!(compatible.contains("EECycleRate = 0"));
+        assert_eq!(qualification_settings(&compatible, true), compatible);
     }
 }

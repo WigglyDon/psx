@@ -11,7 +11,12 @@ psx is a native PS1 player with a small user experience. Rust owns the app.
 The borrowed core owns emulation, including guest CPU execution, emulated devices,
 graphics and audio generation, disc interpretation and compatibility behavior.
 
-Keep the upstream core intact behind its libretro C ABI. The native Rust host
+Retain the useful core implementation behind its libretro C ABI. Targeted
+repairs or a justified Rust replacement may change that boundary when they
+solve an observed defect or required product behavior with less coupling.
+Keep modifications reproducible, identify changed state formats and verify
+the affected behavior; a whole-core rewrite is not the active milestone.
+The native Rust host
 supplies the callbacks and environment that the pinned core actually requires:
 input state, file access, presentation, hardware graphics context, audio
 consumption, persistence and host pacing. A single session owns the core.
@@ -387,9 +392,16 @@ version, 48 kHz stereo, bounded native-resolution output and a 68 MiB state
 buffer. The adapter forwards supported CPU-owner pause, flush and speed
 operations; timing and completed native performance metrics are distinct from
 frontend calls. Rust disables automatic guest-clock tuning and cycle skipping
-for qualification. PS2 background play is not inherited from PS1's opt-in.
+for qualification. On the observed ANGLE/PowerVR renderer, Rust selects the
+donor's existing framebuffer-copy path because its EXT framebuffer-fetch
+shader fails compilation. Other renderer defaults are retained. PS2 file
+cards already flush page writes; the host does not interrupt its VM for the
+PS1-only one-second save-RAM poll. Full flush/sync remains part of checkpoints
+and interruptions. PS2 background play is not inherited from PS1's opt-in.
 Dual-analog/digital touch and normalized editor profiles have separate PS2
 storage, retaining all existing PS1 profile names and element positions.
+PS2 defaults reuse the PS1 controls and cap styling, adding primary lower
+thumb sticks and secondary stick-click keys; they do not change PS1 defaults.
 
 Collection and platform links enter the same `OpenGame(GameId)` flow. Android
 initial intents precede automatic resume. Warm intents enter a bounded ordered

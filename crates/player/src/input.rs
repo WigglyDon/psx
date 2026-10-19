@@ -295,49 +295,71 @@ impl Layout {
         self.controls.len() + 5 + self.sticks.len()
     }
     fn ps2(w: f32, h: f32) -> Self {
-        let mut layout = Self::arranged(w, h, false);
-        let side = (w / 2. - 12.).min(176.);
-        let base = if w > h * 1.35 {
-            58.
+        // Use the PS1 defaults and cap sizes. Sticks get the lower thumb
+        // positions; digital directions/buttons remain within secondary reach.
+        let mut layout = Self::new(w, h);
+        let left;
+        let right;
+        let landscape = w > h * 1.35 && h >= 360.;
+        if landscape {
+            let column = layout.dpad.w;
+            let face = layout.action_bounds();
+            let original_cap = layout
+                .controls
+                .iter()
+                .find(|c| c.is_face())
+                .unwrap()
+                .bounds
+                .w;
+            let cap = original_cap.min((h - 32. - 116. - 16. - 8. - 80.) / 2.);
+            let face_height = cap * 2. + 16.;
+            let face_top = 116.;
+            let stick = (h - 32. - face_top - face_height - 8.)
+                .min(column - 32.)
+                .clamp(80., 144.);
+            let bottom = h - 32.;
+            left = Rect::new(16., bottom - stick, stick, stick);
+            right = Rect::new(w - 16. - stick, bottom - stick, stick, stick);
+            layout.dpad = Rect::new(16., face_top, 72., 72.);
+            for control in &mut layout.controls {
+                if control.is_face() {
+                    let t = (control.bounds.y - face.y) / (face.h - original_cap).max(1.);
+                    control.bounds.y = face_top + t * (face_height - cap);
+                    control.bounds.x += (original_cap - cap) / 2.;
+                    control.bounds.w = cap;
+                    control.bounds.h = cap;
+                } else if control.label == "START" {
+                    control.bounds = Rect::new(w - 16. - column, bottom - 48., 48., 48.);
+                }
+            }
         } else {
-            (h - 300.).max(58.)
-        };
-        let cluster = (side - 40.).clamp(100., 136.);
-        let size = (cluster * 0.4).max(48.);
-        let cx = w - 16. - cluster / 2.;
-        let cy = base + 48. + cluster / 2.;
-        let offset = (cluster - size) / 2.;
-        layout.dpad = Rect::new(16., base + 48., 72., 72.);
-        for control in &mut layout.controls {
-            control.bounds = match control.label {
-                "TRI" => Rect::new(cx - size / 2., cy - offset - size / 2., size, size),
-                "X" => Rect::new(cx - size / 2., cy + offset - size / 2., size, size),
-                "SQ" => Rect::new(cx - offset - size / 2., cy - size / 2., size, size),
-                "O" => Rect::new(cx + offset - size / 2., cy - size / 2., size, size),
-                "L1" => Rect::new(16., base, 64., 40.),
-                "L2" => Rect::new(88., base, 64., 40.),
-                "R1" => Rect::new(w - 80., base, 64., 40.),
-                "R2" => Rect::new(w - 152., base, 64., 40.),
-                "SELECT" => Rect::new(96., base + 48., 64., 48.),
-                "START" => Rect::new(w - side, h - 64., 48., 48.),
-                _ => control.bounds,
-            };
+            // Taller displays add one stick row beneath the same PS1 layout,
+            // retaining its compact dock and familiar digital controls.
+            let stick = (w / 2. - 80.).clamp(80., 128.);
+            layout = Self::new(w, (h - stick - 48.).max(1.));
+            left = Rect::new(16., h - 32. - stick, stick, stick);
+            right = Rect::new(w - 16. - stick, h - 32. - stick, stick, stick);
         }
         layout.controls.push(Control {
-            bounds: Rect::new(96., base + 102., 48., 48.),
+            bounds: Rect::new(left.x + left.w + 8., left.y + left.h - 48., 48., 48.),
             label: "L3",
             mask: 1 << 14,
         });
         layout.controls.push(Control {
-            bounds: Rect::new(w - side, base + 174., 48., 48.),
+            bounds: Rect::new(
+                right.x - 56.,
+                if landscape {
+                    right.y
+                } else {
+                    right.y + right.h - 48.
+                },
+                48.,
+                48.,
+            ),
             label: "R3",
             mask: 1 << 15,
         });
-        let left = (side - 32.).min(128.);
-        layout.sticks = vec![
-            Rect::new(16., h - left - 16., left, left),
-            Rect::new(w - 112., h - 112., 96., 96.),
-        ];
+        layout.sticks = vec![left, right];
         layout.place_game(w, h, false, 1., [0.5, 0.5]);
         layout
     }
@@ -1013,6 +1035,63 @@ mod tests {
             let restored = preset.layout(960., 420.);
             assert!((0..normal.element_count())
                 .all(|i| normal.element(i).same_bounds(restored.element(i))));
+        }
+    }
+    #[test]
+    fn ps2_defaults_keep_ps1_caps_and_clear_primary_sticks_across_fold_displays() {
+        for (w, h) in [
+            (360., 800.),
+            (443., 961.),
+            (960., 360.),
+            (960., 420.),
+            (852., 817.),
+            (817., 852.),
+        ] {
+            let layout = Preset {
+                analog: true,
+                ..Preset::default()
+            }
+            .layout(w, h);
+            for i in 0..layout.element_count() {
+                let r = layout.element(i);
+                assert!(
+                    r.x >= 0. && r.y >= 0. && r.x + r.w <= w + 0.01 && r.y + r.h <= h + 0.01,
+                    "{w}x{h} {}: {r:?}",
+                    layout.element_name(i)
+                );
+                assert!(!r.overlaps(layout.game));
+            }
+            for (s, stick) in layout.sticks.iter().enumerate() {
+                for i in 0..layout.controls.len() + 5 {
+                    assert!(
+                        !stick.overlaps(layout.element(i)),
+                        "{w}x{h} stick {s} overlaps {}",
+                        layout.element_name(i)
+                    );
+                }
+            }
+            for c in &layout.controls {
+                let r = c.bounds;
+                assert_eq!(
+                    layout.mask_at(r.x + r.w / 2., r.y + r.h / 2.),
+                    c.mask,
+                    "{w}x{h} {}",
+                    c.label
+                );
+            }
+            if w > h * 1.35 && h >= 400. {
+                let ps1 = Layout::new(w, h);
+                for c in &layout.controls {
+                    if let Some(original) = ps1.controls.iter().find(|o| o.label == c.label) {
+                        if c.is_face() || c.label.starts_with('L') || c.label.starts_with('R') {
+                            assert!((c.bounds.w - original.bounds.w).abs() < 0.01);
+                            assert!((c.bounds.h - original.bounds.h).abs() < 0.01);
+                        }
+                    }
+                }
+                assert!(layout.sticks[0].y > layout.dpad.y + layout.dpad.h);
+                assert!(layout.sticks[1].y > layout.action_bounds().y + layout.action_bounds().h);
+            }
         }
     }
     #[test]
