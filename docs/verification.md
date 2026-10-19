@@ -252,6 +252,21 @@ without verified locking, and the device transaction was released.
 The prepared fullscreen-fix APK SHA-256 is
 `5bccf32af19d0a1f049288ca2a27fbf5f3aabc5879da75207490517f67111c6f`;
 its signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
+Its matching runtime source revision is `bb6a1b2db93c`, with archive SHA-256
+`c6e0da2de7cc4f42234c8e45768d1b74cbc75c924c162d1e7c8e93192ae75cb9`.
+Changed runtime inputs and licenses compare exactly with the clean extracted
+source; its archive excludes private root directories. The owner has not yet
+released the Fold for this prepared build's device check.
+
+The owner also reported black strips inside the game picture. Offline inspection
+of the latest private Crash checkpoint found a 512×240 emulated display with
+the full 512×240 VRAM area active at origin (0,0). The saved game framebuffer
+already contains 12 all-black rows at both top and bottom. A retained landscape
+capture maps those rows to approximately 51 pixels per edge inside the 1021-pixel
+picture. These particular bands precede frontend scaling; they are separate
+from Android bars reducing the available window. The frontend still fits the
+complete 4:3 frame. Removing game-written letterboxing would require an explicit
+crop/zoom policy; this finding does not explain every possible game's borders.
 
 The owner's single blue Cross button on grey plastic is the current identity.
 The standalone, favicon, masthead and Android adaptive/themed artwork now use
