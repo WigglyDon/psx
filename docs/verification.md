@@ -272,15 +272,35 @@ On the inner screen, status visibility could also disable toolbar use of the
 camera margin and shrink the picture. The next source keeps stable fullscreen
 insets and toolbar placement through these brief reveals, preserving navigation,
 caption and camera clearance. Bar-only resize callbacks also no longer force an
-immediate hide request during a navigation gesture. Host tests and Android/host Clippy pass; this
-viewport-stability correction still requires its installed-device check.
-Its prepared signed APK SHA-256 is
+immediate hide request during a navigation gesture. Host tests and Android/host
+Clippy pass. The correction was installed on the Fold; a controlled comparison
+during a bar reveal and the full fold/rotation matrix remain pending.
+Its installed signed APK SHA-256 is
 `532353c219f3f8797dd6762d1764d2d87ae9d8e7d95813ae14d98933ccb1f913`;
 signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
 The matching runtime source is `b7134e4b2178`, archive SHA-256
 `b133841ed0d5b30c9d1ee3183f6e84be4fa0404ad75ccaa5ebe2ea11a6f72df4`.
 Changed runtime files and build/license inputs compare exactly with its clean
 source tree; private root directories are absent from the archive.
+
+The installed check restored the existing Crash scene after replacement. The
+owner rotated the folded phone to landscape. Its 2342×1080 capture shows a
+centered approximately 1361×1021 complete frame, extending from the top to
+the reserved 59-pixel bottom gesture strip; private pixel probes confirm the
+frame at row 1020 and app background beginning at row 1021. Status/navigation
+bars were hidden in that capture. One injected bottom-edge swipe from hidden
+navigation reached Home in portrait, and reopening retained the same process.
+No controlled bar-reveal comparison was completed, so that screenshot alone
+does not establish stability through every bar or display transition. The
+retained log ring no longer contained the landscape resize event.
+
+Later stationary 1× samples were around 59.8 fps with no dropped frames. Audio
+underruns accumulated to 25 across the window, including interruptions; the
+game was muted and no audible-sound acceptance is claimed for this update.
+Session checkpoint and backup completed; only psx was force-stopped, and
+locked/screen-off handback was verified before releasing the transaction.
+The ten-minute window overran during delayed tool interactions, disclosed to
+the owner. No device-wide settings or package permissions were modified.
 
 With the current default dock, the recorded inner-landscape geometry models a
 1871.3×1403.5 picture. A full-width 2152-pixel 4:3 picture needs 1614 pixels of
