@@ -42,16 +42,38 @@ unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
 
 ## Device observations
 
-The larger-thumb-controls and grouped-editor update is prepared, not yet device
-accepted. Its signed development APK SHA-256 is
+The larger-thumb-controls and grouped-editor update was installed and checked
+on the Fold. Its signed development APK SHA-256 is
 `e0969932623987e0e40647da587746805f4b77edabfa2f881b1ebf05a8d8de07`.
 Signature, notices/resources, ARM64 and ZIP/ELF alignment checks pass. Recorded
 Fold geometry models a D-pad width of 185.2 points (previously 160) and action
 caps of 71.5–74.1 points (previously 64), retaining the 1021-pixel complete frame
 with a camera on either side. Generated camera-side wells can use their bottom
 clearance to fit below the hole. Explicit saved rectangles remain authoritative;
-Reset adopts the new defaults. Hands-on group move/resize and comfortable reach
-still need the owner's device check.
+Reset adopts the new defaults. The existing FF7 session restored, with actual
+resize diagnostics reporting a centered 1361.3×1021 picture at (490.3, 0) in
+the 2342×1080 surface. The larger default controls were visually inspected.
+
+Tapping a face button selected all four. A drag moved the group together, and
+pulling its upper-left corner enlarged its caps and spacing while retaining
+the opposite corner. Group Reset returned the cluster to its defaults without
+moving the D-pad or other keys, then hid Reset. Individual selected Triangle
+and exposed Group. Test drafts were canceled; the before/after controls files
+compare byte-for-byte. Actual Done/reopen persistence for a grouped edit was
+not exercised; its normalized-preset round-trip passes on the host. Comfortable
+reach remains an owner assessment.
+
+USB briefly disconnected before entry to controller settings; actions stopped
+and the exact owner-reconnected endpoint was re-admitted before continuing.
+Session checkpoint/backup and locked/screen-off handback completed within the
+ten-minute window. Later 1× samples were approximately 59.8 fps; 19 audio
+underruns had accumulated across startup/interruption, then remained unchanged
+in the retained final steady samples, with no drops. No new audible acceptance
+or sustained thermal claim is made. The corresponding runtime source revision
+is `470fa617f249`, archive SHA-256
+`10919a82688f6fb0baf39df4dc73764342f6d9b4428e07bbc3afbaa999c72450`.
+Changed runtime/build/license inputs compare with its clean source tree;
+private root directories are excluded.
 
 | Behavior | Observed result |
 | --- | --- |
