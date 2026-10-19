@@ -12,6 +12,11 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const CORE_REV: &str = "e436e9b85374def58d211df7f78880f0f4a917b4";
 const CORE_LICENSE: &str = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903";
+const FIRMWARE_REV: &str = "08f1b3e1b3289b27fda955f6105fc9e6afd9ffe6";
+const FIRMWARE_SHA: &str = "c13794bc14de130c363786f45710d6e472c092070c0524ddede50f41f948bc45";
+const FIRMWARE_SOURCE_SHA: &str =
+    "407256c55987dcb098fe8dfb25cf2c0d41836be57d14c39ea0a1d266550e089d";
+const FIRMWARE_BUILDER: &str = "ghcr.io/grumpycoders/pcsx-redux-build@sha256:d9ae6cbb23a5d0d98d8c3702cc6f512698ee1670bf8d59b236b2baabe99a66e4";
 
 fn main() -> ExitCode {
     match run() {
@@ -29,8 +34,9 @@ fn run() -> Result<()> {
         Some("verify") => verify_apk(),
         Some("notices") => notices(),
         Some("source") => source_bundle(),
+        Some("firmware") => firmware(),
         _ => {
-            eprintln!("Usage: cargo xtask apk | verify | notices | source\nSet ANDROID_SDK_ROOT, ANDROID_NDK_HOME, ANDROID_BUILD_TOOLS (default 37.0.0), ANDROID_PLATFORM (default android-37.0). Compile SDK may exceed target API 36. Requires Java with javac module, cmake, ninja, zip, unzip, Rust Android target. Source bundles also use tar, gzip and cargo vendor.");
+            eprintln!("Usage: cargo xtask apk | verify | notices | source | firmware\nSet ANDROID_SDK_ROOT, ANDROID_NDK_HOME, ANDROID_BUILD_TOOLS (default 37.0.0), ANDROID_PLATFORM (default android-37.0). Compile SDK may exceed target API 36. Requires Java with javac module, cmake, ninja, zip, unzip, Rust Android target. Source bundles also use tar, gzip and cargo vendor. Firmware reproduction uses Podman and the pinned Linux amd64 compiler image.");
             Ok(())
         }
     }
@@ -230,6 +236,7 @@ fn core_source_hash(root: &Path) -> Result<String> {
 }
 
 fn verify_core() -> Result<()> {
+    verify_firmware()?;
     if hash(Path::new("vendor/swanstation/LICENSE"))? != CORE_LICENSE {
         return Err("SwanStation license differs from the reviewed upstream copy.".into());
     }
@@ -262,6 +269,88 @@ fn verify_core() -> Result<()> {
                 .into(),
         );
     }
+    Ok(())
+}
+
+fn verify_firmware() -> Result<()> {
+    if hash(Path::new("vendor/openbios/openbios-fast.bin"))? != FIRMWARE_SHA {
+        return Err("The free firmware differs from its reviewed build.".into());
+    }
+    let source = core_source_hash(Path::new("vendor/openbios/source"))?;
+    if source != FIRMWARE_SOURCE_SHA {
+        return Err(format!("OpenBIOS source differs from the pinned inventory: {source}").into());
+    }
+    Ok(())
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
+fn firmware() -> Result<()> {
+    verify_firmware()?;
+    let work = Path::new("build/openbios-work");
+    let marker = work.join(".psx-firmware-work");
+    if work.exists() {
+        if !fs::read_to_string(&marker).is_ok_and(|value| value == FIRMWARE_REV) {
+            return Err("Firmware staging directory lacks its revision marker.".into());
+        }
+        fs::remove_dir_all(work)?;
+    }
+    copy_tree(Path::new("vendor/openbios/source"), work)?;
+    fs::write(marker, FIRMWARE_REV)?;
+    let volume = format!("{}:/project:Z", fs::canonicalize(work)?.display());
+    let mut compiler = Command::new("podman");
+    compiler
+        .arg("--root")
+        .arg(env::current_dir()?.join(".local/firmware-build-storage"))
+        .arg("--runroot")
+        .arg(env::temp_dir().join("psx-firmware-run"))
+        .args([
+            "run",
+            "--rm",
+            "--platform",
+            "linux/amd64",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "all",
+            "--security-opt",
+            "no-new-privileges",
+            "--userns",
+            "keep-id",
+            "--tmpfs",
+            "/tmp:rw,size=128m",
+            "-v",
+        ])
+        .arg(volume)
+        .args([
+            "-w",
+            "/project/openbios",
+            "--entrypoint",
+            "/usr/bin/make",
+            FIRMWARE_BUILDER,
+            "BOOT_MODE=fast",
+            "OPENBIOS_SHELL=shell",
+            "BUILD=Release",
+            "-j4",
+        ]);
+    execute(&mut compiler)?;
+    if hash(&work.join("openbios/openbios.bin"))? != FIRMWARE_SHA {
+        return Err("The rebuilt free firmware differs from the bundled image.".into());
+    }
+    println!("OpenBIOS {FIRMWARE_REV}: clean fast-boot rebuild matches {FIRMWARE_SHA}");
     Ok(())
 }
 
@@ -605,6 +694,8 @@ fn verify_apk() -> Result<()> {
         "assets/notices/host/LICENSE",
         "assets/notices/swanstation/LICENSE",
         "assets/notices/swanstation/dep/openbios/LICENSE.txt",
+        "assets/notices/openbios/LICENSE",
+        "assets/notices/openbios/UPSTREAM.md",
     ] {
         if !entries.lines().any(|e| e == entry) {
             return Err(format!("Missing APK entry: {entry}").into());
@@ -683,6 +774,15 @@ fn notices() -> Result<()> {
     fs::create_dir_all(destination.join("host"))?;
     fs::copy("LICENSE", destination.join("host/LICENSE"))?;
     fs::copy("THIRD_PARTY.md", destination.join("host/THIRD_PARTY.md"))?;
+    fs::create_dir_all(destination.join("openbios"))?;
+    fs::copy(
+        "vendor/openbios/source/LICENSE",
+        destination.join("openbios/LICENSE"),
+    )?;
+    fs::copy(
+        "vendor/openbios/UPSTREAM.md",
+        destination.join("openbios/UPSTREAM.md"),
+    )?;
     fs::create_dir_all(destination.join("fonts"))?;
     fs::copy(
         "assets/fonts/LICENSE",

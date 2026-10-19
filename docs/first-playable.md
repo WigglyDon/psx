@@ -79,8 +79,12 @@ back navigation and icon actions. Keep the picture
 **clear of every control by default**. Controller settings provide a
 preview editor for moving/resizing individual controls and the game picture.
 Tap selects an element, dragging moves it, and dragging a corner grip resizes
-it continuously; retain Save/Cancel behavior. Show Reset only for a changed
-selection and restore just that element; offer a whole-layout reset in
+it continuously; retain Save/Cancel behavior. Add light snapping with visible
+guides for edges, centers and balanced left/right placement; a slow drag must
+escape the snap. Give Triangle and Cross
+a real gap in the compact default layout. Preserve existing custom positions.
+Show Reset only for a changed selection and restore just that element; offer a
+whole-layout reset in
 controller settings only when the profile differs from defaults. Provide
 an explicit **Allow overlap** toggle (off by default), and reset. Persist
 separate tall, square and wide layouts. Keep this customization behind the
@@ -106,6 +110,8 @@ height; adapt the inner-screen control band across both rotations.
 Use original psx launcher branding and retain borrowed notices. Investigate
 the donor/OpenBIOS startup transition through its supported interfaces;
 preserve its license and keep proprietary startup artwork out of app branding.
+Use the free firmware's supported fast-boot build mode to omit the interrupted
+intro, retaining its exact source, notices and reproduction instructions.
 
 Track a captured D-pad finger until lift or interruption even outside its
 visible area. Let its center follow thumb drift by default, with a neutral
@@ -172,7 +178,8 @@ touches clear of the system navigation strip. Preserve camera-safe placement
 and verify the resulting folded-landscape spacing.
 
 Replace prototype branding with original app/repository artwork and favicon
-assets. Remove obsolete paths, redundant state writes and stale public-facing
+assets using a generic digital-controller silhouette. Remove obsolete paths,
+redundant state writes and stale public-facing
 copy while preserving existing data, borrowed notices and useful verification.
 
 ## Required local resources

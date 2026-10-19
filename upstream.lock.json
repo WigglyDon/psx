@@ -13,6 +13,20 @@
     "licenseSha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
     "licenseSizeBytes": 35147,
     "retainedLicense": "LICENSES/SwanStation-GPL-3.0.txt"
+  },
+  "firmware": {
+    "name": "PCSX-Redux OpenBIOS",
+    "repository": "https://github.com/pcsx-redux/nugget.git",
+    "revision": "08f1b3e1b3289b27fda955f6105fc9e6afd9ffe6",
+    "sourcePath": "vendor/openbios/source",
+    "sourceSha256": "407256c55987dcb098fe8dfb25cf2c0d41836be57d14c39ea0a1d266550e089d",
+    "imagePath": "vendor/openbios/openbios-fast.bin",
+    "imageSha256": "c13794bc14de130c363786f45710d6e472c092070c0524ddede50f41f948bc45",
+    "licensePath": "vendor/openbios/source/LICENSE",
+    "licenseSha256": "7e423e1aa58dc2b425021b233976036cb27d923034e3e54130111cd24f04a156",
+    "sourceModifications": "none",
+    "buildFlags": ["BOOT_MODE=fast", "OPENBIOS_SHELL=shell", "BUILD=Release"],
+    "builderImage": "ghcr.io/grumpycoders/pcsx-redux-build@sha256:d9ae6cbb23a5d0d98d8c3702cc6f512698ee1670bf8d59b236b2baabe99a66e4"
   }
 }
 

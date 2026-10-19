@@ -622,6 +622,25 @@ impl Canvas<'_> {
         self.button(editor.map(editor.layout.playback), "PAUSE", 0.);
         self.button(editor.map(editor.layout.speed), "1×", 0.);
         self.button(editor.map(editor.layout.mute), "SOUND", 0.);
+        let scale = preview.w / editor.width;
+        if let Some(x) = editor.guides[0] {
+            let x = preview.x + x * scale;
+            self.line(
+                (x, preview.y),
+                (x, preview.y + preview.h),
+                1.,
+                [0.57, 0.96, 0.71, 0.65],
+            );
+        }
+        if let Some(y) = editor.guides[1] {
+            let y = preview.y + y * scale;
+            self.line(
+                (preview.x, y),
+                (preview.x + preview.w, y),
+                1.,
+                [0.57, 0.96, 0.71, 0.65],
+            );
+        }
         let selected = if editor.selected < editor.layout.element_count() {
             editor.map(editor.layout.element(editor.selected))
         } else {
@@ -662,7 +681,7 @@ impl Canvas<'_> {
         self.text(
             16.,
             88.,
-            "Drag to move · pull a corner to resize",
+            "Drag to align · pull a corner to resize",
             17.,
             [0.64, 0.76, 0.83, 1.],
         );

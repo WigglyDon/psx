@@ -14,12 +14,14 @@ classes forward indispensable activity/service callbacks. SwanStation remains
 unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
 [build.md](build.md), `rust-toolchain.toml` and `Cargo.lock` record reproduction.
 
-- All 45 host tests pass, including atomic card reopening, bounded audio and
+- All 48 host tests pass, including atomic card reopening, bounded audio and
   live speed changes, captured simultaneous touch, following-thumb behavior,
   clear picture/control geometry, saved display profiles, stale-inset handling,
   corner editing/reset, continuous volume, centered panels, library migration,
   file/companion validation, disc grouping, artwork, checkpoint integrity and
-  mutually exclusive speaker tap/hold with drift/interruption cancellation.
+  mutually exclusive speaker tap/hold with drift/interruption cancellation,
+  snapping with slow-drag escape, returning from background audio headroom,
+  and the pinned free firmware without replacing supplied files.
 - Host and Android ARM64 Clippy pass with warnings denied; formatting passes.
 - APK signature, resources/notices, ARM64 ABI, EGL dependency and 16 KB
   ZIP/ELF LOAD alignment checks pass. C++ runtime linkage is static.
@@ -111,20 +113,48 @@ observation does not establish an exact scene comparison across that update.
 The owner then physically folded/unfolded and rotated the displays and reported
 the layouts working very well, with possible off-center folded-landscape spacing
 near the camera. Recorded drawable/inset transitions reached outer portrait and
-landscape on the same core thread. The revised background-transition pass remains
-pending. A USB interruption during this check was followed by fresh admission;
+landscape on the same core thread. The later background-transition result is
+recorded below. A USB interruption during this check was followed by fresh admission;
 no actions were replayed against an absent device.
 
 The owner's follow-up changes keep Android navigation visible for direct Home
 gestures, add a clear fading pause indicator and change the speaker to tap for
-mute/hold for the live slider. The 45 host tests and host/Android Clippy checks
-cover the updated source; the next APK requires its own device pass. No longer
-play or thermal result is inferred from these focused checks.
-The prepared APK SHA-256 is
+mute/hold for the live slider. That APK was installed and restored the paused
+scene after update. Its PAUSED panel rendered over the frozen picture. A short
+speaker tap muted without opening a menu; a hold opened the live volume panel
+and its release kept mute unchanged. One bottom swipe returned to the launcher;
+with background play off, a checkpoint completed and playback reports stopped
+through the minimized observation. Re-entry reused the same activity.
+The installed APK SHA-256 is
 `1532fb0f00596222cf6cad08a1235148af3baa2d47618f2021d3ef3ee1eff1c6`;
 signature, resource/notices, ARM64 and 16 KB alignment verification pass.
 Its source revision is `3eb8379712da`. The matching source archive SHA-256 is
 `0acce81be96c93d4e134f964c1f1f8f5724b0204d61abe2deb65f00c90976b7e`.
+
+Enabling background play started the media-playback foreground service. While
+the launcher stayed focused, six consecutive ten-second windows measured
+59.76–59.87 fps, hardware output only, no dropped source frames, and core time
+6.48–6.78 ms. FIFO underruns nevertheless rose from 4 before the transition to
+24 over that run. Synchronous repeated saves were removed; this is not a clean
+background-audio result. The source now adds a bounded 50 ms output target only
+while minimized, retaining 25 ms during foreground play and trimming the extra
+backlog on return. It requires its own device check. The option was restored to
+off, the owner's 58% unmuted/1× settings retained, and the latest session saved.
+The device was released locked with its screen off, verified within the lease.
+
+The owner requested more space between Triangle and Cross, alignment snapping
+and a controller-shaped brand mark. The updated compact defaults reserve a
+16-point gap without reducing face-button size, and recompute the largest clear
+picture around it. Saved custom positions are preserved. Dragging shows light
+edge/center/mirrored guides and can escape them with slow movement. Original
+controller artwork replaces the card in the vector masters, masthead, adaptive
+and monochrome icons, and favicon/raster exports. The 48 host tests, host and
+Android Clippy pass; this later source is not yet device-qualified. The owner
+has taken the phone back for personal use; further device access is on request.
+The prepared APK SHA-256 is
+`2c82a160fe72325fdbe9ea77fdbbc4960986fe7518f31300b40e103144fa0dc0`.
+Signature, required resources/notices, native ABI and 16 KB ZIP/ELF alignment
+checks pass. This build has not been installed on the phone.
 
 ## Corresponding source and release limits
 
@@ -149,10 +179,16 @@ The matching artwork revision `7c050369a20b` source archive has SHA-256
 Its brand inputs match the installed APK's source revision; it retains the
 same runtime and borrowed notices.
 
-The donor's included OpenBIOS remains the no-proprietary-firmware route. Its
-startup transition/cutoff is unresolved: the existing fast-boot patch does not
-support OpenBIOS. The host does not guess when to hide/crop game output or use
-proprietary startup artwork as branding.
+The donor's fast-boot patch does not support its included OpenBIOS. The revised
+source instead prepares a separately pinned, unmodified OpenBIOS image built
+with upstream's documented `BOOT_MODE=fast`, omitting the shell/intro entirely.
+A second clean build through Rust `cargo xtask firmware`, using only the vendored
+source and pinned compiler image, reproduced the same 524,288-byte image:
+`c13794bc14de130c363786f45710d6e472c092070c0524ddede50f41f948bc45`.
+The source inventory and exact MIT notice are verified, and a host test proves
+existing supplied firmware is preserved. The core and old checkpoint BIOS bytes
+are unchanged. Actual new-disc startup/compatibility still needs the next
+authorized device window; compilation is not a runtime resolution claim.
 
 16 KB runtime/performance, custom-UI accessibility, Play AAB delivery, broad-scan
 and foreground-service eligibility, and the combined App Store distribution

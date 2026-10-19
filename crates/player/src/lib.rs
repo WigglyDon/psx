@@ -1,6 +1,7 @@
 pub mod artwork;
 pub mod audio;
 pub mod files;
+mod firmware;
 pub mod input;
 pub mod library;
 pub mod resume;

@@ -29,6 +29,15 @@ standalone license file exists. `cargo xtask notices` copies the upstream
 license/notice files into APK assets without rewriting them. This file does not relicense
 those dependencies or claim authorship of borrowed work.
 
+The free startup fallback additionally uses unmodified PCSX-Redux OpenBIOS from
+`pcsx-redux/nugget` revision `08f1b3e1b3289b27fda955f6105fc9e6afd9ffe6`, built
+with its supported `BOOT_MODE=fast` option. Exact source, MIT license, image,
+source inventory and reproduction details are retained under
+[`vendor/openbios`](vendor/openbios/UPSTREAM.md) and in `upstream.lock.json`.
+The APK retains that source's exact license and provenance in its notices.
+No new C/C++ firmware logic is authored here; all new host policy remains Rust.
+The pinned SwanStation core and its included original OpenBIOS are unchanged.
+
 Google Play and Apple App Store distribution are intended product goals.
 SwanStation is not yet cleared here as a donor for both stores. Before that
 decision, record how the actual combined distribution satisfies all inherited

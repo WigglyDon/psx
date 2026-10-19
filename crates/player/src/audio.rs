@@ -8,7 +8,8 @@ pub struct AudioQueue {
     write: AtomicUsize,
     volume: AtomicU32,
     speed: AtomicUsize,
-    consumer_speed: AtomicUsize,
+    target: AtomicUsize,
+    consumer_limit: AtomicUsize,
     pub underruns: AtomicU64,
     pub dropped: AtomicU64,
 }
@@ -22,7 +23,8 @@ impl AudioQueue {
             write: AtomicUsize::new(0),
             volume: AtomicU32::new(65536),
             speed: AtomicUsize::new(1),
-            consumer_speed: AtomicUsize::new(1),
+            target: AtomicUsize::new(1100),
+            consumer_limit: AtomicUsize::new(1100),
             underruns: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
         }
@@ -52,6 +54,16 @@ impl AudioQueue {
         self.speed.store(multiplier as usize, Ordering::Relaxed);
     }
 
+    /// Background scheduling needs more headroom than interactive play. The
+    /// queue stays bounded, and return discards the extra latency immediately.
+    pub fn set_background(&self, background: bool) {
+        self.target
+            .store(if background { 2205 } else { 1100 }, Ordering::Relaxed);
+    }
+    pub fn target_frames(&self) -> usize {
+        self.target.load(Ordering::Relaxed) * self.speed.load(Ordering::Relaxed)
+    }
+
     /// Called only by the producer. The core's batch is always consumed; excess
     /// samples are counted and discarded, rather than blocking emulation.
     pub fn push(&self, samples: &[i16]) {
@@ -73,10 +85,11 @@ impl AudioQueue {
         let mut read = self.read.load(Ordering::Relaxed);
         let mut available = self.write.load(Ordering::Acquire).wrapping_sub(read);
         let speed = self.speed.load(Ordering::Relaxed);
-        if self.consumer_speed.swap(speed, Ordering::Relaxed) != speed {
+        let limit = self.target.load(Ordering::Relaxed) * speed;
+        if self.consumer_limit.swap(limit, Ordering::Relaxed) != limit {
             // Only the consumer advances read. Discard excess old-speed
             // backlog, retaining at most the new mode's normal fill target.
-            let skip = available.saturating_sub(1100 * speed);
+            let skip = available.saturating_sub(limit);
             read = read.wrapping_add(skip);
             available -= skip;
         }
@@ -111,6 +124,24 @@ impl AudioQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn returning_from_background_trims_extra_latency_without_restarting_sound() {
+        let queue = AudioQueue::new(16384);
+        queue.set_background(true);
+        queue.set_speed(5);
+        assert_eq!(queue.target_frames(), 11025);
+        queue.push(&vec![1000; 24000]);
+        let mut output = [0; 2];
+        queue.pop(&mut output);
+        assert_eq!(queue.queued(), 11020);
+        queue.set_background(false);
+        queue.pop(&mut output);
+        assert_eq!(queue.queued(), 5495);
+        assert_eq!(output, [1000; 2]);
+        assert_eq!(queue.underruns.load(Ordering::Relaxed), 0);
+        assert_eq!(queue.dropped.load(Ordering::Relaxed), 0);
+    }
     #[test]
     fn live_speed_change_trims_backlog_without_stopping_or_resetting_the_fifo() {
         let queue = AudioQueue::new(8192);

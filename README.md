@@ -20,8 +20,9 @@ saved progress stay on your device.
 Actual hardware-rendered gameplay, clear sound, simultaneous controls and an
 ordinary memory-card save loaded after a fresh process have run on a stock
 Fold. Automatic session restore has also returned to gameplay after a fresh
-process. The latest fold-layout corrections, higher thumb controls and
-optional background playback are under device verification.
+process. Reopening now reuses the existing player, and the owner has checked
+fold/rotation layouts. The latest controller alignment, free fast boot and
+background-audio refinements await their device pass.
 
 This is active development, with a signed development APK build path.
 Google Play and Apple App Store releases are intended; store acceptance,

@@ -257,6 +257,7 @@ pub struct Editor {
     pub selected: usize,
     pub width: f32,
     pub height: f32,
+    pub guides: [Option<f32>; 2],
     pointer: Option<EditorPointer>,
 }
 
@@ -266,6 +267,7 @@ enum EditorPointer {
         id: i32,
         x: f32,
         y: f32,
+        original: Rect,
     },
     Resize {
         id: i32,
@@ -319,6 +321,7 @@ impl Editor {
             selected: 0,
             width,
             height,
+            guides: [None; 2],
             pointer: None,
         }
     }
@@ -430,7 +433,13 @@ impl Editor {
         } else {
             return;
         }
-        self.pointer = Some(EditorPointer::Move { id, x, y });
+        self.guides = [None; 2];
+        self.pointer = Some(EditorPointer::Move {
+            id,
+            x,
+            y,
+            original: self.selected_bounds(),
+        });
     }
     pub fn motion(&mut self, id: i32, x: f32, y: f32) {
         let Some(pointer) = self.pointer else {
@@ -440,8 +449,8 @@ impl Editor {
             return;
         }
         let scale = self.preview().w / self.width;
-        let (previous_x, previous_y) = match pointer {
-            EditorPointer::Move { x, y, .. } => (x, y),
+        let (previous_x, previous_y, original) = match pointer {
+            EditorPointer::Move { x, y, original, .. } => (x, y, original),
             EditorPointer::Resize {
                 x: start_x,
                 y: start_y,
@@ -461,10 +470,12 @@ impl Editor {
         };
         let dx = (x - previous_x) / scale;
         let dy = (y - previous_y) / scale;
+        self.guides = [None; 2];
         if self.selected < self.layout.element_count() {
-            let mut r = self.layout.element(self.selected);
-            r.x = (r.x + dx).clamp(0., self.width - r.w);
-            r.y = (r.y + dy).clamp(0., self.height - r.h);
+            let mut r = original;
+            r.x = (original.x + dx).clamp(0., self.width - r.w);
+            r.y = (original.y + dy).clamp(0., self.height - r.h);
+            r = self.snap_move(r, Rect::new(0., 0., self.width, self.height));
             self.layout.set_element(self.selected, r);
             self.preset.capture(&self.layout, self.width, self.height);
         } else {
@@ -473,17 +484,83 @@ impl Editor {
             let area = full.layout(self.width, self.height).game;
             let slack_x = area.w - self.layout.game.w;
             let slack_y = area.h - self.layout.game.h;
+            let mut r = original;
+            r.x = (original.x + dx).clamp(area.x, area.x + slack_x.max(0.));
+            r.y = (original.y + dy).clamp(area.y, area.y + slack_y.max(0.));
+            r = self.snap_move(r, area);
             if slack_x > 0.1 {
-                self.preset.game_offset[0] =
-                    (self.preset.game_offset[0] + dx / slack_x).clamp(0., 1.);
+                self.preset.game_offset[0] = ((r.x - area.x) / slack_x).clamp(0., 1.);
             }
             if slack_y > 0.1 {
-                self.preset.game_offset[1] =
-                    (self.preset.game_offset[1] + dy / slack_y).clamp(0., 1.);
+                self.preset.game_offset[1] = ((r.y - area.y) / slack_y).clamp(0., 1.);
             }
         }
         self.layout = self.preset.layout(self.width, self.height);
-        self.pointer = Some(EditorPointer::Move { id, x, y });
+        // Keep the drag's unsnapped origin. Incrementing the snapped position
+        // would trap slow finger movement at a guide.
+    }
+    fn snap_move(&mut self, mut r: Rect, area: Rect) -> Rect {
+        let threshold = 6. / (self.preview().w / self.width);
+        let defaults = Layout::new(self.width, self.height);
+        let mut references = vec![if self.selected < defaults.element_count() {
+            defaults.element(self.selected)
+        } else {
+            area
+        }];
+        if self.selected < self.layout.element_count() {
+            references.extend(
+                (0..self.layout.element_count())
+                    .filter(|i| *i != self.selected)
+                    .map(|i| self.layout.element(i)),
+            );
+        }
+        for axis in 0..2 {
+            let (start, extent, low, span) = if axis == 0 {
+                (r.x, r.w, area.x, area.w)
+            } else {
+                (r.y, r.h, area.y, area.h)
+            };
+            let mut best = threshold;
+            let mut position = start;
+            let mut guide = None;
+            let mut consider = |offset: f32, target: f32| {
+                let candidate = target - offset;
+                let distance = (candidate - start).abs();
+                if distance <= best && candidate >= low && candidate + extent <= low + span + 0.01 {
+                    best = distance;
+                    position = candidate;
+                    guide = Some(target);
+                }
+            };
+            let margin = if self.selected < self.layout.element_count() {
+                16.
+            } else {
+                0.
+            };
+            consider(0., low + margin);
+            consider(extent / 2., low + span / 2.);
+            consider(extent, low + span - margin);
+            for reference in &references {
+                let (p, length) = if axis == 0 {
+                    (reference.x, reference.w)
+                } else {
+                    (reference.y, reference.h)
+                };
+                for fraction in [0., 0.5, 1.] {
+                    consider(extent * fraction, p + length * fraction);
+                }
+                if axis == 0 {
+                    consider(extent / 2., self.width - p - length / 2.);
+                }
+            }
+            if axis == 0 {
+                r.x = position;
+            } else {
+                r.y = position;
+            }
+            self.guides[axis] = guide;
+        }
+        r
     }
     fn resize(&mut self, corner: usize, original: Rect, dx: f32, dy: f32) {
         if original.w <= 0. || original.h <= 0. {
@@ -560,6 +637,7 @@ impl Editor {
             return None;
         }
         self.pointer = None;
+        self.guides = [None; 2];
         let EditorPointer::Button { button, .. } = pointer else {
             return None;
         };
@@ -594,12 +672,51 @@ impl Editor {
     }
     pub fn cancel_touch(&mut self) {
         self.pointer = None;
+        self.guides = [None; 2];
     }
 }
 
 #[cfg(test)]
 mod editor_tests {
     use super::*;
+
+    #[test]
+    fn alignment_guides_snap_to_a_peer_and_slow_drag_can_escape() {
+        let mut preset = Preset::default();
+        let mut layout = preset.layout(852., 817.);
+        let mut triangle = layout.element(1);
+        triangle.x -= 25.;
+        layout.set_element(1, triangle);
+        preset.capture(&layout, 852., 817.);
+        let mut editor = Editor::new(preset, 852., 817.);
+        editor.selected = 1;
+        let r = editor.map(editor.layout.element(1));
+        let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+        let scale = editor.preview().w / editor.width;
+        editor.down(1, x, y);
+        editor.motion(1, x + 25. * scale + 2., y);
+        let aligned = editor.layout.element(1);
+        let cross = editor
+            .layout
+            .controls
+            .iter()
+            .find(|c| c.label == "X")
+            .unwrap()
+            .bounds;
+        assert!((aligned.x + aligned.w / 2. - cross.x - cross.w / 2.).abs() < 0.01);
+        assert!(editor.guides[0].is_some());
+        // Each small move still uses the unsnapped start, rather than losing
+        // its delta at the magnet and trapping the finger indefinitely.
+        for delta in 3..=25 {
+            editor.motion(1, x + 25. * scale + delta as f32, y);
+        }
+        assert!(editor.layout.element(1).x > aligned.x + 20.);
+        let moved = editor.layout.element(1);
+        editor.motion(2, x - 100., y);
+        assert!(editor.layout.element(1).same_bounds(moved));
+        editor.cancel_touch();
+        assert!(editor.guides.iter().all(Option::is_none));
+    }
 
     #[test]
     fn reset_is_contextual_and_preserves_other_custom_elements() {

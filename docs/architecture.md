@@ -147,8 +147,9 @@ On a sufficiently wide square display, shoulders and system buttons occupy
 the space between thumb clusters. The dock adjusts its height while retaining
 face-button sizes and directional response. Thumb clusters leave 32 logical
 points below their lowest target. The compact band reduces vertical spread
-within the same reserved area, retaining face-button size and picture extent;
-its less-used system buttons keep their own separate row. Wide phone layouts use side rails,
+while retaining face-button size and a 16-point gap between Triangle and Cross;
+the largest clear picture is recomputed around those minimum touch bounds.
+The less-used system buttons keep their own separate row. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture
 height. The small pause/play, speed, volume and settings toolbar uses a clear
 part of an already excluded top margin when available, avoiding the actual
@@ -184,6 +185,11 @@ system-bar insets. Focus transitions cancel touch and recalculate the layout.
 
 The controller editor selects elements by tap, moves them by dragging, and
 resizes them through corner grips, keeping the opposite corner anchored.
+Dragging lightly snaps nearby edges/centers to peers, defaults, screen margins
+and mirrored horizontal centers. Visible guides explain each alignment. The
+unsnapped drag origin is retained so slow movement can escape a guide; no grid
+locks placement. These are draft changes until Done, with Cancel and Reset
+unchanged. Existing saved custom positions are preserved.
 The game picture keeps its aspect ratio. Reset appears only for a changed
 selection and restores that element's draft until Done; Cancel discards it.
 Controller settings offer a whole-layout reset only for a changed profile.
@@ -236,6 +242,12 @@ runs on the sole owner thread; no emulation internals change. Frontend
 presentation is bounded to 60 Hz above 1x. Achieved speed remains a measurement,
 not a guarantee from the selected multiplier.
 
+The FIFO has 16,384 source-frame slots. Foreground play targets about 25 ms
+of output; opt-in minimized playback targets 50 ms to tolerate background
+scheduling gaps. The consumer trims the extra backlog when returning, without
+reopening audio. Fill targets scale with the selected multiplier. This is a
+bounded host policy; its background audio quality still needs device validation.
+
 Run in background is off by default. Minimizing pauses emulation, cancels input,
 closes audio and checkpoints, without changing explicit pause intent. Opting in
 starts Android's media-playback foreground service while the app is visible,
@@ -249,12 +261,18 @@ requested only on opt-in. Android's service and audio-focus requirements are
 documented in its [background audio contract](https://developer.android.com/about/versions/17/changes/bg-audio)
 and [service types](https://developer.android.com/develop/background-work/services/fgs/service-types).
 
-The launcher icon is original psx vector artwork. Borrowed notices remain in
-About and APK assets. The current no-proprietary-firmware route runs the
-donor's included OpenBIOS and its own startup sequence. The existing fast-boot
-option is enabled, but the donor's patch does not cover OpenBIOS. Replacing
-that sequence requires a supported firmware/donor route; the host does not
-guess a time at which to crop or hide game output.
+The launcher icon is original digital-controller vector artwork. Borrowed notices
+remain in About and APK assets. The free startup path uses unmodified, separately
+pinned OpenBIOS built with its documented `BOOT_MODE=fast` option. This omits
+the shell rather than showing an intro cut short when a disc becomes ready.
+Rust prepares the free image only when `system/openbios.bin` is absent; supplied
+firmware remains authoritative. The donor core and its original embedded BIOS
+remain unchanged. See [firmware provenance](../vendor/openbios/UPSTREAM.md).
+
+The current donor serializes BIOS bytes in the machine checkpoint, so an existing
+session restores its own firmware and continues without rebooting. New disc boots
+use the new fallback. Source/build reproduction and actual startup/compatibility
+acceptance are separate checks; the latter still needs the next device window.
 
 ## Delivery boundary
 

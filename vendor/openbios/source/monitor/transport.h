@@ -1,0 +1,104 @@
+/*
+
+MIT License
+
+Copyright (c) 2026 PCSX-Redux authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
+
+#pragma once
+
+#include <stdint.h>
+
+/* Monitor frame layer, over whichever 16-bit word link the build selects
+   (monitor/link.h). Frame shape (protocol design section 2):
+     [SYNC:u16=0x55AA] [TYPE:u16] [LEN:u16] [payload: LEN words] [CKSUM:u32]
+   CKSUM is Fletcher-32 over the 16-bit words TYPE, LEN, payload (sent
+   endian (each word contributes low byte then high byte), transmitted
+   low-word-first. SYNC is not part of the checksum. */
+
+#define FRAME_SYNC 0x55AA
+
+/* Receive return codes. 0 = a valid frame was decoded. */
+#define TRANSPORT_OK 0
+#define TRANSPORT_EBADLEN (-1) /* payload longer than caller's buffer */
+#define TRANSPORT_ECKSUM (-2)  /* checksum mismatch */
+
+/* Largest LEN a stream link accepts: an 8 KiB bulk payload plus the header
+   words any frame type puts in front of it (DESIGN section 13). */
+#define TRANSPORT_STREAM_MAX_LEN (4096 + 16)
+
+/* Bring up the link. Idempotent; safe to call once at monitor entry. */
+void transportInit(void);
+
+/* Send one frame on the word channel. Blocks on the STAT TX-word-ready bit
+   (bit2) for each word. */
+void transportSendFrame(uint16_t type, const uint16_t *payload, uint16_t len);
+
+/* Streaming send, for responses whose payload is generated on the fly (e.g.
+   READ_MEM copying straight out of target memory without a staging buffer).
+   Call Begin with the exact word count, push exactly that many words with
+   SendWord, then End. Not reentrant: one frame at a time (the monitor is
+   single-threaded). */
+void transportSendBegin(uint16_t type, uint16_t len);
+void transportSendWord(uint16_t w);
+/* nbytes from src as (nbytes + 1) / 2 words, low byte first, the last one
+   padded with 0; the checksum is updated as by transportSendWord. */
+void transportSendBytes(const uint8_t *src, uint32_t nbytes);
+void transportSendEnd(void);
+
+/* Block until a full, checksum-valid frame arrives. On success returns
+   TRANSPORT_OK and fills type/payload/lenOut; payload holds up to maxLen
+   words. On a length overflow or checksum mismatch the frame is fully drained
+   (both ends stay word-aligned) and a negative TRANSPORT_* code is returned. */
+/* SET_BAUD's second half (design section 2a): switch the link to `reload`,
+   wait up to a window for the exact PING frame, answer it with a pongType
+   frame, and wait up to another window for a second PING. 1: both came, the
+   new rate stays and the caller answers the second. 0: the old rate is back.
+   -1: the link has no rate. */
+int transportTryRate(uint16_t reload, uint16_t pongType, uint16_t pongWord);
+int transportHasRate(void);
+
+int transportRecvFrame(uint16_t *type, uint16_t *payload, uint16_t maxLen, uint16_t *lenOut);
+
+/* Streaming receive, the counterpart to the streaming send. Lets a caller pull
+   a frame's payload word by word straight into its final destination (e.g.
+   PCread writing decoded bytes directly to the target's own buffer, no staging
+   RAM, no memcpy). Call Begin (returns TYPE and payload word count), pull
+   exactly `len` words with RecvWord, then End (validates the checksum). Not
+   reentrant: one frame at a time. */
+void transportRecvBegin(uint16_t *type, uint16_t *len);
+
+/* STOP while RUNNING (byte links; always 0 on ATCONS). Called from the
+   exception entry on an interrupt, never blocks when nothing was received.
+   If a byte is waiting, everything the host sends is read and dropped until
+   the line has been quiet for MONITOR_STOP_QUIET_SPINS polls. Returns 1 when
+   a 0 was among it - a frame start, which is all a host sends a running
+   target (a STOP frame) - and 0 when it was console text only. The frame is
+   not parsed: the 8-byte SIO1 FIFO may well have overrun by the time the
+   next interrupt comes, so its tail cannot be relied on. */
+int transportStopPending(void);
+uint16_t transportRecvWord(void);
+/* `words` payload words into dst, low byte first, storing only the first
+   nbytes; the checksum is updated as by transportRecvWord. The bulk path of
+   WRITE_MEM/LOAD. */
+void transportRecvBytes(uint8_t *dst, uint32_t nbytes, uint32_t words);
+int transportRecvEnd(void);

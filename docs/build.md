@@ -49,6 +49,24 @@ page sizes, preserving a path to testing without changing core internals.
 Actual speed and complete memory mapping behavior on 16 KB Android remain
 unverified until that environment runs the application.
 
+## Free startup firmware
+
+The normal build verifies and embeds the pinned 512 KB OpenBIOS fast-boot image
+in the Rust host. Its unmodified upstream sources and exact MIT notice are in
+`vendor/openbios`, with revision, image/source hashes and compiler image recorded
+in `upstream.lock.json` and [UPSTREAM.md](../vendor/openbios/UPSTREAM.md).
+It uses the existing `BOOT_MODE=fast` option to omit the shell/intro. Supplied
+firmware and the pinned SwanStation sources are preserved.
+
+On Linux amd64 with rootless Podman, `cargo xtask firmware` copies only the
+vendored public firmware sources into a fresh marked `build/openbios-work`
+directory, compiles with the pinned upstream compiler image and compares the
+result against the bundled SHA-256. The compiler cache is private under
+`.local/firmware-build-storage`; the compiler container has no network, root
+filesystem writes or extra capabilities. Its first use can fetch the exact
+compiler image. A clean rebuild has reproduced the bundled image. This is a
+source reproduction result; the new startup still requires its hardware check.
+
 ## Android callback shims
 
 `android-activity` supplies the NativeActivity lifecycle and input callbacks,

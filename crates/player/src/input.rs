@@ -107,7 +107,9 @@ impl Layout {
         let size = (cluster * 0.36).clamp(48., 72.);
         let offset = (cluster - size) / 2.;
         let well_height = if compact {
-            (h - w * 0.75 - 8.).clamp(160., cluster) - 24.
+            // Leave a real gap between Triangle and Cross, even in the
+            // compact dock. The picture is maximized around these targets.
+            ((h - w * 0.75 - 8.).clamp(160., cluster) - 24.).max(size * 2. + 16.)
         } else {
             cluster
         };
@@ -818,6 +820,19 @@ mod tests {
             for face in layout.controls.iter().filter(|c| c.is_face()) {
                 assert!(face.bounds.y + face.bounds.h <= h - 32. + 0.01);
             }
+            let triangle = layout
+                .controls
+                .iter()
+                .find(|c| c.label == "TRI")
+                .unwrap()
+                .bounds;
+            let cross = layout
+                .controls
+                .iter()
+                .find(|c| c.label == "X")
+                .unwrap()
+                .bounds;
+            assert!(cross.y - triangle.y - triangle.h >= 16. - 0.01);
             for (i, a) in layout.controls.iter().enumerate() {
                 for b in layout.controls.iter().skip(i + 1) {
                     if !a.is_face() || !b.is_face() {
@@ -826,7 +841,7 @@ mod tests {
                 }
             }
             if w / h < 1.35 {
-                assert!((layout.game.w - w).abs() < 0.01);
+                assert!(layout.game.w >= w * 0.95);
             } else {
                 assert!(layout.game.h >= h * 0.9);
             }

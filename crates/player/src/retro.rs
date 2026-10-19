@@ -390,6 +390,8 @@ impl Core {
             return Err("A game session already owns the core.".into());
         }
         let lease = CoreLease;
+        crate::firmware::prepare(system)
+            .map_err(|e| format!("The free startup firmware could not be prepared: {e}"))?;
         let library = Library::new(library_path)
             .map_err(|e| format!("The bundled PS1 core could not be loaded: {e}"))?;
         let mut options = BTreeMap::new();

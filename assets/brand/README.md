@@ -1,6 +1,6 @@
 # psx identity
 
-The memory-card mark is original psx artwork, licensed under the project's
+The digital-controller mark is original psx artwork, licensed under the project's
 MIT license. Use lowercase **psx** in copy. Machine Rhythm is the maker.
 
 `mark.svg` is the transparent master. `icon.svg` adds the dark app tile and can
@@ -13,9 +13,10 @@ the inset master so launcher masks can crop safely.
 
 Colors: ink `#0B1018`, warm white `#EDF2EC`, signal green `#91F5B6`.
 The small symbol uses flat fills and no texture, gradients or borrowed console
-marks. Its clipped corner, recessed label and three contacts stay readable
-at small sizes. Keep the silhouette and negative space intact. A favicon asset
+marks. Its two grips, digital cross and four plain face buttons suggest the
+original console era without using a console maker's logo or button symbols.
+Keep the silhouette and negative space intact. A favicon asset
 does not imply that this repository has a hosted website.
 
 PlayStation names identify the emulated system. The psx identity does not use
-Sony's logo, startup artwork or trade dress and implies no affiliation.
+Sony's logo or startup artwork and implies no affiliation.

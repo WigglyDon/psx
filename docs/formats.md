@@ -51,8 +51,11 @@ External M3U import, SBI companion resolution, encrypted PBP files and
 arbitrary CUE subdirectory layouts are not implemented. Donor-advertised
 formats are not automatically qualified host formats.
 
-The pinned donor contains an MIT-licensed OpenBIOS fallback from PCSX-Redux.
-Its license is retained. This does not promise every game boots without
+The free fallback uses pinned MIT-licensed PCSX-Redux OpenBIOS built with its
+documented fast-boot mode, skipping its shell/intro. Its exact source and license
+are retained in `vendor/openbios`; Rust prepares it only if `system/openbios.bin`
+is absent. Existing supplied firmware is preserved and configured regional
+firmware keeps the donor's precedence. This does not promise every game boots without
 original firmware. Select PS1 firmware from Settings when a game needs a
 compatible dump; it stays private. The donor checks known hashes and region.
 No proprietary firmware is bundled or downloaded.

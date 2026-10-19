@@ -156,7 +156,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     let graphics = unsafe { Graphics::new()? };
     let now = Instant::now();
     let playback = PlaybackSettings::load(&root).map_err(|e| e.to_string())?;
-    let queue = Arc::new(AudioQueue::new(8192));
+    let queue = Arc::new(AudioQueue::new(16384));
     queue.set_volume(playback.output_volume());
     queue.set_speed(playback.speed.multiplier());
     let mut player = Player {
@@ -289,6 +289,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             }
         }
         player.sync_background(&app);
+        player
+            .queue
+            .set_background(player.activity.background_playback && !player.activity.foreground);
         if let Some(work) = &player.checkpoint_work {
             if let Ok(result) = work.try_recv() {
                 player.checkpoint_work = None;
@@ -1561,10 +1564,7 @@ impl Player {
                 for (title, path) in [
                     ("psx · MIT", "notices/host/LICENSE"),
                     ("SwanStation · GPL", "notices/swanstation/LICENSE"),
-                    (
-                        "OpenBIOS · MIT",
-                        "notices/swanstation/dep/openbios/LICENSE.txt",
-                    ),
+                    ("OpenBIOS · MIT", "notices/openbios/LICENSE"),
                     ("Noto Sans · SIL OFL", "notices/fonts/NotoSans-LICENSE"),
                     ("Dependency notices", "notices/INDEX.txt"),
                 ] {
@@ -1741,7 +1741,7 @@ impl Player {
             return Err("The core output exceeded the native-resolution buffer.".into());
         }
         let fps = core.state().av.timing.fps;
-        let target = 1100. * self.playback.speed.multiplier() as f64;
+        let target = self.queue.target_frames() as f64;
         let error = (self.queue.queued() as f64 - target) / target;
         let correction = 1. + (error * 0.003).clamp(-0.005, 0.005);
         let period =
