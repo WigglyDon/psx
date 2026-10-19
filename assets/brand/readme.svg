@@ -2,8 +2,8 @@
   <title>psx — a native PS1 player</title>
   <rect width="1200" height="320" rx="20" fill="#0B1018"/>
   <g transform="translate(42 52) scale(2)">
-    <path fill="#EDF2EC" d="M28 31H44L80 77H64Z"/>
-    <path fill="#91F5B6" d="M64 31H80L62 53L53 42ZM46 55L55 66L44 77H28Z"/>
+    <path fill="#EDF2EC" fill-rule="evenodd" d="M35 27H64L78 41V76Q78 81 73 81H35Q30 81 30 76V32Q30 27 35 27ZM40 39V58H65V46L58 39ZM38 67H70V81H38Z"/>
+    <path fill="#91F5B6" d="M38 69H45V81H38ZM50.5 69H57.5V81H50.5ZM63 69H70V81H63Z"/>
   </g>
   <g fill="#EDF2EC" fill-rule="evenodd" transform="translate(302 93)">
     <path d="M0 24H17V31Q25 22 39 22Q66 22 66 52Q66 83 39 83Q26 83 18 74V108H0ZM18 52Q18 68 32 68Q47 68 47 52Q47 37 32 37Q18 37 18 52Z"/>

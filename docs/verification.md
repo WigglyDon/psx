@@ -90,9 +90,15 @@ active marker when an empty player closes, and reconciles late EGL dimensions
 with size-tagged insets. Fresh launch/re-entry and inner/outer rotation checks
 must pass on the corrected APK before this milestone is closed. The user's
 checkpoint and card were preserved privately before replacing the test build.
-The corrected source is `806f3ef`; its APK SHA-256 is
+The corrected runtime source is `806f3ef`; its initial APK SHA-256 is
 `20eebba91a9442f2db621d86ee8daaf7d81e1368806634792f911eb067a6b255`.
 It is built and awaiting its device pass, not yet a verified runtime correction.
+
+The subsequent memory-card branding revision changes artwork only. Its prepared
+APK SHA-256 is `40a38c2c3369c221390f1e09927413c191686df7caf11589ccecf69e0244d7ef`.
+The masthead, adaptive/themed icons and 16/32/48 pixel favicon were updated
+together. Android resource compilation and signed APK checks pass; this
+branding build is not yet installed or visually verified on the Fold.
 
 ## Corresponding source and release limits
 

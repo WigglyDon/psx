@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" fill="none">
   <title>psx</title>
   <rect width="108" height="108" fill="#0B1018"/>
-  <path fill="#EDF2EC" d="M28 31H44L80 77H64Z"/>
-  <path fill="#91F5B6" d="M64 31H80L62 53L53 42ZM46 55L55 66L44 77H28Z"/>
+  <g transform="translate(-18.9 -18.9) scale(1.35)">
+    <path fill="#EDF2EC" fill-rule="evenodd" d="M35 27H64L78 41V76Q78 81 73 81H35Q30 81 30 76V32Q30 27 35 27ZM40 39V58H65V46L58 39ZM38 67H70V81H38Z"/>
+    <path fill="#91F5B6" d="M38 69H45V81H38ZM50.5 69H57.5V81H50.5ZM63 69H70V81H63Z"/>
+  </g>
 </svg>
