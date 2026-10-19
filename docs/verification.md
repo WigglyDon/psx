@@ -1,6 +1,6 @@
 # FIRST-PLAYABLE-1 verification
 
-Reviewed 2026-10-18. Hardware-rendered gameplay, owner-confirmed clear sound,
+Reviewed 2026-10-19. Hardware-rendered gameplay, owner-confirmed clear sound,
 simultaneous touch controls and a completed memory-card save loaded after a
 fresh process have run on the stock Fold. Automatic session restore has also
 returned to gameplay after a fresh process and an APK update. Latest display
@@ -14,7 +14,7 @@ classes forward indispensable activity/service callbacks. SwanStation remains
 unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
 [build.md](build.md), `rust-toolchain.toml` and `Cargo.lock` record reproduction.
 
-- All 55 host tests pass, including atomic card reopening, bounded audio and
+- All 56 host tests pass, including atomic card reopening, bounded audio and
   live speed changes, captured simultaneous touch, following-thumb behavior,
   clear picture/control geometry, saved display profiles, stale-inset handling,
   corner editing/reset, continuous volume, centered panels, library migration,
@@ -26,6 +26,8 @@ unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
   landscape system-key clearance, editor reset, camera-safe live volume and
   pause indication with no elapsed animation time, silent foreground pause and
   rapid pause/resume between audio callbacks without replaying old samples.
+  A recorded-insets regression checks the 1021-pixel folded-landscape picture
+  against the old 962-pixel content height when the status bar appeared.
 - Host and Android ARM64 Clippy pass with warnings denied; formatting passes.
 - APK signature, resources/notices, ARM64 ABI, EGL dependency and 16 KB
   ZIP/ELF LOAD alignment checks pass. C++ runtime linkage is static.
@@ -244,19 +246,44 @@ The same check exposed a fullscreen regression: status and navigation bars
 could remain shown, including after unfolding. A proposed source fix retains
 the first-swipe navigation mode but observes bar visibility and re-hides after
 a short delay, reapplying fullscreen after display changes. Android ARM64 Clippy
-passes. This fix still needs device qualification. The final fresh-process
-return check was deferred when the regression was observed; the current session
-was checkpointed and backed up. psx was stopped. The phone repeatedly woke and
-unlocked during lock verification; the owner explicitly authorized release
-without verified locking, and the device transaction was released.
-The prepared fullscreen-fix APK SHA-256 is
+passes. This fix subsequently restored Crash after installation and a fresh
+process. The owner folded/unfolded and rotated, reporting that bar hiding works.
+The inner-screen capture also showed both bars hidden. Before display transitions,
+four steady ten-second windows measured 59.79–59.85 fps with zero recorded audio
+underruns/drops; the later fold/rotation phase accumulated two underruns, with
+zero drops. This is separate from audible or thermal-endurance acceptance.
+In the preceding pause-response window, a final fresh-process return check was
+deferred when the regression was observed; progress was checkpointed and backed
+up. That window ended with an owner-authorized exception to lock verification
+after repeated waking/unlocking. The subsequent fullscreen check ended with
+verified locked/screen-off handback after app backup and only-psx closure.
+The installed fullscreen-fix APK SHA-256 is
 `5bccf32af19d0a1f049288ca2a27fbf5f3aabc5879da75207490517f67111c6f`;
 its signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
 Its matching runtime source revision is `bb6a1b2db93c`, with archive SHA-256
 `c6e0da2de7cc4f42234c8e45768d1b74cbc75c924c162d1e7c8e93192ae75cb9`.
 Changed runtime inputs and licenses compare exactly with the clean extracted
-source; its archive excludes private root directories. The owner has not yet
-released the Fold for this prepared build's device check.
+source; its archive excludes private root directories.
+
+The owner then reported that the picture resized and failed to remain vertically
+maximized in folded landscape. Recorded content changed from 2342×1021 to
+2342×962 while the status bar appeared, then returned to its original height.
+On the inner screen, status visibility could also disable toolbar use of the
+camera margin and shrink the picture. The next source keeps stable fullscreen
+insets and toolbar placement through these brief reveals, preserving navigation,
+caption and camera clearance. Host tests and Android/host Clippy pass; this
+viewport-stability correction still requires its installed-device check.
+Its prepared signed APK SHA-256 is
+`f68dd8da75207aa49b67f8b51018c09ecf351a3fb6efea7102604b930f1b076f`;
+signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
+
+With the current default dock, the recorded inner-landscape geometry models a
+1871.3×1403.5 picture. A full-width 2152-pixel 4:3 picture needs 1614 pixels of
+height, which the separate control dock does not leave. Inner portrait models
+1956.7×1467.5; folded landscape models 1361.3×1021. These are layout-model results,
+not new measured device picture bounds. New resize diagnostics include the
+actual picture bounds so future device checks can distinguish these limits
+from further regressions.
 
 The owner also reported black strips inside the game picture. Offline inspection
 of the latest private Crash checkpoint found a 512×240 emulated display with

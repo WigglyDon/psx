@@ -179,7 +179,12 @@ reapplies after window/configuration changes. Focus loss and document picking
 cancel the timeout; a game without audio focus does not re-hide system UI.
 This keeps the gesture strip reserved and the first Home gesture available,
 without forcing device-wide settings or using a painted-over system handle.
-The return-to-fullscreen behavior still requires device acceptance.
+The owner checked folding and rotation and reported that return-to-fullscreen
+works. Revealed status bars now use a stable fullscreen layout: their temporary
+visibility does not reduce picture height or move the toolbar into the play
+area. Navigation's reserved strip, caption decoration and camera bounds remain
+excluded. Visible-bar layout is retained during document picking or a game's
+audio-focus interruption. Insets remain tagged to the actual drawable size.
 
 The less-used system buttons keep their own separate row. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture

@@ -106,6 +106,7 @@ struct Player {
     layout: Layout,
     density: f32,
     insets: [i32; 4],
+    fullscreen_insets: Option<[i32; 4]>,
     inset_size: [i32; 2],
     last_insets_request: Instant,
     rehide_bars_at: Option<Instant>,
@@ -180,6 +181,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         layout: Layout::new(360., 800.),
         density: 1.,
         insets: [0; 4],
+        fullscreen_insets: None,
         inset_size: [0; 2],
         last_insets_request: now,
         rehide_bars_at: None,
@@ -536,6 +538,9 @@ impl Player {
             MainEvent::Resume { .. } => {
                 self.activity.foreground = true;
                 self.platform.focus(app, true);
+                if self.activity.surface {
+                    self.resize(app)?;
+                }
             }
             MainEvent::Pause | MainEvent::Stop => {
                 self.speaker_press.cancel();
@@ -565,6 +570,7 @@ impl Player {
     }
     fn resize(&mut self, app: &AndroidApp) -> Result<(), String> {
         self.speaker_press.cancel();
+        let previous_game = self.layout.game;
         let previous = (
             self.graphics.width,
             self.graphics.height,
@@ -575,10 +581,15 @@ impl Player {
             self.density,
         );
         self.graphics.resize()?;
+        let fullscreen = self.fullscreen_insets.filter(|_| {
+            self.activity.foreground
+                && !self.picker
+                && (self.core.is_none() || self.activity.audio_focus)
+        });
         let content = safe_content(
             [self.graphics.width, self.graphics.height],
             self.inset_size,
-            self.insets,
+            fullscreen.unwrap_or(self.insets),
         );
         self.graphics.content_rect(
             content.x as i32,
@@ -600,7 +611,7 @@ impl Player {
         let cutouts = self.cutout_rects();
         self.layout = preset.layout_with_cutouts(w, h, &cutouts);
         if self.inset_size == [self.graphics.width, self.graphics.height]
-            && self.top_margin_available
+            && (fullscreen.is_some() || self.top_margin_available)
             && self.activity.audio_focus
         {
             self.layout.toolbar_in_top_margin(
@@ -634,26 +645,31 @@ impl Player {
             self.refresh_menu(app);
         }
         let content = self.graphics.content;
-        if previous
-            != (
-                self.graphics.width,
-                self.graphics.height,
-                content.x,
-                content.y,
-                content.w,
-                content.h,
-                self.density,
-            )
+        if !previous_game.same_bounds(self.layout.game)
+            || previous
+                != (
+                    self.graphics.width,
+                    self.graphics.height,
+                    content.x,
+                    content.y,
+                    content.w,
+                    content.h,
+                    self.density,
+                )
         {
             log::info!(
-                "Display resized: surface={}x{} content={}x{} at {},{} density={}",
+                "Display resized: surface={}x{} content={}x{} at {},{} density={} picture={:.1}x{:.1} at {:.1},{:.1}",
                 self.graphics.width,
                 self.graphics.height,
                 content.w,
                 content.h,
                 content.x,
                 content.y,
-                self.density
+                self.density,
+                self.layout.game.w * self.density,
+                self.layout.game.h * self.density,
+                self.graphics.content.x + self.layout.game.x * self.density,
+                self.graphics.content.y + self.layout.game.y * self.density
             );
         }
         Ok(())
@@ -940,14 +956,15 @@ impl Player {
                     self.fail(error);
                 }
             }
-            Event::Insets(
+            Event::Insets {
                 size,
                 density,
                 edges,
+                fullscreen_edges,
                 cutouts,
                 top_margin_available,
                 hidden_bars_visible,
-            ) => {
+            } => {
                 if hidden_bars_visible
                     && self.activity.foreground
                     && self.activity.focused
@@ -959,12 +976,14 @@ impl Player {
                     self.rehide_bars_at = None;
                 }
                 if edges != self.insets
+                    || fullscreen_edges != self.fullscreen_insets
                     || size != self.inset_size
                     || density != self.density
                     || cutouts != self.cutouts
                     || top_margin_available != self.top_margin_available
                 {
                     self.insets = edges;
+                    self.fullscreen_insets = fullscreen_edges;
                     self.inset_size = size;
                     if (0.5..=6.).contains(&density) {
                         self.density = density;

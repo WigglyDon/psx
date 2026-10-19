@@ -50,6 +50,25 @@ pub fn safe_content(size: [i32; 2], inset_size: [i32; 2], edges: [i32; 4]) -> Re
     )
 }
 
+/// Merge decoration, reserved navigation and camera margins. A side camera
+/// may be a local obstacle; its top/bottom margins still apply.
+pub fn safe_edges(
+    decoration: [i32; 4],
+    navigation: [i32; 4],
+    camera: [i32; 4],
+    local_side_camera: bool,
+) -> [i32; 4] {
+    std::array::from_fn(|i| {
+        decoration[i]
+            .max(navigation[i])
+            .max(if local_side_camera && (i == 0 || i == 2) {
+                0
+            } else {
+                camera[i]
+            })
+    })
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Control {
     pub bounds: Rect,
@@ -775,6 +794,39 @@ impl Touches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fullscreen_keeps_recorded_fold_landscape_height_while_bars_are_revealed() {
+        let size = [2342, 1080];
+        let navigation = [0, 0, 0, 59];
+        let camera = [0, 0, 182, 0];
+        let visible = safe_edges([0, 59, 0, 59], navigation, camera, true);
+        let fullscreen = safe_edges([0, 0, 0, 59], navigation, camera, true);
+        assert_eq!(safe_content(size, size, visible).h, 962.);
+        let content = safe_content(size, size, fullscreen);
+        assert_eq!(
+            (content.x, content.y, content.w, content.h),
+            (0., 0., 2342., 1021.)
+        );
+        let density = 2.4375;
+        let hole = Rect::new(
+            2160. / density,
+            484. / density,
+            182. / density,
+            112. / density,
+        );
+        let layout = Preset::default().layout_with_cutouts(
+            content.w / density,
+            content.h / density,
+            &[hole],
+        );
+        assert!((layout.game.h * density - 1021.).abs() < 0.01);
+        assert!(!layout.game.overlaps(hole));
+        assert_eq!(
+            safe_edges([0, 40, 0, 0], [0, 0, 0, 78], [0, 136, 0, 0], false),
+            [0, 136, 0, 78]
+        );
+    }
+
     #[test]
     fn landscape_camera_keeps_the_picture_centered_and_controls_clear() {
         let density = 2.4375;

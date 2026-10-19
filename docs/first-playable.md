@@ -188,6 +188,8 @@ touches clear of the system navigation strip. Preserve camera-safe placement
 and verify the resulting folded-landscape spacing.
 The owner also requests a hidden Home handle until interaction; use supported
 per-window behavior and verify that one swipe still leaves the app.
+Restore fullscreen after revealed bars and display changes. Brief system-bar
+visibility must not shrink the game or move its controller/toolbar layout.
 
 Replace prototype branding with original app/repository artwork and favicon
 assets using a blue Cross on a black circular button in grey plastic,

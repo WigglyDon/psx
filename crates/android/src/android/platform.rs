@@ -25,7 +25,15 @@ pub enum Event {
     Background(bool),
     PauseBackground,
     Error(String),
-    Insets([i32; 2], f32, [i32; 4], Vec<[i32; 4]>, bool, bool),
+    Insets {
+        size: [i32; 2],
+        density: f32,
+        edges: [i32; 4],
+        fullscreen_edges: Option<[i32; 4]>,
+        cutouts: Vec<[i32; 4]>,
+        top_margin_available: bool,
+        hidden_bars_visible: bool,
+    },
 }
 static EVENTS: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
 pub(super) fn post(event: Event) {
@@ -420,6 +428,10 @@ impl Platform {
                 false
             };
             let mut edges = [0; 4];
+            let mut decoration = [0; 4];
+            let mut navigation_edges = [0; 4];
+            let mut fullscreen_decoration = [0; 4];
+            let mut camera_edges = [0; 4];
             let mut cutouts = Vec::new();
             let size = [
                 env.call_method(&view, "getWidth", "()I", &[])?.i()?,
@@ -464,16 +476,23 @@ impl Platform {
                         &[JValue::Int(navigation)],
                     )?
                     .l()?;
+                let status = env
+                    .call_static_method("android/view/WindowInsets$Type", "statusBars", "()I", &[])?
+                    .i()?;
+                // A revealed status bar overlays fullscreen play instead of
+                // shrinking it. Caption/navigation decoration stays reserved.
+                let without_status = env
+                    .call_method(
+                        &insets,
+                        "getInsets",
+                        "(I)Landroid/graphics/Insets;",
+                        &[JValue::Int(bars & !status)],
+                    )?
+                    .l()?;
                 for (i, field) in ["left", "top", "right", "bottom"].iter().enumerate() {
-                    let bar = env.get_field(&occupied, field, "I")?.i()?;
-                    let nav = env.get_field(&nav, field, "I")?.i()?;
-                    // A landscape camera only excludes its actual rectangle,
-                    // not the entire edge. System navigation remains reserved.
-                    edges[i] = if size[0] > size[1] && (i == 0 || i == 2) {
-                        bar.max(nav)
-                    } else {
-                        edges[i].max(bar).max(nav)
-                    };
+                    decoration[i] = env.get_field(&occupied, field, "I")?.i()?;
+                    navigation_edges[i] = env.get_field(&nav, field, "I")?.i()?;
+                    fullscreen_decoration[i] = env.get_field(&without_status, field, "I")?.i()?;
                 }
             }
             let cutout = env
@@ -508,11 +527,30 @@ impl Platform {
                 .iter()
                 .enumerate()
                 {
-                    if sdk < 30 || size[0] <= size[1] || (i != 0 && i != 2) {
-                        edges[i] = edges[i].max(env.call_method(&cutout, name, "()I", &[])?.i()?);
-                    }
+                    camera_edges[i] = env.call_method(&cutout, name, "()I", &[])?.i()?;
                 }
             }
+            let local_side_camera = size[0] > size[1];
+            if sdk >= 30 {
+                edges = psx_player::input::safe_edges(
+                    decoration,
+                    navigation_edges,
+                    camera_edges,
+                    local_side_camera,
+                );
+            } else {
+                for i in 0..4 {
+                    edges[i] = edges[i].max(camera_edges[i]);
+                }
+            }
+            let fullscreen_edges = (sdk >= 31).then(|| {
+                psx_player::input::safe_edges(
+                    fullscreen_decoration,
+                    navigation_edges,
+                    camera_edges,
+                    local_side_camera,
+                )
+            });
             let resources = env
                 .call_method(
                     &view,
@@ -530,14 +568,15 @@ impl Platform {
                 )?
                 .l()?;
             let density = env.get_field(metrics, "density", "F")?.f()?;
-            post(Event::Insets(
+            post(Event::Insets {
                 size,
                 density,
                 edges,
+                fullscreen_edges,
                 cutouts,
                 top_margin_available,
                 hidden_bars_visible,
-            ));
+            });
             Ok(())
         });
     }
