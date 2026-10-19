@@ -12,7 +12,16 @@ The working installed PS1 runtime was `470fa617f249`, APK SHA-256
 Its source, APK, original signing identity and historical private backup are
 retained locally. Before any update, back up actual current device data;
 the historical backup predates further owner play. Keep `com.machinerhythm.psx`
-and its signing identity unchanged. No PLAYER-2 device update has occurred yet.
+and its signing identity unchanged.
+
+The first candidate (`22782b813eb4`) was installed in place on October 19 after
+a fresh recoverable backup. It aborted during startup layout calculation on
+Android's temporary 1-pixel surface, before loading a game. The working PS1
+APK was restored in place and returned to the same paused FF7 scene. The
+library, cards, controls and active-session files compared byte-for-byte equal
+to the fresh backup. The phone was returned locked and screen-off. A focused
+regression now covers saved PS1/PS2 controls through tiny transient surfaces;
+the corrected candidate still requires device qualification.
 
 ## Implemented, awaiting device qualification
 

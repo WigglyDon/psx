@@ -678,6 +678,9 @@ impl Preset {
         self.layout_with_cutouts(w, h, &[])
     }
     pub fn layout_with_cutouts(&self, w: f32, h: f32, cutouts: &[Rect]) -> Layout {
+        // Android may briefly expose a 1-pixel pbuffer before the window is
+        // adopted. Saved controls must remain safe during that transition.
+        let (w, h) = (w.max(1.), h.max(1.));
         let mut layout = if self.analog {
             Layout::ps2(w, h)
         } else {
@@ -690,8 +693,8 @@ impl Preset {
             .enumerate()
         {
             if [r.x, r.y, r.w, r.h].iter().all(|n| n.is_finite()) {
-                let width = (r.w * w).clamp(24., w);
-                let height = (r.h * h).clamp(24., h);
+                let width = (r.w * w).clamp(24_f32.min(w), w);
+                let height = (r.h * h).clamp(24_f32.min(h), h);
                 layout.set_element(
                     i,
                     Rect::new(
@@ -987,6 +990,31 @@ impl Touches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_controls_survive_temporary_startup_and_replaced_surfaces() {
+        for analog in [false, true] {
+            let mut preset = Preset {
+                analog,
+                ..Preset::default()
+            };
+            let normal = preset.layout(960., 420.);
+            preset.capture(&normal, 960., 420.);
+            let saved = serde_json::to_vec(&preset).unwrap();
+            for (w, h) in [(1., 1.), (1., 420.), (960., 1.), (23., 23.), (0., 0.)] {
+                let transient = preset.layout(w, h);
+                for i in 0..transient.element_count() {
+                    let rect = transient.element(i);
+                    assert!(rect.w.is_finite() && rect.h.is_finite());
+                    assert!(rect.w > 0. && rect.w <= w.max(1.));
+                    assert!(rect.h > 0. && rect.h <= h.max(1.));
+                }
+            }
+            assert_eq!(serde_json::to_vec(&preset).unwrap(), saved);
+            let restored = preset.layout(960., 420.);
+            assert!((0..normal.element_count())
+                .all(|i| normal.element(i).same_bounds(restored.element(i))));
+        }
+    }
     #[test]
     fn dual_analog_digital_and_actions_remain_independent_and_cancel_on_interruption() {
         let preset = Preset {
