@@ -60,8 +60,9 @@ the opposite corner. Group Reset returned the cluster to its defaults without
 moving the D-pad or other keys, then hid Reset. Individual selected Triangle
 and exposed Group. Test drafts were canceled; the before/after controls files
 compare byte-for-byte. Actual Done/reopen persistence for a grouped edit was
-not exercised; its normalized-preset round-trip passes on the host. Comfortable
-reach remains an owner assessment.
+not exercised; its normalized-preset round-trip passes on the host. The owner
+subsequently reported that gameplay was working well, with no complaints
+noticed yet. This is initial owner feedback on the installed build.
 
 USB briefly disconnected before entry to controller settings; actions stopped
 and the exact owner-reconnected endpoint was re-admitted before continuing.
