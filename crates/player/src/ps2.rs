@@ -7,6 +7,7 @@ use crate::{
     session::GameId,
 };
 use libloading::Library;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     ffi::{c_char, c_void, CStr, CString},
@@ -288,6 +289,11 @@ impl Core {
         let library = Library::new(path)
             .map_err(|e| format!("The bundled PS2 engine could not load: {e}"))?;
         let mut options = BTreeMap::new();
+        let firmware = firmware_binding(config.system)?;
+        options.insert(
+            b"armsx2_bios".to_vec(),
+            CString::new(firmware.file).map_err(|e| e.to_string())?,
+        );
         for (k, v) in [
             ("armsx2_renderer", "OpenGL"),
             ("armsx2_upscale", "1x"),
@@ -543,19 +549,12 @@ pub fn prepare(root: &Path, id: &GameId, renderer: &str) -> Result<PathBuf> {
             std::os::unix::fs::symlink(&target, &link).map_err(|e| e.to_string())?;
         }
     }
-    let bios = root.join("system/ps2/bios");
-    if !fs::read_dir(&bios)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .any(|e| {
-            e.metadata()
-                .is_ok_and(|m| m.is_file() && m.len() == 4 * 1024 * 1024)
-        })
-    {
-        return Err(
-            "PS2 needs your compatible firmware dump. Add PS2 firmware in Settings.".into(),
-        );
-    }
+    prepare_firmware(
+        &system,
+        root.join("resume")
+            .join(format!("{}.state", id.as_str()))
+            .exists(),
+    )?;
     let ini = pcsx2.join("inis/armsx2-libretro.ini");
     // Source-bound settings version. Retain donor defaults for unspecified
     // keys, and explicitly disable adaptive guest clocks for qualification.
@@ -563,6 +562,123 @@ pub fn prepare(root: &Path, id: &GameId, renderer: &str) -> Result<PathBuf> {
     let contents = qualification_settings(&previous, needs_fetch_copy(renderer));
     atomic_write(&ini, contents.as_bytes()).map_err(|e| e.to_string())?;
     Ok(system)
+}
+
+#[derive(Serialize, Deserialize)]
+struct Firmware {
+    file: String,
+    sha256: String,
+}
+fn firmware_binding(system: &Path) -> Result<Firmware> {
+    let binding: Firmware =
+        serde_json::from_slice(&fs::read(system.join("firmware.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    if binding.file.is_empty()
+        || binding.file == "auto"
+        || Path::new(&binding.file)
+            .file_name()
+            .and_then(|n| n.to_str())
+            != Some(&binding.file)
+        || binding.file.contains('\0')
+        || binding.sha256.len() != 64
+        || !binding.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err("This game's PS2 firmware binding is invalid. Its saves are kept.".into());
+    }
+    Ok(binding)
+}
+/// This identity is stable while a runtime owns the entry. The next prepare
+/// verifies the actual file again before any new native runtime can start.
+pub fn firmware_identity(system: &Path) -> Result<String> {
+    Ok(firmware_binding(system)?.sha256)
+}
+fn prepare_firmware(system: &Path, has_checkpoint: bool) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let bios = system.join("pcsx2/bios");
+    let manifest = system.join("firmware.json");
+    let binding = if manifest.exists() {
+        firmware_binding(system)?
+    } else {
+        let mut names = Vec::new();
+        for entry in fs::read_dir(&bios).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let metadata = entry.metadata().map_err(|e| e.to_string())?;
+            if metadata.is_file()
+                && metadata.len() == 4 * 1024 * 1024
+                && has_rom_version(&fs::read(entry.path()).map_err(|e| e.to_string())?)
+            {
+                if let Some(name) = entry.file_name().to_str().filter(|name| *name != "auto") {
+                    names.push(name.to_owned());
+                }
+            }
+        }
+        names.sort();
+        if has_checkpoint && names.len() > 1 {
+            return Err("This older PS2 session has no firmware binding and multiple firmware files are available. Keep its original firmware as the only PS2 firmware file before reopening. Its checkpoint and cards are kept.".into());
+        }
+        let file = names
+            .into_iter()
+            .next()
+            .ok_or("PS2 needs compatible firmware. Add PS2 firmware in Settings.")?;
+        let sha256 = format!(
+            "{:x}",
+            Sha256::digest(fs::read(bios.join(&file)).map_err(|e| e.to_string())?)
+        );
+        Firmware { file, sha256 }
+    };
+    let path = bios.join(&binding.file);
+    let file = fs::File::open(&path).map_err(|_| "This game's PS2 firmware is missing. Restore the same firmware file; its saves are kept.".to_string())?;
+    if file.metadata().map_err(|e| e.to_string())?.len() != 4 * 1024 * 1024
+        || format!(
+            "{:x}",
+            Sha256::digest(fs::read(path).map_err(|e| e.to_string())?)
+        ) != binding.sha256
+    {
+        return Err("This game's PS2 firmware changed. Restore the original firmware to resume; its checkpoint and cards are kept.".into());
+    }
+    if !manifest.exists() {
+        atomic_write(
+            &manifest,
+            &serde_json::to_vec(&binding).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+// Match the donor's ROMDIR/ROMVER discovery, without restricting firmware to
+// Sony images or asserting compatibility from a header. Native load still
+// validates and executes the selected image.
+fn has_rom_version(bytes: &[u8]) -> bool {
+    let Some(start) = bytes
+        .chunks_exact(16)
+        .position(|r| &r[..10] == b"RESET\0\0\0\0\0")
+    else {
+        return false;
+    };
+    let mut offset = 0usize;
+    for entry in bytes[start * 16..].chunks_exact(16).take(4096) {
+        if entry[0] == 0 {
+            return false;
+        }
+        let size = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as usize;
+        if &entry[..10] == b"ROMVER\0\0\0\0" {
+            return bytes
+                .get(offset..offset.saturating_add(14))
+                .is_some_and(|v| v[..4].iter().all(u8::is_ascii_digit));
+        }
+        let Some(next) = offset
+            .checked_add(size)
+            .and_then(|n| n.checked_add(15))
+            .map(|n| n & !15)
+        else {
+            return false;
+        };
+        if next > bytes.len() {
+            return false;
+        }
+        offset = next;
+    }
+    false
 }
 fn needs_fetch_copy(renderer: &str) -> bool {
     // Observed ANGLE/PowerVR EXT framebuffer-fetch shader compilation failure.
@@ -693,6 +809,42 @@ pub fn card_identity(root: &Path) -> std::io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn firmware_selection_is_pinned_and_changed_bytes_or_ambiguous_legacy_inputs_fail_safely() {
+        fn image(marker: u8) -> Vec<u8> {
+            let mut bytes = vec![marker; 4 * 1024 * 1024];
+            bytes[..128].fill(0);
+            for (i, name, size) in [(0, "RESET", 64u32), (1, "ROMDIR", 64), (2, "ROMVER", 14)] {
+                bytes[64 + i * 16..64 + i * 16 + name.len()].copy_from_slice(name.as_bytes());
+                bytes[64 + i * 16 + 12..64 + i * 16 + 16].copy_from_slice(&size.to_le_bytes());
+            }
+            bytes[128..142].copy_from_slice(b"0002AD20261017");
+            bytes
+        }
+        let root = std::env::temp_dir().join(format!("psx-ps2-firmware-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let bios = root.join("pcsx2/bios");
+        fs::create_dir_all(&bios).unwrap();
+        assert!(!has_rom_version(&vec![0; 4 * 1024 * 1024]));
+        fs::write(bios.join("000-invalid.bin"), vec![0; 4 * 1024 * 1024]).unwrap();
+        fs::write(bios.join("owner.bin"), image(1)).unwrap();
+        prepare_firmware(&root, false).unwrap();
+        let identity = firmware_identity(&root).unwrap();
+        fs::write(bios.join("earlier.bin"), image(2)).unwrap();
+        prepare_firmware(&root, true).unwrap();
+        assert_eq!(firmware_binding(&root).unwrap().file, "owner.bin");
+        assert_eq!(firmware_identity(&root).unwrap(), identity);
+        fs::write(bios.join("owner.bin"), image(3)).unwrap();
+        assert!(prepare_firmware(&root, true).is_err());
+        assert_eq!(firmware_identity(&root).unwrap(), identity);
+        fs::remove_file(bios.join("owner.bin")).unwrap();
+        assert!(prepare_firmware(&root, true).is_err());
+        fs::remove_file(root.join("firmware.json")).unwrap();
+        fs::write(bios.join("owner.bin"), image(1)).unwrap();
+        assert!(prepare_firmware(&root, true).is_err());
+        assert!(!root.join("firmware.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn callbacks_keep_their_binding_on_native_worker_threads() {
         let binding = Arc::new(Shared {

@@ -128,8 +128,15 @@ restored shortcut never resolves by a similar title. Collection taps and
 shortcuts open the remembered disc directly; runtime PS1 disc replacement
 remains available. PS2 runtime disc replacement is not yet supported.
 
-PS2 requires a compatible user-supplied 4 MiB firmware dump; its separate
-Settings import remains private. Each entry has its own donor-owned regular
+The qualified PS2 route currently uses compatible user-supplied 4 MiB firmware;
+its separate Settings import remains private. ROMDIR/ROMVER discovery selects
+an explicit image for each entry, with its filename and SHA-256 retained in
+`ps2/<GameId>/firmware.json`. Adding another image cannot change that binding;
+changed or missing bytes refuse a new runtime and retain cards/checkpoints.
+An older unbound PS2 checkpoint requires explicit restart with current cards;
+multiple possible legacy firmware inputs refuse an automatic choice. This is
+identity protection, not a compatibility claim from a header. A BIOS-free
+default remains under evaluation. Each entry has its own donor-owned regular
 card files under `ps2/<GameId>/pcsx2/memcards`, with shared pinned resources
 and private firmware. The donor creates its own card format. Rust pauses its
 native owner, requests a checked flush, syncs files and binds checkpoint
@@ -137,7 +144,7 @@ metadata to their current digest. It never replaces cards during native
 ownership. Folder-card storage is unsupported by this host.
 
 PS2 checkpoints allow the donor's 68 MiB bound and pin both its exact source
-revision and adapter-patch hash. Orderly shutdown seals against the final
+revision, adapter-patch hash and selected firmware hash. Orderly shutdown seals against the final
 card files while retaining the writer lock. A changed card, failed seal or
 incompatible state retains current card data and the old checkpoint, with an
 explicit restart route. PS1 retains its existing 64 MiB state bound and card

@@ -67,6 +67,19 @@ additional engine/firmware evaluations are optional evidence, not a mandatory
 sequence before fixing a concrete defect. BIOS-free default operation is
 unqualified and must preserve existing firmware-bound sessions.
 
+Off-device, the unmodified OpenPS2BIOS candidate at
+`43005227db73090a4a4b5701dee510a728d0e689` built twice to identical 4 MiB bytes,
+SHA-256 `3ad7ab89b01eeedd61eb6afe39013da5a3d366c63d7c63b608c32526bb6ecbda`.
+The tools were Fedora Clang 22.1.8 and the pinned NDK's LLD/objcopy, using
+upstream Make/Python packaging unchanged in isolated private outputs. Both
+that image and the owner-supplied image passed the Rust ROMDIR binding probe.
+These are build/header observations only: the candidate is not bundled,
+provenance clearance and gameplay/audio/save compatibility are not established,
+and no existing session's firmware was substituted. Its upstream
+[compatibility table](https://github.com/TamaribaEmu/OpenPS2BIOS/blob/43005227db73090a4a4b5701dee510a728d0e689/COMPATIBILITY.md)
+claims menu access only. Further candidate work need not delay the current
+gameplay/card investigation.
+
 ## Implemented, awaiting device qualification
 
 Rust distinguishes a validated stable game ID, durable saved session and

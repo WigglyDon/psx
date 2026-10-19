@@ -398,6 +398,10 @@ shader fails compilation. Other renderer defaults are retained. PS2 file
 cards already flush page writes; the host does not interrupt its VM for the
 PS1-only one-second save-RAM poll. Full flush/sync remains part of checkpoints
 and interruptions. PS2 background play is not inherited from PS1's opt-in.
+Per-entry firmware selection and settings changes occur under the same writer
+as cards/checkpoints. The explicit donor BIOS option and resume identity use
+that entry's pinned filename/hash; directory discovery cannot silently change
+an existing session after another firmware import.
 Dual-analog/digital touch and normalized editor profiles have separate PS2
 storage, retaining all existing PS1 profile names and element positions.
 PS2 defaults reuse the PS1 controls and cap styling, adding primary lower

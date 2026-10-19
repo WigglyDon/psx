@@ -2015,6 +2015,15 @@ impl Player {
         for disc in game.disc_list() {
             fs::File::open(&disc.path).map_err(|_| "This game's files are unavailable. Locate the game to keep its existing progress.".to_string())?;
         }
+        if game.system == System::Ps2 && unsafe { libc::sysconf(libc::_SC_PAGESIZE) } != 4096 {
+            return Err(
+                "This PS2 build requires 4 KiB host pages. Your saved games are kept.".into(),
+            );
+        }
+        self.close()?;
+        let session = Runtime::restoring(&self.root, SavedSession { game: id.clone() })
+            .map_err(|e| e.to_string())?;
+        // Per-entry settings and firmware selection share the card/state writer.
         let ps2_system = if game.system == System::Ps2 {
             Some(psx_player::ps2::prepare(
                 &self.root,
@@ -2024,14 +2033,6 @@ impl Player {
         } else {
             None
         };
-        if game.system == System::Ps2 && unsafe { libc::sysconf(libc::_SC_PAGESIZE) } != 4096 {
-            return Err(
-                "This PS2 build requires 4 KiB host pages. Your saved games are kept.".into(),
-            );
-        }
-        self.close()?;
-        let session =
-            Runtime::restoring(&self.root, SavedSession { game: id }).map_err(|e| e.to_string())?;
         let launch_path = game.launch_path(&self.root).map_err(|e| e.to_string())?;
         let library = Path::new(if game.system == System::Ps2 {
             "libarmsx2.so"

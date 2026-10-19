@@ -14,11 +14,13 @@ use std::{
 pub const MAX_STATE_SIZE: usize = 64 * 1024 * 1024;
 const MAGIC: &[u8; 8] = b"PSXRES01";
 const CORE: &str = "e436e9b85374def58d211df7f78880f0f4a917b4";
-fn core(system: System) -> &'static str {
-    if system == System::Ps2 {
-        crate::ps2::revision()
+fn core(root: &Path, game: &Game) -> io::Result<String> {
+    if game.system == System::Ps2 {
+        let firmware = crate::ps2::firmware_identity(&root.join("ps2").join(&game.id))
+            .map_err(io::Error::other)?;
+        Ok(format!("{}+firmware:{firmware}", crate::ps2::revision()))
     } else {
-        CORE
+        Ok(CORE.into())
     }
 }
 fn max_size(system: System) -> usize {
@@ -55,7 +57,7 @@ pub fn save(root: &Path, game: &Game, paused: bool, card: &[u8], state: &[u8]) -
         return Err(io::Error::other("Invalid checkpoint size."));
     }
     let metadata = serde_json::to_vec(&Metadata {
-        core: core(game.system).into(),
+        core: core(root, game)?,
         game: game.clone(),
         paused,
         card: digest(card),
@@ -127,13 +129,13 @@ pub fn load(root: &Path, game: &Game, card: &[u8]) -> io::Result<Option<Checkpoi
         .iter()
         .map(|d| &d.id)
         .eq(game.disc_list().iter().map(|d| &d.id));
-    if metadata.core != core(game.system)
+    if metadata.core != core(root, game)?
         || metadata.game.system != game.system
         || metadata.game.id != game.id
         || !same_discs
         || metadata.game.last_disc != game.last_disc
     {
-        return Err(io::Error::other("This session belongs to different core or disc inputs. Start the game again; your card is kept."));
+        return Err(io::Error::other("This session belongs to different core, firmware or disc inputs. Start the game again; your card is kept."));
     }
     if metadata.card != digest(card) {
         return Err(io::Error::other("Your memory card changed after this checkpoint. Start again to keep the newer card progress."));
@@ -184,6 +186,12 @@ mod tests {
             last_disc: 0,
         };
         let state = vec![9; MAX_STATE_SIZE + 1];
+        fs::create_dir_all(root.join("ps2/def123")).unwrap();
+        fs::write(
+            root.join("ps2/def123/firmware.json"),
+            format!(r#"{{"file":"fixture.bin","sha256":"{}"}}"#, "a".repeat(64)),
+        )
+        .unwrap();
         save(&root, &game, true, b"flushed card", &state).unwrap();
         assert_eq!(
             load(&root, &game, b"flushed card")
@@ -202,6 +210,16 @@ mod tests {
                 .paused
         );
         let before = fs::read(path(&root, &game.id).unwrap()).unwrap();
+        let binding = root.join("ps2/def123/firmware.json");
+        let original_firmware = fs::read(&binding).unwrap();
+        fs::write(
+            &binding,
+            format!(r#"{{"file":"fixture.bin","sha256":"{}"}}"#, "b".repeat(64)),
+        )
+        .unwrap();
+        assert!(load(&root, &game, b"closed card").is_err());
+        assert_eq!(fs::read(path(&root, &game.id).unwrap()).unwrap(), before);
+        fs::write(&binding, original_firmware).unwrap();
         assert!(load(&root, &game, b"newer card").is_err());
         assert!(seal_closed_cards(&root, &game, b"wrong card", b"other card").is_err());
         assert_eq!(fs::read(path(&root, &game.id).unwrap()).unwrap(), before);
@@ -228,6 +246,7 @@ mod tests {
         save(&root, &game, true, b"card", b"machine").unwrap();
         assert_eq!(active(&root).unwrap(), Some(game.id.clone()));
         let loaded = load(&root, &game, b"card").unwrap().unwrap();
+        assert_eq!(loaded.metadata.core, CORE);
         assert!(loaded.metadata.paused);
         assert_eq!(loaded.bytes, b"machine");
         assert!(load(&root, &game, b"newer card").is_err());
