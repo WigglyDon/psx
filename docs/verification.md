@@ -154,7 +154,30 @@ has taken the phone back for personal use; further device access is on request.
 The prepared APK SHA-256 is
 `2c82a160fe72325fdbe9ea77fdbbc4960986fe7518f31300b40e103144fa0dc0`.
 Signature, required resources/notices, native ABI and 16 KB ZIP/ELF alignment
-checks pass. This build has not been installed on the phone.
+checks pass. The subsequent installation check is recorded below.
+
+In a newly authorized device window, that APK installed over the existing app.
+The new process logged automatic restoration and displayed the owner's FF7
+gameplay. Supplied firmware was absent from the pre-update system directory;
+the prepared fallback's on-device hash matched the pinned image. Selecting
+Crash started a new session without a restore log. An early capture showed
+a black picture; later captures showed the game's intro and animated title.
+This establishes a fresh disc boot with the new firmware, not a measured fast
+startup or broad firmware compatibility. Startup latency still needs a timed
+check before the boot-sequence work can be considered polished.
+
+At the owner's request, the changed square-display profile was reset through
+Controller settings. The Reset row disappeared, and the final private backup
+contained an empty element override list: the new defaults are active. There
+were no other customized profiles in the pre-update settings. The remaining
+editor snapping/guide and minimized-audio checks were not completed. Background
+play was returned to off; the owner's 75% unmuted volume and 1× speed were
+retained. FF7's checkpoint remains backed up, but the attempted library return
+did not complete: the final active marker still names Crash. Only psx was
+stopped on handback. Sleep was requested, but the immediate policy read still
+reported the screen on/unlocked; a locked/off handback was not established in
+this window. Device access is again on request. Raw captures/logs and all game,
+card and session data remain private.
 
 ## Corresponding source and release limits
 
@@ -195,8 +218,8 @@ source and pinned compiler image, reproduced the same 524,288-byte image:
 `c13794bc14de130c363786f45710d6e472c092070c0524ddede50f41f948bc45`.
 The source inventory and exact MIT notice are verified, and a host test proves
 existing supplied firmware is preserved. The core and old checkpoint BIOS bytes
-are unchanged. Actual new-disc startup/compatibility still needs the next
-authorized device window; compilation is not a runtime resolution claim.
+are unchanged. Crash subsequently reached its title from a fresh disc boot,
+as recorded above; startup latency and broader compatibility remain unqualified.
 
 16 KB runtime/performance, custom-UI accessibility, Play AAB delivery, broad-scan
 and foreground-service eligibility, and the combined App Store distribution

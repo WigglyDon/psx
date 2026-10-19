@@ -21,8 +21,9 @@ Actual hardware-rendered gameplay, clear sound, simultaneous controls and an
 ordinary memory-card save loaded after a fresh process have run on a stock
 Fold. Automatic session restore has also returned to gameplay after a fresh
 process. Reopening now reuses the existing player, and the owner has checked
-fold/rotation layouts. The latest controller alignment, free fast boot and
-background-audio refinements await their device pass.
+fold/rotation layouts. The latest build restored FF7 and booted Crash with
+the free firmware; startup latency, controller snapping and the latest
+background-audio refinement still need focused device checks.
 
 This is active development, with a signed development APK build path.
 Google Play and Apple App Store releases are intended; store acceptance,
