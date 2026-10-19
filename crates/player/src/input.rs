@@ -217,7 +217,7 @@ impl Layout {
                 "R1" => (w - 16. - shoulder, 64., shoulder, 48.),
                 "SELECT" => (
                     if layout.dpad.y >= 200. {
-                        24.
+                        16. + cluster - 88.
                     } else {
                         w / 2. - 96.
                     },
@@ -227,7 +227,7 @@ impl Layout {
                 ),
                 _ => (
                     if layout.dpad.y >= 200. {
-                        w - 112.
+                        w - 16. - cluster
                     } else {
                         w / 2. + 8.
                     },
@@ -957,6 +957,10 @@ mod tests {
         assert!(bounds("R1").x > bounds("R2").x);
         assert_eq!(bounds("L1").y, bounds("L2").y);
         assert_eq!(bounds("R1").y, bounds("R2").y);
+        assert!(bounds("SELECT").x + bounds("SELECT").w / 2. > layout.dpad.x + layout.dpad.w / 2.);
+        assert!(
+            bounds("START").x + bounds("START").w / 2. < 886. - layout.dpad.x - layout.dpad.w / 2.
+        );
         for control in &layout.controls {
             assert!(!layout.game.overlaps(control.bounds));
             assert!(control.bounds.w >= 48. && control.bounds.h >= 48.);

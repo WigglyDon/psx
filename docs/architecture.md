@@ -160,8 +160,8 @@ Camera avoidance is derived for the current window without overwriting saved
 control positions. The editor uses the same placement/defaults, and anchored
 volume panels slide clear of camera bounds. Shoulder caps have simple symmetric
 rounded faces. Landscape pairs sit level, with L1/R1 outside and L2/R2 inside;
-Start/Select have smaller pill faces inside
-their retained touch targets. Rendering and hit areas remain distinct.
+Start/Select have smaller pill faces inside their retained touch targets, at
+the inner ends of wide-display side rails. Rendering and hit areas remain distinct.
 
 On Android 12 and later, `BEHAVIOR_DEFAULT` requests hidden navigation with
 gesture navigation still available on the first swipe. Navigation's insets
@@ -186,9 +186,17 @@ the user permits rotation, respecting their rotation lock.
 
 Intentional pause adds the PAUSED panel on the same presentation as the frozen
 picture and changed toolbar; audio-focus interruption has its own label. These
-state indicators do not fade. A toolbar pause presents before serializing and
-waiting for its durable checkpoint. Lifecycle interruptions still checkpoint
-synchronously. Opening settings preserves pause intent.
+state indicators do not fade. A toolbar pause presents before preparing its
+checkpoint. One storage worker remains bounded; rapid toggles retain the latest
+pending intent without waiting for an earlier write. Lifecycle interruptions
+still wait for durable checkpoints. Opening settings preserves pause intent.
+
+During an intentional foreground pause, the existing audio stream produces
+silence and the consumer discards queued pre-pause samples. Resume reuses that
+stream and its audio focus when still held. The producer never moves the
+consumer's cursor; a pending discard boundary also handles pause/resume between
+callbacks. Minimized, unfocused or detached playback still closes audio unless
+the separate background-play contract permits continuing emulation.
 
 Audio-focus denial before the first frame leaves the play controls visible
 with an interruption message. Play retries focus; it never overrides another

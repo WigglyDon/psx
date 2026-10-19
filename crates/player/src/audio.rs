@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 /// One core-thread producer, one real-time consumer. Fixed storage; no locks,
 /// allocation, core calls, or file work on the audio thread.
@@ -10,6 +10,9 @@ pub struct AudioQueue {
     speed: AtomicUsize,
     target: AtomicUsize,
     consumer_limit: AtomicUsize,
+    paused: AtomicBool,
+    discard_before: AtomicUsize,
+    discard_pending: AtomicBool,
     pub underruns: AtomicU64,
     pub dropped: AtomicU64,
 }
@@ -25,6 +28,9 @@ impl AudioQueue {
             speed: AtomicUsize::new(1),
             target: AtomicUsize::new(1100),
             consumer_limit: AtomicUsize::new(1100),
+            paused: AtomicBool::new(false),
+            discard_before: AtomicUsize::new(0),
+            discard_pending: AtomicBool::new(false),
             underruns: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
         }
@@ -64,6 +70,20 @@ impl AudioQueue {
         self.target.load(Ordering::Relaxed) * self.speed.load(Ordering::Relaxed)
     }
 
+    /// Foreground pause keeps the device stream warm but silent. Only the
+    /// consumer moves its cursor, including discarding sound queued at pause.
+    pub fn set_paused(&self, paused: bool) {
+        if self.paused.load(Ordering::Relaxed) == paused {
+            return;
+        }
+        if paused {
+            self.discard_before
+                .store(self.write.load(Ordering::Acquire), Ordering::Release);
+            self.discard_pending.store(true, Ordering::Release);
+        }
+        self.paused.store(paused, Ordering::Release);
+    }
+
     /// Called only by the producer. The core's batch is always consumed; excess
     /// samples are counted and discarded, rather than blocking emulation.
     pub fn push(&self, samples: &[i16]) {
@@ -82,8 +102,25 @@ impl AudioQueue {
 
     /// Called only by the consumer, or with the stream closed.
     pub fn pop(&self, output: &mut [i16]) {
+        let paused = self.paused.load(Ordering::Acquire);
         let mut read = self.read.load(Ordering::Relaxed);
         let mut available = self.write.load(Ordering::Acquire).wrapping_sub(read);
+        if self.discard_pending.swap(false, Ordering::AcqRel) {
+            let discard = self
+                .discard_before
+                .load(Ordering::Acquire)
+                .wrapping_sub(read);
+            if discard <= available {
+                read = read.wrapping_add(discard);
+                available -= discard;
+            }
+        }
+        output.fill(0);
+        if paused {
+            self.read
+                .store(read.wrapping_add(available), Ordering::Release);
+            return;
+        }
         let speed = self.speed.load(Ordering::Relaxed);
         let limit = self.target.load(Ordering::Relaxed) * speed;
         if self.consumer_limit.swap(limit, Ordering::Relaxed) != limit {
@@ -95,7 +132,6 @@ impl AudioQueue {
         }
         let count = (output.len() / 2).min(available / speed);
         let volume = self.volume.load(Ordering::Relaxed) as i32;
-        output.fill(0);
         for pair in output.chunks_exact_mut(2).take(count) {
             let mut left = 0;
             let mut right = 0;
@@ -118,12 +154,46 @@ impl AudioQueue {
     pub fn clear_stopped(&self) {
         self.read.store(0, Ordering::Relaxed);
         self.write.store(0, Ordering::Relaxed);
+        self.discard_before.store(0, Ordering::Relaxed);
+        self.discard_pending.store(false, Ordering::Relaxed);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreground_pause_is_silent_without_underruns_or_replaying_old_sound() {
+        let queue = AudioQueue::new(32);
+        queue.push(&[100, -100, 200, -200]);
+        queue.set_paused(true);
+        let mut out = [7; 8];
+        queue.pop(&mut out);
+        queue.pop(&mut out);
+        assert_eq!(out, [0; 8]);
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.underruns.load(Ordering::Relaxed), 0);
+        queue.set_paused(false);
+        queue.push(&[300, -300]);
+        let mut frame = [0; 2];
+        queue.pop(&mut frame);
+        assert_eq!(frame, [300, -300]);
+    }
+
+    #[test]
+    fn pause_and_resume_between_callbacks_discard_only_pre_pause_audio() {
+        let queue = AudioQueue::new(32);
+        queue.push(&[100, -100, 200, -200]);
+        queue.set_paused(true);
+        queue.set_paused(false);
+        queue.push(&[300, -300]);
+        let mut frame = [0; 2];
+        queue.pop(&mut frame);
+        assert_eq!(frame, [300, -300]);
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.underruns.load(Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn returning_from_background_trims_extra_latency_without_restarting_sound() {

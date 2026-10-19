@@ -291,12 +291,14 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             }
         }
         player.sync_background(&app);
+        player.queue.set_paused(player.activity.user_paused);
         player
             .queue
             .set_background(player.activity.background_playback && !player.activity.foreground);
         if let Some(work) = &player.checkpoint_work {
             if let Ok(result) = work.try_recv() {
                 player.checkpoint_work = None;
+                player.dirty |= player.checkpoint_after_present;
                 if let Err(error) = result {
                     player.fail(error);
                 }
@@ -351,7 +353,14 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             break;
         }
         if !player.activity.can_run() {
-            player.stop_sound();
+            if !(player.activity.user_paused
+                && player.activity.foreground
+                && player.activity.focused
+                && player.activity.surface
+                && player.activity.audio_focus)
+            {
+                player.stop_sound();
+            }
             player.next_frame = Instant::now();
         } else if player.core.is_some() && Instant::now() >= player.next_frame {
             if let Err(error) = player.tick() {
@@ -429,10 +438,11 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.activity.surface = false;
             }
             player.dirty = false;
-            // Present the pause change before serializing or waiting for
-            // durable storage. Lifecycle interruption still saves synchronously.
-            if std::mem::take(&mut player.checkpoint_after_present) {
-                if let Err(error) = player.checkpoint() {
+            // One save worker at a time; rapid toggles coalesce to the latest
+            // intent. Neither pause nor resume waits for that worker.
+            if player.checkpoint_after_present && player.checkpoint_work.is_none() {
+                player.checkpoint_after_present = false;
+                if let Err(error) = player.queue_checkpoint() {
                     player.fail(error);
                 }
             }
@@ -1085,13 +1095,15 @@ impl Player {
                 self.last_report = Instant::now();
                 if self.activity.user_paused || !self.activity.audio_focus {
                     self.activity.user_paused = false;
-                    self.platform.focus(app, true);
+                    if !self.activity.audio_focus {
+                        self.platform.focus(app, true);
+                    }
                     self.next_frame = Instant::now();
                 } else {
                     self.activity.user_paused = true;
                     self.cancel_input();
-                    self.stop_sound();
                 }
+                self.queue.set_paused(self.activity.user_paused);
                 self.checkpoint_dirty = self.core.is_some();
                 self.checkpoint_after_present = true;
                 self.next_present = Instant::now();
@@ -1784,7 +1796,9 @@ impl Player {
             self.flush()?;
             self.last_flush = Instant::now();
         }
-        if self.last_checkpoint.elapsed() >= Duration::from_secs(30) {
+        if !self.checkpoint_after_present
+            && self.last_checkpoint.elapsed() >= Duration::from_secs(30)
+        {
             self.queue_checkpoint()?;
         }
         if self.last_report.elapsed() >= Duration::from_secs(10) {
@@ -1806,6 +1820,7 @@ impl Player {
         Ok(())
     }
     fn checkpoint(&mut self) -> Result<(), String> {
+        self.checkpoint_after_present = false;
         self.finish_checkpoint()?;
         self.queue_checkpoint()?;
         self.finish_checkpoint()
@@ -1836,8 +1851,13 @@ impl Player {
             return Ok(());
         }
         if let (Some(core), Some(game)) = (&mut self.core, &self.game) {
+            let before = Instant::now();
             let state = core.checkpoint()?;
             let card = core.card_ram()?.to_vec();
+            log::info!(
+                "Session snapshot prepared in {:.2} ms",
+                before.elapsed().as_secs_f64() * 1000.
+            );
             let game = game.clone();
             let root = self.root.clone();
             let paused = self.activity.user_paused;

@@ -14,7 +14,7 @@ classes forward indispensable activity/service callbacks. SwanStation remains
 unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
 [build.md](build.md), `rust-toolchain.toml` and `Cargo.lock` record reproduction.
 
-- All 53 host tests pass, including atomic card reopening, bounded audio and
+- All 55 host tests pass, including atomic card reopening, bounded audio and
   live speed changes, captured simultaneous touch, following-thumb behavior,
   clear picture/control geometry, saved display profiles, stale-inset handling,
   corner editing/reset, continuous volume, centered panels, library migration,
@@ -24,7 +24,8 @@ unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
   the pinned free firmware without replacing supplied files, and centered
   landscape picture/control placement around either side's camera, short
   landscape system-key clearance, editor reset, camera-safe live volume and
-  pause indication with no elapsed animation time.
+  pause indication with no elapsed animation time, silent foreground pause and
+  rapid pause/resume between audio callbacks without replaying old samples.
 - Host and Android ARM64 Clippy pass with warnings denied; formatting passes.
 - APK signature, resources/notices, ARM64 ABI, EGL dependency and 16 KB
   ZIP/ELF LOAD alignment checks pass. C++ runtime linkage is static.
@@ -214,11 +215,24 @@ resource/notices, signature, native ABI and ZIP/ELF alignment checks pass.
 The owner then requested simpler level shoulder caps, with L1/R1 outside in
 landscape, and immediate pause feedback. Follow-up source changes those defaults,
 updates pause visuals from the current state before presentation, and presents
-the pause frame before waiting for its checkpoint. Host checks pass; this
-follow-up still needs its own installed-device check.
+the pause frame before waiting for its checkpoint. This follow-up was installed
+with before/after app backups. Crash restored paused; landscape capture confirmed
+the level L1/L2 and R2/R1 order and unchanged centered picture. The owner still
+felt a slight pause/unpause delay in the haptic response. Frame-level latency was
+not measured. Only psx was stopped; locked/screen-off handback was verified.
 Its signed APK SHA-256 is
 `01e6459fa6cbb311c341643b46794b8af25366be13f9f83efeeafdeed0eae0b2`;
 the signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
+
+The next source moves Start/Select inward, retains a silent foreground audio
+stream through intentional pause, and no longer waits for the storage worker
+after toolbar toggles. Core snapshot preparation remains on the sole execution
+owner after presentation; timing is logged for diagnosis. Minimize/focus-loss
+audio closure and synchronous interruption saves are preserved. Host tests and
+Clippy pass; this refinement has not yet been accepted on-device.
+The prepared APK SHA-256 is
+`30945e673a712b525a957c8f427a925387220d2be98c94c12de2e0c8baacb3f7`;
+signature, notices/resources, native ABI and ZIP/ELF alignment checks pass.
 
 The owner's single blue Cross button on grey plastic is the current identity.
 The standalone, favicon, masthead and Android adaptive/themed artwork now use
