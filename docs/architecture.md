@@ -182,13 +182,6 @@ orientation: all four rotations when
 the user permits rotation, respecting their rotation lock.
 [Android orientation contract](https://developer.android.com/guide/topics/manifest/activity-element#screen)
 
-Only the status bar is hidden. Android navigation remains shown so the first
-Home gesture switches apps instead of merely revealing a hidden bar. Its
-reported navigation inset stays outside controller touch targets. Edge-to-edge
-drawing and camera-safe insets remain independent; an asymmetric camera margin
-can move the center of usable landscape content away from the physical center.
-[Android immersive mode](https://developer.android.com/develop/ui/views/layout/immersive)
-
 Intentional pause adds a fading PAUSED panel over the frozen picture; audio-focus
 interruption has its own label. Opening settings still preserves pause intent.
 
@@ -281,7 +274,7 @@ requested only on opt-in. Android's service and audio-focus requirements are
 documented in its [background audio contract](https://developer.android.com/about/versions/17/changes/bg-audio)
 and [service types](https://developer.android.com/develop/background-work/services/fgs/service-types).
 
-The launcher icon is original digital-controller vector artwork. Borrowed notices
+The launcher icon is original blue-Cross button artwork on grey plastic. Borrowed notices
 remain in About and APK assets. The free startup path uses unmodified, separately
 pinned OpenBIOS built with its documented `BOOT_MODE=fast` option. This omits
 the shell rather than showing an intro cut short when a disc becomes ready.
@@ -291,8 +284,8 @@ remain unchanged. See [firmware provenance](../vendor/openbios/UPSTREAM.md).
 
 The current donor serializes BIOS bytes in the machine checkpoint, so an existing
 session restores its own firmware and continues without rebooting. New disc boots
-use the new fallback. Source/build reproduction and actual startup/compatibility
-acceptance are separate checks; the latter still needs the next device window.
+use the new fallback. A fresh Crash boot reached its intro and title on the Fold;
+timed startup latency and compatibility beyond the observed games remain unverified.
 
 ## Delivery boundary
 
