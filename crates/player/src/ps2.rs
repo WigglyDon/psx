@@ -494,6 +494,10 @@ impl Core {
         if !unsafe { (self.serialize)(bytes.as_mut_ptr().cast(), size) } {
             return Err("The PS2 session checkpoint failed.".into());
         }
+        // ARMSX2's ABI reserves a fixed maximum but prefixes the actual ZIP
+        // length. Its reader accepts that exact extent; padding is not state.
+        let used = checkpoint_extent(&bytes)?;
+        bytes.truncate(used);
         Ok(bytes)
     }
     pub fn restore(&mut self, bytes: &[u8]) -> Result<()> {
@@ -506,6 +510,19 @@ impl Core {
         }
         Ok(())
     }
+}
+
+fn checkpoint_extent(bytes: &[u8]) -> Result<usize> {
+    let header: [u8; 8] = bytes
+        .get(..8)
+        .and_then(|b| b.try_into().ok())
+        .ok_or("The PS2 checkpoint has no length header.")?;
+    let length = usize::try_from(u64::from_le_bytes(header))
+        .map_err(|_| "The PS2 checkpoint length is invalid.")?;
+    if length == 0 || length > bytes.len() - 8 {
+        return Err("The PS2 checkpoint length exceeds its buffer.".into());
+    }
+    Ok(8 + length)
 }
 impl Drop for Core {
     fn drop(&mut self) {
@@ -693,6 +710,10 @@ fn qualification_settings(previous: &str, fetch_copy: bool) -> String {
         ("UI", "SettingsVersion", "1"),
         ("EmuCore", "AutoTune", "false"),
         ("EmuCore", "EnableFastBootFastForward", "false"),
+        // Native serialization runs on the CPU owner. Avoid compressing the
+        // archive while the VM is stopped; the bounded storage worker owns
+        // hashing/writing. Both compressed and stored ZIPs use the same reader.
+        ("EmuCore", "SavestateCompressionType", "0"),
         ("EmuCore/Speedhacks", "EECycleRate", "0"),
         ("EmuCore/Speedhacks", "EECycleSkip", "0"),
         ("EmuCore/Speedhacks", "DynamicEECycleRate", "false"),
@@ -905,11 +926,27 @@ mod tests {
         *ACTIVE.lock().unwrap() = None;
     }
     #[test]
+    fn checkpoints_retain_the_exact_native_archive_and_reject_bad_extents() {
+        let mut bytes = 4u64.to_le_bytes().to_vec();
+        bytes.extend_from_slice(b"PK\x03\x04");
+        bytes.resize(128, 0);
+        assert_eq!(checkpoint_extent(&bytes).unwrap(), 12);
+        bytes.truncate(12);
+        assert_eq!(checkpoint_extent(&bytes).unwrap(), 12);
+        assert!(checkpoint_extent(&bytes[..7]).is_err());
+        assert!(checkpoint_extent(&[0; 8]).is_err());
+        bytes[..8].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(checkpoint_extent(&bytes).is_err());
+        bytes[..8].copy_from_slice(&5u64.to_le_bytes());
+        assert!(checkpoint_extent(&bytes).is_err());
+    }
+    #[test]
     fn settings_keep_other_values_and_disable_adaptive_clocks() {
         let s = qualification_settings("[EmuCore]\nAutoTune=true\nOther=keep\n", false);
         assert!(!s.contains("AutoTune=true"));
         assert!(s.contains("Other=keep"));
         assert!(s.contains("AutoTune = false"));
+        assert!(s.contains("SavestateCompressionType = 0"));
         assert_eq!(qualification_settings(&s, false), s);
         let renderer = "ANGLE (Imagination Technologies, PowerVR C-Series Vulkan Driver)";
         assert!(needs_fetch_copy(renderer));

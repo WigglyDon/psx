@@ -1,5 +1,5 @@
 diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
-index 24210fb06..e0bfc20a2 100644
+index 24210fb06..cbd6733ae 100644
 --- a/pcsx2-libretro/Main.cpp
 +++ b/pcsx2-libretro/Main.cpp
 @@ -77,6 +77,8 @@
@@ -89,6 +89,17 @@ index 24210fb06..e0bfc20a2 100644
  RETRO_API bool retro_serialize(void* data, size_t size)
  {
  	if (!VMManager::HasValidVM())
+@@ -2384,7 +2450,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
+ 			Console.ErrorFmt("retro_serialize: DownloadState failed: {}", error.GetDescription());
+ 			return;
+ 		}
+-		ok = SaveState_ZipToBuffer(std::move(elist), SaveState_SaveScreenshot(), &buffer, &error);
++		// psx restores the machine and renders its picture directly. A thumbnail
++		// would add a GS readback and PNG encoding while the VM is stopped.
++		ok = SaveState_ZipToBuffer(std::move(elist), nullptr, &buffer, &error);
+ 		if (!ok)
+ 			Console.ErrorFmt("retro_serialize: ZipToBuffer failed: {}", error.GetDescription());
+ 	}, true);
 diff --git a/pcsx2/SIO/Memcard/MemoryCardFile.cpp b/pcsx2/SIO/Memcard/MemoryCardFile.cpp
 index 3dc480eb0..e234d5212 100644
 --- a/pcsx2/SIO/Memcard/MemoryCardFile.cpp
@@ -161,3 +172,37 @@ index bafc4ca74..d65039cbb 100644
 -bool FileMcd_DeleteCard(const std::string_view name);
 \ No newline at end of file
 +bool FileMcd_DeleteCard(const std::string_view name);
+diff --git a/pcsx2/SIO/Memcard/MemoryCardProtocol.cpp b/pcsx2/SIO/Memcard/MemoryCardProtocol.cpp
+index bfa67e63a..d3c0474a2 100644
+--- a/pcsx2/SIO/Memcard/MemoryCardProtocol.cpp
++++ b/pcsx2/SIO/Memcard/MemoryCardProtocol.cpp
+@@ -226,6 +226,15 @@ void MemoryCardProtocol::WriteData()
+ 		g_Sio2FifoOut.push_back(0x00);
+ 	}
+ 
++	// Bounded qualification trace for the observed clean-boot format failure.
++	// Record transfer geometry/checksum, never guest data or private paths.
++	static unsigned traced_writes = 0;
++	if (traced_writes < 32)
++	{
++		traced_writes++;
++		Console.WriteLn("psx card write: port=%u slot=%u sector=%u address=%u bytes=%u xor=%u",
++			mcd->port, mcd->slot, mcd->sectorAddr, mcd->transferAddr, writeLength, checksum);
++	}
+ 	mcd->Write(buf.data(), buf.size());
+ 	g_Sio2FifoOut.push_back(checksum);
+ 	g_Sio2FifoOut.push_back(mcd->term);
+@@ -419,6 +428,13 @@ void MemoryCardProtocol::EraseBlock()
+ {
+ 	MC_LOG.WriteLn("%s", __FUNCTION__);
+ 	PS1_FAIL();
++	static unsigned traced_erases = 0;
++	if (traced_erases < 16)
++	{
++		traced_erases++;
++		Console.WriteLn("psx card erase: port=%u slot=%u sector=%u address=%u",
++			mcd->port, mcd->slot, mcd->sectorAddr, mcd->transferAddr);
++	}
+ 	mcd->EraseBlock();
+ 	The2bTerminator(4);
+ 

@@ -67,6 +67,38 @@ additional engine/firmware evaluations are optional evidence, not a mandatory
 sequence before fixing a concrete defect. BIOS-free default operation is
 unqualified and must preserve existing firmware-bound sessions.
 
+Candidate `60690ef96194` installed in place after a fresh private backup and
+restored FF7. Its unavailable-state guard refused the old unbound PS2 snapshot
+and retained it byte-for-byte until explicit Restart. Clean Baldur's Gate boot
+reproduced the new card's format/access error; declining card use reached the
+opening cinematic and interactive tavern dialogue. The owner confirmed audible
+dialogue/music with breakup at hitches. D-pad selection and action confirmation
+worked. A fresh process restored that dialogue scene. These observations do not
+establish controlled locomotion, ordinary saving or gameplay resume acceptance.
+
+After removing the one-second poll, menu samples commonly reached 59.9 VPS /
+100% native speed. Opening-scene samples varied, including 31 VPS / 51.7%;
+tavern dialogue commonly reached 58–60 VPS. Periodic checkpoint preparation took
+about 400–750 ms with audio underruns. The next increment omits its unused
+thumbnail, uses the donor's stored ZIP format and drops validated unused ABI
+padding. One captured 68 MiB buffer contained only a 21.5 MB archive; its native
+entries totalled 42.7 MB including the thumbnail. These source/size findings do
+not establish the new device timing or fix the independent card error.
+
+The owner found PS2 defaults used excessive unfolded height. Revised mirrored
+defaults put the stick, system key and stick-click in a shared lower band,
+digital clusters above, and shoulders in the remaining clear columns/rail.
+The two sides share their geometry, with at least 48-point button targets and
+104-point sticks. The clear-picture solver still excludes every touch target.
+PS1 profiles and explicitly saved PS2 rectangles retain precedence. Device
+ergonomics remain to be checked. Successful Restart also clears the stale Error
+screen, and long text wraps to the actual embedded sheet width.
+
+The fifth window ended at 23:26 UTC after checkpoint, fresh backup and closing
+only psx. Locked state and no psx process were verified; USB disappeared before
+screen-off verification, so screen-off handback was explicitly unverified.
+No unrelated apps, system settings, packages or connectivity were changed.
+
 Off-device, the unmodified OpenPS2BIOS candidate at
 `43005227db73090a4a4b5701dee510a728d0e689` built twice to identical 4 MiB bytes,
 SHA-256 `3ad7ab89b01eeedd61eb6afe39013da5a3d366c63d7c63b608c32526bb6ecbda`.

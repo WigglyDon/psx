@@ -295,50 +295,85 @@ impl Layout {
         self.controls.len() + 5 + self.sticks.len()
     }
     fn ps2(w: f32, h: f32) -> Self {
-        // Use the PS1 defaults and cap sizes. Sticks get the lower thumb
-        // positions; digital directions/buttons remain within secondary reach.
+        // Solve both halves together. The primary thumb band contains a stick
+        // and an inner column (system key above stick-click), rather than
+        // adding separate full-width rows for every new PS2 input.
+        let requested = [w, h];
+        let (w, h) = (w.max(360.), h.max(360.));
+        let landscape = w > h * 1.35;
         let mut layout = Self::new(w, h);
-        let left;
-        let right;
-        let landscape = w > h * 1.35 && h >= 360.;
-        if landscape {
-            let column = layout.dpad.w;
-            let face = layout.action_bounds();
-            let original_cap = layout
-                .controls
-                .iter()
-                .find(|c| c.is_face())
-                .unwrap()
-                .bounds
-                .w;
-            let cap = original_cap.min((h - 32. - 116. - 16. - 8. - 80.) / 2.);
-            let face_height = cap * 2. + 16.;
-            let face_top = 116.;
-            let stick = (h - 32. - face_top - face_height - 8.)
-                .min(column - 32.)
-                .clamp(80., 144.);
-            let bottom = h - 32.;
-            left = Rect::new(16., bottom - stick, stick, stick);
-            right = Rect::new(w - 16. - stick, bottom - stick, stick, stick);
-            layout.dpad = Rect::new(16., face_top, 72., 72.);
-            for control in &mut layout.controls {
-                if control.is_face() {
-                    let t = (control.bounds.y - face.y) / (face.h - original_cap).max(1.);
-                    control.bounds.y = face_top + t * (face_height - cap);
-                    control.bounds.x += (original_cap - cap) / 2.;
-                    control.bounds.w = cap;
-                    control.bounds.h = cap;
-                } else if control.label == "START" {
-                    control.bounds = Rect::new(w - 16. - column, bottom - 48., 48., 48.);
-                }
-            }
+        let bottom = if landscape {
+            (h - 336.).clamp(24., 32.)
         } else {
-            // Taller displays add one stick row beneath the same PS1 layout,
-            // retaining its compact dock and familiar digital controls.
-            let stick = (w / 2. - 80.).clamp(80., 128.);
-            layout = Self::new(w, (h - stick - 48.).max(1.));
-            left = Rect::new(16., h - 32. - stick, stick, stick);
-            right = Rect::new(w - 16. - stick, h - 32. - stick, stick, stick);
+            32.
+        };
+        let stick = if landscape {
+            104.
+        } else {
+            (w / 2. - 76.).clamp(104., 128.)
+        };
+        let face = if landscape {
+            // 48-point minimum caps, a real Triangle/Cross gap, and a fixed
+            // comfortable stick. Extra height grows both digital clusters.
+            (h - 56. - 48. - 16. - stick - bottom).clamp(112., 184.)
+        } else {
+            (w / 2. - 20.).clamp(112., 184.)
+        };
+        let column = face.max(stick + 56.);
+        let main_y = h - bottom - stick;
+        let face_y = main_y - 8. - face;
+        let left = Rect::new(16., main_y, stick, stick);
+        let right = Rect::new(w - 16. - stick, main_y, stick, stick);
+        let digital_x = 16. + (column - face) / 2.;
+        layout.dpad = Rect::new(digital_x, face_y, face, face);
+        let fx = w - 16. - column / 2.;
+        let fy = face_y + face / 2.;
+        let cap = (face - 16.) / 2.;
+        let step = (face - cap) / 2.;
+        let middle_shoulders = !landscape && w - 2. * (16. + column) >= 192.;
+        let shoulder = if middle_shoulders {
+            88.
+        } else {
+            (column - 8.) / 2.
+        };
+        for control in &mut layout.controls {
+            let (x, y, width, height) = match control.label {
+                "TRI" => (fx - cap / 2., fy - step - cap / 2., cap, cap),
+                "O" => (fx + step - cap / 2., fy - cap / 2., cap, cap),
+                "X" => (fx - cap / 2., fy + step - cap / 2., cap, cap),
+                "SQ" => (fx - step - cap / 2., fy - cap / 2., cap, cap),
+                "SELECT" => (left.x + stick + 8., main_y, 48., 48.),
+                "START" => (right.x - 56., main_y, 48., 48.),
+                label => {
+                    let left_side = label.starts_with('L');
+                    let first = label.ends_with('1');
+                    if middle_shoulders {
+                        let x = 16. + column + 8.;
+                        (
+                            if left_side { x } else { w - x - shoulder },
+                            face_y + if first { 56. } else { 0. },
+                            shoulder,
+                            48.,
+                        )
+                    } else {
+                        let outer = 16.;
+                        let x = outer + if first { 0. } else { shoulder + 8. };
+                        (
+                            if left_side { x } else { w - x - shoulder },
+                            face_y - 56.,
+                            shoulder,
+                            48.,
+                        )
+                    }
+                }
+            };
+            control.bounds = Rect::new(x, y, width, height);
+        }
+        if landscape {
+            layout.playback = Rect::new(16., 4., 48., 48.);
+            layout.speed = Rect::new(72., 4., 48., 48.);
+            layout.mute = Rect::new(w - 120., 4., 48., 48.);
+            layout.pause = Rect::new(w - 64., 4., 48., 48.);
         }
         layout.controls.push(Control {
             bounds: Rect::new(left.x + left.w + 8., left.y + left.h - 48., 48., 48.),
@@ -346,21 +381,28 @@ impl Layout {
             mask: 1 << 14,
         });
         layout.controls.push(Control {
-            bounds: Rect::new(
-                right.x - 56.,
-                if landscape {
-                    right.y
-                } else {
-                    right.y + right.h - 48.
-                },
-                48.,
-                48.,
-            ),
+            bounds: Rect::new(right.x - 56., right.y + right.h - 48., 48., 48.),
             label: "R3",
             mask: 1 << 15,
         });
         layout.sticks = vec![left, right];
-        layout.place_game(w, h, false, 1., [0.5, 0.5]);
+        // Transient Android surfaces can be smaller than any usable layout.
+        // Scale only that transient presentation, never the saved profile.
+        if requested != [w, h] {
+            for i in 0..layout.element_count() {
+                let r = layout.element(i);
+                layout.set_element(
+                    i,
+                    Rect::new(
+                        r.x * requested[0] / w,
+                        r.y * requested[1] / h,
+                        r.w * requested[0] / w,
+                        r.h * requested[1] / h,
+                    ),
+                );
+            }
+        }
+        layout.place_game(requested[0], requested[1], false, 1., [0.5, 0.5]);
         layout
     }
     pub fn action_elements(&self) -> impl Iterator<Item = usize> + '_ {
@@ -1038,7 +1080,7 @@ mod tests {
         }
     }
     #[test]
-    fn ps2_defaults_keep_ps1_caps_and_clear_primary_sticks_across_fold_displays() {
+    fn ps2_defaults_mirror_reachable_controls_and_clear_primary_sticks_across_fold_displays() {
         for (w, h) in [
             (360., 800.),
             (443., 961.),
@@ -1079,19 +1121,56 @@ mod tests {
                     c.label
                 );
             }
-            if w > h * 1.35 && h >= 400. {
-                let ps1 = Layout::new(w, h);
-                for c in &layout.controls {
-                    if let Some(original) = ps1.controls.iter().find(|o| o.label == c.label) {
-                        if c.is_face() || c.label.starts_with('L') || c.label.starts_with('R') {
-                            assert!((c.bounds.w - original.bounds.w).abs() < 0.01);
-                            assert!((c.bounds.h - original.bounds.h).abs() < 0.01);
-                        }
-                    }
-                }
-                assert!(layout.sticks[0].y > layout.dpad.y + layout.dpad.h);
-                assert!(layout.sticks[1].y > layout.action_bounds().y + layout.action_bounds().h);
+            assert!(layout
+                .controls
+                .iter()
+                .all(|c| c.bounds.w >= 48. && c.bounds.h >= 48.));
+            assert!(layout.sticks.iter().all(|s| s.w >= 104. && s.w == s.h));
+            assert!(layout.sticks[0].y > layout.dpad.y + layout.dpad.h);
+            assert!(layout.sticks[1].y > layout.action_bounds().y + layout.action_bounds().h);
+            let mirrored = |a: Rect, b: Rect| {
+                assert!((a.x + a.w + b.x - w).abs() < 0.02);
+                assert!((a.y - b.y).abs() < 0.02);
+                assert!((a.w - b.w).abs() < 0.02 && (a.h - b.h).abs() < 0.02);
+            };
+            mirrored(layout.dpad, layout.action_bounds());
+            mirrored(layout.sticks[0], layout.sticks[1]);
+            for (left, right) in [
+                ("L1", "R1"),
+                ("L2", "R2"),
+                ("L3", "R3"),
+                ("SELECT", "START"),
+            ] {
+                mirrored(
+                    layout
+                        .controls
+                        .iter()
+                        .find(|c| c.label == left)
+                        .unwrap()
+                        .bounds,
+                    layout
+                        .controls
+                        .iter()
+                        .find(|c| c.label == right)
+                        .unwrap()
+                        .bounds,
+                );
             }
+            if w > h * 1.35 {
+                assert!(layout.game.h >= h - 0.02, "{w}x{h}: {:?}", layout.game);
+            }
+        }
+    }
+    #[test]
+    fn ps2_square_dock_does_not_add_a_separate_row_for_every_input() {
+        for (w, h) in [(852., 817.), (817., 852.), (852., 883.)] {
+            let layout = Layout::ps2(w, h);
+            assert!(layout.game.h >= h - 410., "{w}x{h}: {:?}", layout.game);
+            assert!(layout
+                .controls
+                .iter()
+                .filter(|c| c.is_face())
+                .all(|c| c.bounds.w == 84.));
         }
     }
     #[test]

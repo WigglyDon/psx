@@ -1419,6 +1419,12 @@ impl Player {
             self.graphics.content.h / self.density,
         )
     }
+    fn menu_text_width(&self) -> f32 {
+        let (w, h) = self.dimensions();
+        let mut menu = Menu::new(String::new(), String::new(), Vec::new(), "Back");
+        menu.over_game = self.core.is_some();
+        Menu::column(menu.surface(w, h).w).w - 8.
+    }
     fn controls_root(&self) -> PathBuf {
         if self.controller_settings.analog() {
             self.root.join("ps2-controls")
@@ -1789,6 +1795,7 @@ impl Player {
                 for (title, path) in [
                     ("psx · MIT", "notices/host/LICENSE"),
                     ("SwanStation · GPL", "notices/swanstation/LICENSE"),
+                    ("ARMSX2 · GPL", "notices/armsx2/COPYING.GPLv3"),
                     ("OpenBIOS · MIT", "notices/openbios/LICENSE"),
                     ("Noto Sans · SIL OFL", "notices/fonts/NotoSans-LICENSE"),
                     ("Dependency notices", "notices/INDEX.txt"),
@@ -1803,7 +1810,7 @@ impl Player {
             }
             Screen::License(path) => {
                 let body = std::ffi::CString::new(path).ok().and_then(|p|app.asset_manager().open(&p)).and_then(|mut asset|asset.buffer().ok().map(|b|String::from_utf8_lossy(b).into_owned())).unwrap_or_else(||"This notice could not be read. All notices are also packaged in the APK assets.".into());
-                let width = Menu::column(self.dimensions().0).w - 8.;
+                let width = self.menu_text_width();
                 let paragraphs = self.graphics.text_rows(&body, width);
                 for _ in &paragraphs {
                     actions.push(Action::Back);
@@ -1875,7 +1882,7 @@ impl Player {
             Screen::Error => {
                 rows = self
                     .graphics
-                    .text_rows(&self.message, Menu::column(self.dimensions().0).w - 8.);
+                    .text_rows(&self.message, self.menu_text_width());
                 for _ in &rows {
                     actions.push(Action::Back);
                 }
@@ -2024,6 +2031,7 @@ impl Player {
         let id = GameId::parse(&game.id)?;
         if self.core.is_some() && self.session.as_ref().is_some_and(|s| s.saved.game == id) {
             self.ensure_session_available()?;
+            self.screen = Screen::Settings;
             self.closing_menu = self.menu.take();
             self.dirty = true;
             return Ok(());
@@ -2154,6 +2162,7 @@ impl Player {
         self.frames = 0;
         self.run_time = Duration::ZERO;
         self.message = game.title;
+        self.screen = Screen::Settings;
         self.session.as_mut().unwrap().state = SessionState::Restoring;
         Ok(())
     }

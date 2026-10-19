@@ -17,6 +17,17 @@ directory before binding a checkpoint to their digest. Folder-card durability
 is not supported by this host. Native thread scheduling, JIT and emulation
 internals are unchanged.
 
+The libretro checkpoint omits the unused thumbnail: psx restores and renders
+the machine directly. This avoids a GS readback and PNG encoding while the VM
+is stopped. Rust selects the existing uncompressed ZIP setting and retains
+only the validated length-prefixed archive, rather than unused ABI padding.
+Machine state remains complete and the existing native ZIP reader accepts
+both compressed and stored entries. Device timing is qualified separately.
+
+The observed clean-boot card-format failure also has a bounded diagnostic:
+the first 32 PS2 writes and 16 erases report transfer geometry/checksums, without
+guest bytes or private paths. This is evidence collection, not a card fix.
+
 Its existing `OnPerformanceMetricsUpdated` callback also forwards a five-float
 completed sample (VPS, speed percent, average/minimum/maximum frame time) via
 the private `0x20000` environment command. Rust copies it under the output

@@ -410,6 +410,20 @@ Dual-analog/digital touch and normalized editor profiles have separate PS2
 storage, retaining all existing PS1 profile names and element positions.
 PS2 defaults reuse the PS1 controls and cap styling, adding primary lower
 thumb sticks and secondary stick-click keys; they do not change PS1 defaults.
+The mirrored PS2 lower band shares height between each stick and an inner
+system/click column. Digital clusters sit above it, with matched bounds;
+shoulders use clear middle columns on square displays or the side rails.
+Generated button targets stay at least 48 points and sticks at least 104
+points on usable displays. The clear-picture solver excludes them all, and
+saved custom rectangles retain precedence. Transient tiny surfaces scale only
+their presentation, without rewriting profiles.
+
+PS2 checkpoints use the donor's existing uncompressed ZIP option and omit its
+unused PNG thumbnail. Rust validates the native length prefix and stores only
+the archive extent, within the same 68 MiB cap. The native reader accepts that
+extent and the former padded buffers. This reduces synchronous preparation
+work; improved device timing remains a separate observation. Exact core/patch
+and firmware binding still applies before restoration.
 
 Collection and platform links enter the same `OpenGame(GameId)` flow. Android
 initial intents precede automatic resume. Warm intents enter a bounded ordered
