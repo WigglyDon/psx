@@ -1479,9 +1479,9 @@ impl Player {
                         Action::ChooseGame(i),
                         game.title.clone(),
                         if discs.len() > 1 {
-                            format!("{} discs", discs.len())
+                            format!("{} · {} discs", game.system.label(), discs.len())
                         } else {
-                            String::new()
+                            game.system.label().into()
                         },
                     );
                 }

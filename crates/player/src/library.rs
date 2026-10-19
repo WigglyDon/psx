@@ -46,7 +46,8 @@ impl Library {
         } else {
             self.games.push(game);
         }
-        self.games.sort_by_key(|g| g.title.to_lowercase());
+        self.games
+            .sort_by_key(|g| (g.system, g.title.to_lowercase()));
     }
 }
 
@@ -351,6 +352,35 @@ pub fn add(root: &Path, selected: Vec<FoundGame>, cancel: &AtomicBool) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn adding_ps2_keeps_existing_ps1_order_and_every_saved_identity() {
+        let mut library = Library::default();
+        for (id, title, system) in [
+            ("aa22", "Final Fantasy VII", System::Ps1),
+            ("bb11", "Baldur's Gate", System::Ps2),
+            ("aa11", "Crash", System::Ps1),
+        ] {
+            library.put(Game {
+                id: id.into(),
+                title: title.into(),
+                system,
+                path: format!("{id}.iso").into(),
+                discs: vec![],
+                last_disc: 0,
+            });
+        }
+        assert_eq!(
+            library
+                .games
+                .iter()
+                .map(|g| g.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["aa11", "aa22", "bb11"]
+        );
+        assert_eq!(library.games[0].title, "Crash");
+        assert_eq!(library.games[1].title, "Final Fantasy VII");
+        assert_eq!(library.games[2].system, System::Ps2);
+    }
     #[test]
     fn legacy_recent_migrates_once_and_never_repopulates_a_saved_library() {
         let root =

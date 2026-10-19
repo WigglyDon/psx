@@ -365,7 +365,7 @@ impl Core {
             flush_fn: symbol!("retro_psx_flush_cards", unsafe extern "C" fn() -> bool),
             ready_fn: symbol!("retro_psx_ready", unsafe extern "C" fn() -> bool),
             speed_fn: symbol!("retro_psx_set_speed", unsafe extern "C" fn(f32) -> bool),
-            speed: 1,
+            speed: 0, // Apply Rust's requested speed before the first live tick.
             serialize_size: symbol!("retro_serialize_size", unsafe extern "C" fn() -> usize),
             serialize: symbol!(
                 "retro_serialize",
@@ -571,6 +571,7 @@ fn qualification_settings(previous: &str) -> String {
         ("EmuCore", "EnableFastBootFastForward", "false"),
         ("EmuCore/Speedhacks", "EECycleRate", "0"),
         ("EmuCore/Speedhacks", "EECycleSkip", "0"),
+        ("EmuCore/Speedhacks", "DynamicEECycleRate", "false"),
     ];
     let mut sections = BTreeMap::<&str, Vec<&str>>::new();
     let mut section = "";
