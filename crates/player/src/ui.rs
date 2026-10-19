@@ -274,6 +274,8 @@ pub struct Editor {
     pub width: f32,
     pub height: f32,
     pub guides: [Option<f32>; 2],
+    group_actions: bool,
+    original_actions: Vec<(usize, Rect)>,
     cutouts: Vec<Rect>,
     pointer: Option<EditorPointer>,
 }
@@ -302,6 +304,8 @@ enum EditorPointer {
 #[derive(Clone, Copy, PartialEq)]
 pub enum EditorButton {
     Next,
+    Group,
+    Individual,
     Reset,
     Cancel,
     Done,
@@ -310,6 +314,8 @@ impl EditorButton {
     pub fn label(self) -> &'static str {
         match self {
             Self::Next => "Next",
+            Self::Group => "Group",
+            Self::Individual => "Individual",
             Self::Reset => "Reset",
             Self::Cancel => "Cancel",
             Self::Done => "Done",
@@ -342,6 +348,8 @@ impl Editor {
             width,
             height,
             guides: [None; 2],
+            group_actions: true,
+            original_actions: Vec::new(),
             cutouts,
             pointer: None,
         }
@@ -376,6 +384,16 @@ impl Editor {
                 EditorButton::Done,
             ),
         ];
+        if self.action_group_selected() || self.action_selected(self.selected) {
+            buttons.push((
+                Rect::new(self.width - 228., 16., 124., 48.),
+                if self.action_group_selected() {
+                    EditorButton::Individual
+                } else {
+                    EditorButton::Group
+                },
+            ));
+        }
         if !self.selected_is_default() {
             buttons.push((
                 Rect::new(16., self.height - 128., self.width - 32., 48.),
@@ -384,14 +402,23 @@ impl Editor {
         }
         buttons
     }
-    fn selected_bounds(&self) -> Rect {
-        if self.selected < self.layout.element_count() {
+    pub fn selected_bounds(&self) -> Rect {
+        if self.action_group_selected() {
+            self.layout.action_bounds()
+        } else if self.selected < self.layout.element_count() {
             self.layout.element(self.selected)
         } else {
             self.layout.game
         }
     }
     pub fn selected_is_default(&self) -> bool {
+        if self.action_group_selected() {
+            let defaults = self.defaults();
+            return self
+                .layout
+                .action_elements()
+                .all(|i| self.layout.element(i).same_bounds(defaults.element(i)));
+        }
         let expected = if self.selected < self.layout.element_count() {
             self.defaults().element(self.selected)
         } else {
@@ -406,6 +433,33 @@ impl Editor {
     }
     fn defaults(&self) -> Layout {
         Preset::default().layout_with_cutouts(self.width, self.height, &self.cutouts)
+    }
+    fn action_selected(&self, index: usize) -> bool {
+        self.layout.action_elements().any(|i| i == index)
+    }
+    fn action_group_selected(&self) -> bool {
+        self.selected == self.layout.element_count() + 1
+    }
+    fn picture_selected(&self) -> bool {
+        self.selected == self.layout.element_count()
+    }
+    fn set_selected_bounds(&mut self, original: Rect, rect: Rect) {
+        if self.action_group_selected() {
+            for &(i, member) in &self.original_actions {
+                self.layout.set_element(
+                    i,
+                    Rect::new(
+                        rect.x + (member.x - original.x) * rect.w / original.w,
+                        rect.y + (member.y - original.y) * rect.h / original.h,
+                        member.w * rect.w / original.w,
+                        member.h * rect.h / original.h,
+                    ),
+                );
+            }
+        } else {
+            self.layout.set_element(self.selected, rect);
+        }
+        self.preset.capture(&self.layout, self.width, self.height);
     }
     pub fn cutouts(&self) -> &[Rect] {
         &self.cutouts
@@ -424,7 +478,9 @@ impl Editor {
         ]
     }
     pub fn selected_name(&self) -> &str {
-        if self.selected == self.layout.element_count() {
+        if self.action_group_selected() {
+            "Action buttons"
+        } else if self.picture_selected() {
             "Game picture"
         } else {
             self.layout.element_name(self.selected)
@@ -438,6 +494,11 @@ impl Editor {
             self.pointer = Some(EditorPointer::Button { id, button });
             return;
         }
+        self.original_actions = self
+            .layout
+            .action_elements()
+            .map(|i| (i, self.layout.element(i)))
+            .collect();
         if let Some(corner) = self
             .handles()
             .iter()
@@ -456,7 +517,13 @@ impl Editor {
             .rev()
             .find(|i| self.map(self.layout.element(*i)).contains(x, y))
         {
-            self.selected = index;
+            self.selected = if self.group_actions && self.action_selected(index) {
+                self.layout.element_count() + 1
+            } else {
+                index
+            };
+        } else if self.group_actions && self.map(self.layout.action_bounds()).contains(x, y) {
+            self.selected = self.layout.element_count() + 1;
         } else if self.map(self.layout.game).contains(x, y) {
             self.selected = self.layout.element_count();
         } else {
@@ -500,13 +567,12 @@ impl Editor {
         let dx = (x - previous_x) / scale;
         let dy = (y - previous_y) / scale;
         self.guides = [None; 2];
-        if self.selected < self.layout.element_count() {
+        if !self.picture_selected() {
             let mut r = original;
             r.x = (original.x + dx).clamp(0., self.width - r.w);
             r.y = (original.y + dy).clamp(0., self.height - r.h);
             r = self.snap_move(r, Rect::new(0., 0., self.width, self.height));
-            self.layout.set_element(self.selected, r);
-            self.preset.capture(&self.layout, self.width, self.height);
+            self.set_selected_bounds(original, r);
         } else {
             let mut full = self.preset.clone();
             full.game_scale = 1.;
@@ -535,15 +601,20 @@ impl Editor {
     fn snap_move(&mut self, mut r: Rect, area: Rect) -> Rect {
         let threshold = 6. / (self.preview().w / self.width);
         let defaults = self.defaults();
-        let mut references = vec![if self.selected < defaults.element_count() {
+        let mut references = vec![if self.action_group_selected() {
+            defaults.action_bounds()
+        } else if self.selected < defaults.element_count() {
             defaults.element(self.selected)
         } else {
             area
         }];
-        if self.selected < self.layout.element_count() {
+        if !self.picture_selected() {
             references.extend(
                 (0..self.layout.element_count())
-                    .filter(|i| *i != self.selected)
+                    .filter(|i| {
+                        *i != self.selected
+                            && !(self.action_group_selected() && self.action_selected(*i))
+                    })
                     .map(|i| self.layout.element(i)),
             );
         }
@@ -565,11 +636,7 @@ impl Editor {
                     guide = Some(target);
                 }
             };
-            let margin = if self.selected < self.layout.element_count() {
-                16.
-            } else {
-                0.
-            };
+            let margin = if !self.picture_selected() { 16. } else { 0. };
             consider(0., low + margin);
             consider(extent / 2., low + span / 2.);
             consider(extent, low + span - margin);
@@ -611,7 +678,7 @@ impl Editor {
             } else {
                 change_y
             };
-        let game = self.selected == self.layout.element_count();
+        let game = self.picture_selected();
         let area = if game {
             let mut full = self.preset.clone();
             full.game_scale = 1.;
@@ -633,6 +700,11 @@ impl Editor {
         };
         let minimum = if game {
             area.w * 0.25 / original.w
+        } else if self.action_group_selected() {
+            self.original_actions
+                .iter()
+                .map(|(_, r)| (24. / r.w).max(24. / r.h))
+                .fold(0_f32, f32::max)
         } else {
             (24. / original.w).max(24. / original.h)
         };
@@ -659,8 +731,7 @@ impl Editor {
                 };
             }
         } else {
-            self.layout.set_element(self.selected, resized);
-            self.preset.capture(&self.layout, self.width, self.height);
+            self.set_selected_bounds(original, resized);
         }
         self.layout = self
             .preset
@@ -685,10 +756,35 @@ impl Editor {
         }
         match button {
             EditorButton::Next => {
-                self.selected = (self.selected + 1) % (self.layout.element_count() + 1)
+                let mut selections: Vec<_> = (0..=self.layout.element_count())
+                    .filter(|i| !self.group_actions || !self.action_selected(*i))
+                    .collect();
+                if self.group_actions {
+                    selections.insert(1, self.layout.element_count() + 1);
+                }
+                let current = selections
+                    .iter()
+                    .position(|i| *i == self.selected)
+                    .unwrap_or(0);
+                self.selected = selections[(current + 1) % selections.len()];
+            }
+            EditorButton::Group => {
+                self.group_actions = true;
+                self.selected = self.layout.element_count() + 1;
+            }
+            EditorButton::Individual => {
+                self.group_actions = false;
+                self.selected = self.layout.action_elements().next().unwrap_or(0);
             }
             EditorButton::Reset => {
-                if self.selected < self.layout.element_count() {
+                if self.action_group_selected() {
+                    let defaults = self.defaults();
+                    let members: Vec<_> = self.layout.action_elements().collect();
+                    for i in members {
+                        self.layout.set_element(i, defaults.element(i));
+                    }
+                    self.preset.capture(&self.layout, self.width, self.height);
+                } else if self.selected < self.layout.element_count() {
                     self.layout
                         .set_element(self.selected, self.defaults().element(self.selected));
                     self.preset.capture(&self.layout, self.width, self.height);
@@ -714,6 +810,138 @@ impl Editor {
 #[cfg(test)]
 mod editor_tests {
     use super::*;
+
+    fn press(editor: &mut Editor, button: EditorButton) {
+        let (r, _) = editor
+            .buttons()
+            .into_iter()
+            .find(|(_, b)| *b == button)
+            .unwrap();
+        let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+        editor.down(9, x, y);
+        editor.up(9, x, y);
+    }
+
+    #[test]
+    fn action_group_drags_keep_custom_spacing_and_survive_preset_round_trip() {
+        let (w, h) = (852., 817.);
+        let mut preset = Preset::default();
+        let mut layout = preset.layout(w, h);
+        let mut square = layout.element(4);
+        square.x -= 13.;
+        layout.set_element(4, square);
+        preset.capture(&layout, w, h);
+        let mut editor = Editor::new(preset, w, h);
+        let before: Vec<_> = editor
+            .layout
+            .action_elements()
+            .map(|i| (i, editor.layout.element(i)))
+            .collect();
+        let dpad = editor.layout.dpad;
+        let shoulder = editor.layout.element(5);
+        let r = editor.map(editor.layout.element(1));
+        let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+        editor.down(1, x, y);
+        assert_eq!(editor.selected_name(), "Action buttons");
+        editor.motion(2, x - 40., y - 30.);
+        assert!(before
+            .iter()
+            .all(|(i, r)| editor.layout.element(*i).same_bounds(*r)));
+        editor.motion(1, x - 40., y - 30.);
+        let first = editor.layout.element(before[0].0);
+        let dx = first.x - before[0].1.x;
+        let dy = first.y - before[0].1.y;
+        assert!(dx < -20. && dy < -20.);
+        for &(i, r) in &before {
+            let moved = editor.layout.element(i);
+            assert!((moved.x - r.x - dx).abs() < 0.01);
+            assert!((moved.y - r.y - dy).abs() < 0.01);
+            assert_eq!((moved.w, moved.h), (r.w, r.h));
+        }
+        assert!(editor.layout.dpad.same_bounds(dpad));
+        assert!(editor.layout.element(5).same_bounds(shoulder));
+        editor.cancel_touch();
+        editor.motion(1, x - 100., y - 100.);
+        assert!(editor.layout.element(before[0].0).same_bounds(first));
+        let restored: Preset =
+            serde_json::from_slice(&serde_json::to_vec(&editor.preset).unwrap()).unwrap();
+        let saved = restored.layout(w, h);
+        assert!((0..saved.element_count())
+            .all(|i| saved.element(i).same_bounds(editor.layout.element(i))));
+        assert!((0..saved.element_count()).all(|i| !saved.game.overlaps(saved.element(i))));
+    }
+
+    #[test]
+    fn action_group_corner_resize_anchors_members_and_reset_preserves_other_controls() {
+        let mut editor = Editor::new(Preset::default(), 852., 817.);
+        editor.layout.dpad.x += 17.;
+        editor
+            .preset
+            .capture(&editor.layout, editor.width, editor.height);
+        let dpad = editor.layout.dpad;
+        press(&mut editor, EditorButton::Next);
+        assert_eq!(editor.selected_name(), "Action buttons");
+        assert!(editor.selected_is_default());
+        let bounds = editor.selected_bounds();
+        let before: Vec<_> = editor
+            .layout
+            .action_elements()
+            .map(|i| (i, editor.layout.element(i)))
+            .collect();
+        let (x, y) = editor.handles()[0];
+        editor.down(1, x, y);
+        editor.motion(1, x - 15., y - 10.);
+        editor.motion(1, x - 30., y - 20.);
+        editor.up(1, x - 30., y - 20.);
+        let resized = editor.selected_bounds();
+        assert!(resized.w > bounds.w);
+        assert!((resized.x + resized.w - bounds.x - bounds.w).abs() < 0.01);
+        assert!((resized.y + resized.h - bounds.y - bounds.h).abs() < 0.01);
+        let ratio = resized.w / bounds.w;
+        for &(i, r) in &before {
+            let changed = editor.layout.element(i);
+            assert!((changed.w / r.w - ratio).abs() < 0.001);
+            assert!((changed.h / r.h - ratio).abs() < 0.001);
+            assert!((changed.x - resized.x - (r.x - bounds.x) * ratio).abs() < 0.01);
+            assert!((changed.y - resized.y - (r.y - bounds.y) * ratio).abs() < 0.01);
+        }
+        assert!(!editor.selected_is_default());
+        press(&mut editor, EditorButton::Reset);
+        assert!(editor.selected_is_default());
+        assert!(editor.layout.dpad.same_bounds(dpad));
+        assert!(!editor
+            .buttons()
+            .iter()
+            .any(|(_, b)| *b == EditorButton::Reset));
+    }
+
+    #[test]
+    fn individual_button_editing_and_group_reset_are_separate() {
+        let mut editor = Editor::new(Preset::default(), 852., 817.);
+        press(&mut editor, EditorButton::Next);
+        press(&mut editor, EditorButton::Individual);
+        assert_eq!(editor.selected_name(), "Triangle");
+        let before: Vec<_> = (0..editor.layout.element_count())
+            .map(|i| editor.layout.element(i))
+            .collect();
+        let r = editor.map(editor.selected_bounds());
+        let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+        editor.down(1, x, y);
+        editor.motion(1, x - 30., y - 30.);
+        editor.up(1, x - 30., y - 30.);
+        assert_eq!(editor.selected_name(), "Triangle");
+        assert!(!editor.layout.element(1).same_bounds(before[1]));
+        assert!((0..before.len())
+            .filter(|i| *i != 1)
+            .all(|i| editor.layout.element(i).same_bounds(before[i])));
+        press(&mut editor, EditorButton::Group);
+        assert_eq!(editor.selected_name(), "Action buttons");
+        assert!(!editor.selected_is_default());
+        press(&mut editor, EditorButton::Reset);
+        assert!(editor.selected_is_default());
+        assert!((0..before.len()).all(|i| editor.layout.element(i).same_bounds(before[i])));
+    }
+
     #[test]
     fn camera_layout_reset_matches_play_and_does_not_change_the_saved_source() {
         let (w, h) = (2342. / 2.4375, 1021. / 2.4375);
@@ -751,12 +979,13 @@ mod editor_tests {
         layout.set_element(1, triangle);
         preset.capture(&layout, 852., 817.);
         let mut editor = Editor::new(preset, 852., 817.);
+        editor.group_actions = false;
         editor.selected = 1;
         let r = editor.map(editor.layout.element(1));
         let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
         let scale = editor.preview().w / editor.width;
         editor.down(1, x, y);
-        editor.motion(1, x + 25. * scale + 2., y);
+        editor.motion(1, x + 25. * scale + 0.25, y);
         let aligned = editor.layout.element(1);
         let cross = editor
             .layout
@@ -765,7 +994,11 @@ mod editor_tests {
             .find(|c| c.label == "X")
             .unwrap()
             .bounds;
-        assert!((aligned.x + aligned.w / 2. - cross.x - cross.w / 2.).abs() < 0.01);
+        assert!(
+            (aligned.x + aligned.w / 2. - cross.x - cross.w / 2.).abs() < 0.01,
+            "aligned={aligned:?} cross={cross:?} guides={:?}",
+            editor.guides
+        );
         assert!(editor.guides[0].is_some());
         // Each small move still uses the unsnapped start, rather than losing
         // its delta at the magnet and trapping the finger indefinitely.

@@ -1625,7 +1625,8 @@ impl Player {
                 add(
                     Action::EditControls,
                     "Edit layout".into(),
-                    "Tap to select; drag elements or their corner grips".into(),
+                    "Move or resize the action buttons together; select Individual for one button"
+                        .into(),
                 );
                 add(
                     Action::ToggleFollowThumb,

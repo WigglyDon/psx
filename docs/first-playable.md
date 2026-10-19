@@ -83,6 +83,10 @@ it continuously; retain Save/Cancel behavior. Add light snapping with visible
 guides for edges, centers and balanced left/right placement; a slow drag must
 escape the snap. Give Triangle and Cross
 a real gap in the compact default layout. Preserve existing custom positions.
+Increase the default D-pad and action-button sizes where the window permits.
+Treat the four action buttons as an editor group by default: move and corner-
+resize them together, retaining spacing and shared snapping. Provide Individual
+editing and a return to Group; Reset applies to the selected group or element.
 Show Reset only for a changed selection and restore just that element; offer a
 whole-layout reset in
 controller settings only when the profile differs from defaults. Provide

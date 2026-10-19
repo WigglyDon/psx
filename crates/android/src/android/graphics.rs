@@ -644,11 +644,7 @@ impl Canvas<'_> {
                 [0.57, 0.96, 0.71, 0.65],
             );
         }
-        let selected = if editor.selected < editor.layout.element_count() {
-            editor.map(editor.layout.element(editor.selected))
-        } else {
-            game
-        };
+        let selected = editor.map(editor.selected_bounds());
         for (a, b) in [
             (
                 (selected.x, selected.y),
@@ -673,7 +669,7 @@ impl Canvas<'_> {
             self.disc(x, y, 8., [0.22, 0.95, 0.73, 1.]);
             self.disc(x, y, 3.5, [0.04, 0.13, 0.15, 1.]);
         }
-        self.text(16., 16., "Controller layout", 28., [0.94, 0.97, 1., 1.]);
+        self.text(16., 16., "Layout", 28., [0.94, 0.97, 1., 1.]);
         self.text(
             16.,
             56.,

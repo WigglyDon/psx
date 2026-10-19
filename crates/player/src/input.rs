@@ -98,6 +98,10 @@ pub struct Layout {
 impl Layout {
     /// Coordinates are density-independent points, with platform insets excluded.
     pub fn new(w: f32, h: f32) -> Self {
+        Self::default_with_cutouts(w, h, &[])
+    }
+
+    fn default_with_cutouts(w: f32, h: f32, cutouts: &[Rect]) -> Self {
         let mut rails = Self::arranged(w, h, false);
         let cluster = rails.dpad.w;
         let shoulder = (cluster - 8.) / 2.;
@@ -112,7 +116,7 @@ impl Layout {
             }
         }
         if w > h * 1.35 && h >= 304. {
-            let side = Self::side_rails(w, h);
+            let side = Self::side_rails(w, h, cutouts);
             if side.game.w > rails.game.w + 0.01 {
                 rails = side;
             }
@@ -123,8 +127,8 @@ impl Layout {
     fn arranged(w: f32, h: f32, compact: bool) -> Self {
         // Default controls occupy their own dock. The picture never intersects
         // even a translucent control's rectangular touch target.
-        let cluster = (w / 2. - 32.).clamp(112., 200.).min((h - 140.).max(112.));
-        let size = (cluster * 0.36).clamp(48., 72.);
+        let cluster = (w / 2. - 20.).clamp(112., 224.).min((h - 140.).max(112.));
+        let size = (cluster * 0.4).clamp(48., 84.);
         let offset = (cluster - size) / 2.;
         let well_height = if compact {
             // Leave a real gap between Triangle and Cross, even in the
@@ -215,20 +219,40 @@ impl Layout {
         layout
     }
 
-    fn side_rails(w: f32, h: f32) -> Self {
+    fn side_rails(w: f32, h: f32, cutouts: &[Rect]) -> Self {
         let mut layout = Self::arranged(w, h, false);
-        let cluster = (h - 184.).clamp(112., 160.);
-        let size = (cluster * 0.4).clamp(48., 64.);
+        // Grow the thumb wells into spare side-rail width before taking space
+        // from a full-height picture. Narrower windows retain the old ceiling.
+        let picture_clearance = ((w - h * 4. / 3.) / 2. - 16.).max(160.);
+        let cluster = (h - 184.).clamp(112., 200.).min(picture_clearance);
+        // A side camera can meet the upper edge of a larger thumb well. Use
+        // the clear height below it, retaining rail width and placing it below
+        // the camera. Do this only for generated defaults;
+        // saved custom element bounds are applied later without alteration.
+        let well_height = |x| {
+            let well = Rect::new(x, h - 32. - cluster, cluster, cluster);
+            cutouts
+                .iter()
+                .filter(|c| well.overlaps(**c))
+                .map(|c| (h - c.y - c.h - 8.).clamp(112., cluster))
+                .fold(cluster, f32::min)
+        };
+        let face_height = well_height(w - 16. - cluster);
+        let face_bottom = if face_height < cluster { 0. } else { 32. };
+        let size = (cluster * 0.4).min(face_height * 0.43).clamp(48., 80.);
         let offset = (cluster - size) / 2.;
-        let (fx, fy) = (w - 16. - cluster / 2., h - 32. - cluster / 2.);
-        layout.dpad = Rect::new(16., h - 32. - cluster, cluster, cluster);
+        let vertical = (face_height - size) / 2.;
+        let (fx, fy) = (w - 16. - cluster / 2., h - face_bottom - face_height / 2.);
+        let dpad_height = well_height(16.);
+        let dpad_bottom = if dpad_height < cluster { 0. } else { 32. };
+        layout.dpad = Rect::new(16., h - dpad_bottom - dpad_height, cluster, dpad_height);
         let shoulder = (cluster - 8.) / 2.;
         let system_y = if layout.dpad.y >= 200. { 144. } else { h - 48. };
         for c in &mut layout.controls {
             let (x, y, width, height) = match c.label {
-                "TRI" => (fx - size / 2., fy - offset - size / 2., size, size),
+                "TRI" => (fx - size / 2., fy - vertical - size / 2., size, size),
                 "O" => (fx + offset - size / 2., fy - size / 2., size, size),
-                "X" => (fx - size / 2., fy + offset - size / 2., size, size),
+                "X" => (fx - size / 2., fy + vertical - size / 2., size, size),
                 "SQ" => (fx - offset - size / 2., fy - size / 2., size, size),
                 "L1" => (16., 64., shoulder, 48.),
                 "L2" => (24. + shoulder, 64., shoulder, 48.),
@@ -267,6 +291,27 @@ impl Layout {
 
     pub fn element_count(&self) -> usize {
         self.controls.len() + 5
+    }
+    pub fn action_elements(&self) -> impl Iterator<Item = usize> + '_ {
+        self.controls
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| c.is_face().then_some(i + 1))
+    }
+    pub fn action_bounds(&self) -> Rect {
+        self.action_elements()
+            .map(|i| self.element(i))
+            .reduce(|a, b| {
+                let x = a.x.min(b.x);
+                let y = a.y.min(b.y);
+                Rect::new(
+                    x,
+                    y,
+                    (a.x + a.w).max(b.x + b.w) - x,
+                    (a.y + a.h).max(b.y + b.h) - y,
+                )
+            })
+            .unwrap_or_default()
     }
     /// Reuse an already excluded camera/status margin when it has a clear
     /// 48-point strip. Camera rectangles are relative to the content origin.
@@ -565,7 +610,7 @@ impl Preset {
         self.layout_with_cutouts(w, h, &[])
     }
     pub fn layout_with_cutouts(&self, w: f32, h: f32, cutouts: &[Rect]) -> Layout {
-        let mut layout = Layout::new(w, h);
+        let mut layout = Layout::default_with_cutouts(w, h, cutouts);
         for (i, r) in self
             .elements
             .iter()
@@ -848,7 +893,12 @@ mod tests {
                 assert!(r.x >= 0. && r.y >= 0. && r.x + r.w <= w && r.y + r.h <= h);
             }
             let plain = Layout::new(w, h);
-            let shifts: Vec<_> = layout
+            // Explicitly saved geometry retains its diamond proportions;
+            // generated defaults may compact vertically below the camera.
+            let mut saved = Preset::default();
+            saved.capture(&plain, w, h);
+            let custom = saved.layout_with_cutouts(w, h, &[camera]);
+            let shifts: Vec<_> = custom
                 .controls
                 .iter()
                 .zip(&plain.controls)
@@ -858,6 +908,47 @@ mod tests {
             assert!(shifts
                 .iter()
                 .all(|(x, y)| (x - shifts[0].0).abs() < 0.01 && (y - shifts[0].1).abs() < 0.01));
+        }
+    }
+    #[test]
+    fn larger_default_thumb_controls_keep_clear_spacing_and_full_fold_landscape_height() {
+        for (w, h, camera, min_pad, min_face) in [
+            (443., 861., None, 200., 80.),
+            (852., 817., None, 224., 84.),
+            (
+                2342. / 2.4375,
+                1021. / 2.4375,
+                Some(Rect::new(
+                    2160. / 2.4375,
+                    484. / 2.4375,
+                    182. / 2.4375,
+                    112. / 2.4375,
+                )),
+                184.,
+                71.,
+            ),
+        ] {
+            let cutouts: Vec<_> = camera.into_iter().collect();
+            let layout = Preset::default().layout_with_cutouts(w, h, &cutouts);
+            assert!(layout.dpad.w >= min_pad);
+            let faces: Vec<_> = layout
+                .action_elements()
+                .map(|i| layout.element(i))
+                .collect();
+            for (i, a) in faces.iter().enumerate() {
+                assert!(a.w >= min_face && a.w == a.h);
+                for b in faces.iter().skip(i + 1) {
+                    let distance =
+                        (a.x + a.w / 2. - b.x - b.w / 2.).hypot(a.y + a.h / 2. - b.y - b.h / 2.);
+                    assert!(distance > (a.w + b.w) / 2.);
+                }
+            }
+            assert!(faces[2].y - faces[0].y - faces[0].h >= 16. - 0.01);
+            assert!((0..layout.element_count()).all(|i| !layout.game.overlaps(layout.element(i))));
+            if camera.is_some() {
+                assert!((layout.game.h - h).abs() < 0.01);
+                assert!((layout.game.x + layout.game.w / 2. - w / 2.).abs() < 0.01);
+            }
         }
     }
     #[test]
@@ -1138,8 +1229,14 @@ mod tests {
             touches.motion(1, x + angle.cos() * 50., y + angle.sin() * 50., &layout);
             assert_eq!(touches.mask(), expected);
         }
-        for (distance, expected) in [(19., 128), (16., 128), (12., 0), (16., 0), (19., 128)] {
-            touches.motion(1, x + distance, y, &layout);
+        for (fraction, expected) in [
+            (0.095, 128),
+            (0.08, 128),
+            (0.06, 0),
+            (0.08, 0),
+            (0.095, 128),
+        ] {
+            touches.motion(1, x + r.w * fraction, y, &layout);
             assert_eq!(touches.mask(), expected);
         }
     }

@@ -14,7 +14,7 @@ classes forward indispensable activity/service callbacks. SwanStation remains
 unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
 [build.md](build.md), `rust-toolchain.toml` and `Cargo.lock` record reproduction.
 
-- All 56 host tests pass, including atomic card reopening, bounded audio and
+- All 60 player host tests pass, including atomic card reopening, bounded audio and
   live speed changes, captured simultaneous touch, following-thumb behavior,
   clear picture/control geometry, saved display profiles, stale-inset handling,
   corner editing/reset, continuous volume, centered panels, library migration,
@@ -28,6 +28,9 @@ unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
   rapid pause/resume between audio callbacks without replaying old samples.
   A recorded-insets regression checks the 1021-pixel folded-landscape picture
   against the old 962-pixel content height when the status bar appeared.
+  New checks cover larger default caps and separated circles, group dragging
+  with custom spacing and preset round-trip, opposite-corner group resizing,
+  unrelated-control preservation on Reset, and Group/Individual switching.
 - Host and Android ARM64 Clippy pass with warnings denied; formatting passes.
 - APK signature, resources/notices, ARM64 ABI, EGL dependency and 16 KB
   ZIP/ELF LOAD alignment checks pass. C++ runtime linkage is static.
@@ -38,6 +41,17 @@ unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
   device identifiers, raw logs and captures remain private.
 
 ## Device observations
+
+The larger-thumb-controls and grouped-editor update is prepared, not yet device
+accepted. Its signed development APK SHA-256 is
+`e0969932623987e0e40647da587746805f4b77edabfa2f881b1ebf05a8d8de07`.
+Signature, notices/resources, ARM64 and ZIP/ELF alignment checks pass. Recorded
+Fold geometry models a D-pad width of 185.2 points (previously 160) and action
+caps of 71.5–74.1 points (previously 64), retaining the 1021-pixel complete frame
+with a camera on either side. Generated camera-side wells can use their bottom
+clearance to fit below the hole. Explicit saved rectangles remain authoritative;
+Reset adopts the new defaults. Hands-on group move/resize and comfortable reach
+still need the owner's device check.
 
 | Behavior | Observed result |
 | --- | --- |

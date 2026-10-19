@@ -149,6 +149,10 @@ face-button sizes and directional response. Thumb clusters leave 32 logical
 points below their lowest target before local camera avoidance. The compact band reduces vertical spread
 while retaining face-button size and a 16-point gap between Triangle and Cross;
 the largest clear picture is recomputed around those minimum touch bounds.
+Defaults now use larger thumb wells and action caps. Landscape wells grow into
+spare rail width before taking height from a full-height picture. A side camera
+can compact the default well vertically and place it below the hole, using its
+bottom clearance when necessary. Saved custom rectangles still take precedence.
 
 Phone landscape is a primary layout. On Android 11 and later, side camera
 bounds are local obstacles rather than full-height inset strips. System bars
@@ -228,6 +232,11 @@ system-bar insets. Focus transitions cancel touch and recalculate the layout.
 
 The controller editor selects elements by tap, moves them by dragging, and
 resizes them through corner grips, keeping the opposite corner anchored.
+The action buttons select as one group by default. Dragging keeps their relative
+positions; a corner scales their sizes and spacing together. Individual switches
+to per-button editing, and Group returns to the cluster. Group Reset restores
+just those four buttons; individual Reset retains its existing scope. The D-pad
+remains one element. All edits use the existing per-display preset format.
 Dragging lightly snaps nearby edges/centers to peers, defaults, screen margins
 and mirrored horizontal centers. Visible guides explain each alignment. The
 unsnapped drag origin is retained so slow movement can escape a guide; no grid
