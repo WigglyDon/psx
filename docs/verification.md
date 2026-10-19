@@ -277,6 +277,10 @@ viewport-stability correction still requires its installed-device check.
 Its prepared signed APK SHA-256 is
 `532353c219f3f8797dd6762d1764d2d87ae9d8e7d95813ae14d98933ccb1f913`;
 signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
+The matching runtime source is `b7134e4b2178`, archive SHA-256
+`b133841ed0d5b30c9d1ee3183f6e84be4fa0404ad75ccaa5ebe2ea11a6f72df4`.
+Changed runtime files and build/license inputs compare exactly with its clean
+source tree; private root directories are absent from the archive.
 
 With the current default dock, the recorded inner-landscape geometry models a
 1871.3×1403.5 picture. A full-width 2152-pixel 4:3 picture needs 1614 pixels of
