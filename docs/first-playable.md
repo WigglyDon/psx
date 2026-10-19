@@ -95,6 +95,11 @@ Use actual window dimensions across inner/outer display rotations to choose
 the larger clear picture, without stretching it. Keep the D-pad visually a
 digital cross with its following behavior. Make face-button touch targets
 forgiving in unused control space without taking touches from the picture.
+Treat ordinary phone landscape as a primary layout. Center the picture against
+the display width, using local camera bounds instead of excluding a whole
+side strip where the platform supports it. Keep the camera clear of controls
+and game content. Replace stacked shoulder/system rectangles with staggered
+shoulder caps and separate Start/Select keys while retaining usable touch areas.
 
 Settings during play are a native sheet over the running game. Opening the
 cog releases held input and preserves explicit pause intent. Provide a
@@ -176,6 +181,8 @@ focus. Reopening must reuse the existing player, never create a second core owne
 Keep Android navigation available for a single Home gesture, with controller
 touches clear of the system navigation strip. Preserve camera-safe placement
 and verify the resulting folded-landscape spacing.
+The owner also requests a hidden Home handle until interaction; use supported
+per-window behavior and verify that one swipe still leaves the app.
 
 Replace prototype branding with original app/repository artwork and favicon
 assets using a blue Cross on a black circular button in grey plastic,

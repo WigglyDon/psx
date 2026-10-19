@@ -546,19 +546,8 @@ impl Player {
             self.refresh_menu(app);
         }
         let preset = self.controller_settings.preset(w, h);
-        self.layout = preset.layout(w, h);
-        let cutouts: Vec<_> = self
-            .cutouts
-            .iter()
-            .map(|r| {
-                Rect::new(
-                    (r[0] as f32 - self.graphics.content.x) / self.density,
-                    (r[1] as f32 - self.graphics.content.y) / self.density,
-                    (r[2] - r[0]) as f32 / self.density,
-                    (r[3] - r[1]) as f32 / self.density,
-                )
-            })
-            .collect();
+        let cutouts = self.cutout_rects();
+        self.layout = preset.layout_with_cutouts(w, h, &cutouts);
         if self.inset_size == [self.graphics.width, self.graphics.height]
             && self.top_margin_available
             && self.activity.audio_focus
@@ -578,6 +567,7 @@ impl Player {
             preset.game_offset,
         );
         if let Some(menu) = &mut self.menu {
+            menu.cutouts = cutouts;
             if menu.anchor.is_some() {
                 menu.anchor = Some(self.layout.mute);
             }
@@ -1161,7 +1151,12 @@ impl Player {
             Action::EditControls => {
                 self.screen = Screen::Editing;
                 let (w, h) = self.dimensions();
-                self.editor = Some(Editor::new(self.controller_settings.preset(w, h), w, h));
+                self.editor = Some(Editor::with_cutouts(
+                    self.controller_settings.preset(w, h),
+                    w,
+                    h,
+                    self.cutout_rects(),
+                ));
                 self.menu = None;
                 self.dirty = true;
             }
@@ -1226,6 +1221,23 @@ impl Player {
             self.graphics.content.w / self.density,
             self.graphics.content.h / self.density,
         )
+    }
+
+    fn cutout_rects(&self) -> Vec<Rect> {
+        if self.inset_size != [self.graphics.width, self.graphics.height] {
+            return Vec::new();
+        }
+        self.cutouts
+            .iter()
+            .map(|r| {
+                Rect::new(
+                    (r[0] as f32 - self.graphics.content.x) / self.density,
+                    (r[1] as f32 - self.graphics.content.y) / self.density,
+                    (r[2] - r[0]) as f32 / self.density,
+                    (r[3] - r[1]) as f32 / self.density,
+                )
+            })
+            .collect()
     }
 
     fn sync_background(&mut self, app: &AndroidApp) {
@@ -1538,7 +1550,7 @@ impl Player {
                         "The picture stays clear of every control".into()
                     },
                 );
-                if !preset.is_default(w, h) {
+                if !preset.is_default_with_cutouts(w, h, &self.cutout_rects()) {
                     add(
                         Action::ResetControls,
                         "Reset to defaults".into(),
@@ -1619,6 +1631,7 @@ impl Player {
         self.actions = actions;
         self.back_action = back_action;
         let mut menu = Menu::new(title, description, rows, &back);
+        menu.cutouts = self.cutout_rects();
         menu.over_game = self.core.is_some();
         menu.home = self.screen == Screen::Home;
         menu.settings = menu.home.then_some(self.library.games.len());

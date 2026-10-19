@@ -601,6 +601,9 @@ impl Canvas<'_> {
         self.rounded(preview, [0.04, 0.06, 0.085, 0.9]);
         let game = editor.map(editor.layout.game);
         self.rounded(game, [0.1, 0.20, 0.24, 1.]);
+        for cutout in editor.cutouts() {
+            self.rounded(editor.map(*cutout), [0.015, 0.02, 0.025, 1.]);
+        }
         if game.w > 100. {
             self.text(
                 game.x + 8.,
@@ -1045,6 +1048,9 @@ impl Canvas<'_> {
     }
     fn rounded(&mut self, r: Rect, c: [f32; 4]) {
         let radius = 12_f32.min(r.h / 2.).min(r.w / 2.);
+        self.rounded_radius(r, c, radius);
+    }
+    fn rounded_radius(&mut self, r: Rect, c: [f32; 4], radius: f32) {
         let points: [_; 24] = std::array::from_fn(|i| {
             let corner = i / 6;
             let angle = (-0.5 + corner as f32 * 0.5 + (i % 6) as f32 / 10.) * std::f32::consts::PI;
@@ -1061,6 +1067,78 @@ impl Canvas<'_> {
             (cx + angle.cos() * radius, cy + angle.sin() * radius)
         });
         self.polygon(&points, c);
+    }
+    fn hardware_key(&mut self, r: Rect, label: &str, strength: f32) {
+        let body = [
+            0.105 + strength * 0.035,
+            0.12 + strength * 0.16,
+            0.14 + strength * 0.12,
+            0.96,
+        ];
+        if matches!(label, "START" | "SELECT") {
+            let inset = (r.w * 0.05).min(4.);
+            let cap = Rect::new(
+                r.x + inset,
+                r.y + r.h * 0.23 + strength,
+                r.w - inset * 2.,
+                r.h * 0.54,
+            );
+            self.rounded_radius(
+                Rect::new(cap.x, cap.y + 2., cap.w, cap.h),
+                [0.015, 0.02, 0.025, 0.95],
+                cap.h / 2.,
+            );
+            self.rounded_radius(cap, body, cap.h / 2.);
+            self.line(
+                (cap.x + cap.h / 2., cap.y + 1.),
+                (cap.x + cap.w - cap.h / 2., cap.y + 1.),
+                0.8,
+                [0.54, 0.59, 0.65, 0.6],
+            );
+        } else {
+            let trigger = label.ends_with('2');
+            let cap = Rect::new(
+                r.x + 1.,
+                r.y + r.h * if trigger { 1. / 12. } else { 1. / 6. } + strength,
+                r.w - 2.,
+                r.h * if trigger { 5. / 6. } else { 2. / 3. },
+            );
+            let shape = [
+                (0.12, 0.12),
+                (0.80, 0.),
+                (0.96, 0.15),
+                (1., 0.70),
+                (0.90, 0.96),
+                (0.12, 1.),
+                (0., 0.78),
+                (0.02, 0.34),
+            ];
+            let points = shape.map(|(x, y)| {
+                (
+                    cap.x + cap.w * if label.starts_with('R') { 1. - x } else { x },
+                    cap.y + cap.h * y,
+                )
+            });
+            let shadow = points.map(|(x, y)| (x, y + 2.));
+            self.polygon(&shadow, [0.015, 0.02, 0.025, 0.95]);
+            self.polygon(&points, body);
+            for i in 0..2 {
+                self.line(points[i], points[i + 1], 0.9, [0.54, 0.59, 0.65, 0.65]);
+            }
+        }
+        let size = if matches!(label, "START" | "SELECT") {
+            12_f32
+        } else {
+            16_f32
+        }
+        .min(r.h * 0.4);
+        self.text(
+            r.x + (r.w - self.font.measure(label, size)) / 2.,
+            r.y + r.h / 2. - size / 2. + strength,
+            label,
+            size,
+            [0.85, 0.89, 0.92, 1.],
+        );
     }
     fn dpad(&mut self, r: Rect, presses: &[f32; 16], movement: &DpadVisual) {
         let well_radius = r.w.min(r.h) / 2.;
@@ -1146,6 +1224,10 @@ impl Canvas<'_> {
         }
     }
     fn button(&mut self, r: Rect, label: &str, strength: f32) {
+        if matches!(label, "L1" | "L2" | "R1" | "R2" | "START" | "SELECT") {
+            self.hardware_key(r, label, strength);
+            return;
+        }
         let idle = [0.08, 0.11, 0.15, 0.9];
         let pressed = [0.10, 0.58, 0.51, 0.94];
         let background = if matches!(

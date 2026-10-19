@@ -146,9 +146,29 @@ The default layout compares arrangements at the actual window dimensions.
 On a sufficiently wide square display, shoulders and system buttons occupy
 the space between thumb clusters. The dock adjusts its height while retaining
 face-button sizes and directional response. Thumb clusters leave 32 logical
-points below their lowest target. The compact band reduces vertical spread
+points below their lowest target before local camera avoidance. The compact band reduces vertical spread
 while retaining face-button size and a 16-point gap between Triangle and Cross;
 the largest clear picture is recomputed around those minimum touch bounds.
+
+Phone landscape is a primary layout. On Android 11 and later, side camera
+bounds are local obstacles rather than full-height inset strips. System bars
+remain reserved; portrait keeps its top camera margin. The shared layout moves
+the whole face-button cluster together or shifts an obstructed control locally,
+then finds the largest clear 4:3 picture around controls and camera rectangles.
+The default picture centers on the full available display width when it fits.
+Camera avoidance is derived for the current window without overwriting saved
+control positions. The editor uses the same placement/defaults, and anchored
+volume panels slide clear of camera bounds. Shoulder caps are mirrored,
+staggered physical-key shapes; Start/Select have smaller pill faces inside
+their retained touch targets. Rendering and hit areas remain distinct.
+
+On Android 12 and later, `BEHAVIOR_DEFAULT` requests hidden navigation with
+gesture navigation still available on the first swipe. Navigation's insets
+ignoring visibility keep control targets out of the system gesture strip.
+Older releases retain visible navigation. This supersedes transient-bars mode,
+which previously needed a reveal swipe on the Fold; actual first-swipe behavior
+must be rechecked on the new build.
+[Android system-bar behavior](https://developer.android.com/reference/android/view/WindowInsetsController#BEHAVIOR_DEFAULT)
 The less-used system buttons keep their own separate row. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture
 height. The small pause/play, speed, volume and settings toolbar uses a clear

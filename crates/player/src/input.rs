@@ -73,6 +73,7 @@ pub struct Layout {
     pub playback: Rect,
     pub speed: Rect,
     pub mute: Rect,
+    cutouts: Vec<Rect>,
 }
 
 impl Layout {
@@ -189,6 +190,7 @@ impl Layout {
             playback,
             speed,
             mute,
+            cutouts: Vec::new(),
         };
         layout.place_game(w, h, false, 1., [0.5, 0.5]);
         layout
@@ -202,6 +204,7 @@ impl Layout {
         let (fx, fy) = (w - 16. - cluster / 2., h - 32. - cluster / 2.);
         layout.dpad = Rect::new(16., h - 32. - cluster, cluster, cluster);
         let shoulder = (cluster - 8.) / 2.;
+        let system_y = if layout.dpad.y >= 200. { 144. } else { h - 48. };
         for c in &mut layout.controls {
             let (x, y, width, height) = match c.label {
                 "TRI" => (fx - size / 2., fy - offset - size / 2., size, size),
@@ -209,11 +212,29 @@ impl Layout {
                 "X" => (fx - size / 2., fy + offset - size / 2., size, size),
                 "SQ" => (fx - offset - size / 2., fy - size / 2., size, size),
                 "L2" => (16., 60., shoulder, 48.),
-                "L1" => (24. + shoulder, 60., shoulder, 48.),
-                "R1" => (w - 16. - cluster, 60., shoulder, 48.),
+                "L1" => (24. + shoulder, 82., shoulder, 48.),
+                "R1" => (w - 16. - cluster, 82., shoulder, 48.),
                 "R2" => (w - 16. - shoulder, 60., shoulder, 48.),
-                "SELECT" => (16., 116., 96., 48.),
-                _ => (w - 112., 116., 96., 48.),
+                "SELECT" => (
+                    if layout.dpad.y >= 200. {
+                        24.
+                    } else {
+                        w / 2. - 96.
+                    },
+                    system_y,
+                    88.,
+                    48.,
+                ),
+                _ => (
+                    if layout.dpad.y >= 200. {
+                        w - 112.
+                    } else {
+                        w / 2. + 8.
+                    },
+                    system_y,
+                    88.,
+                    48.,
+                ),
             };
             c.bounds = Rect::new(x, y, width, height);
         }
@@ -309,12 +330,11 @@ impl Layout {
         }
     }
     pub fn place_game(&mut self, w: f32, h: f32, overlap: bool, scale: f32, offset: [f32; 2]) {
-        let obstacles: Vec<_> = (0..self.element_count()).map(|i| self.element(i)).collect();
-        let area = if overlap {
-            Rect::new(0., 0., w, h).fit(4. / 3.)
-        } else {
-            clear_picture(w, h, &obstacles)
-        };
+        let mut obstacles = self.cutouts.clone();
+        if !overlap {
+            obstacles.extend((0..self.element_count()).map(|i| self.element(i)));
+        }
+        let area = clear_picture(w, h, &obstacles);
         let scale = scale.clamp(0.25, 1.);
         self.game = Rect::new(
             area.x + area.w * (1. - scale) * offset[0].clamp(0., 1.),
@@ -322,6 +342,73 @@ impl Layout {
             area.w * scale,
             area.h * scale,
         );
+    }
+
+    /// A camera is a local obstruction, not an unusable full-height strip.
+    /// Keep the face-button diamond intact when shifting it clear of a hole.
+    pub fn avoid_cutouts(&mut self, w: f32, h: f32, cutouts: &[Rect]) {
+        self.cutouts = cutouts
+            .iter()
+            .copied()
+            .filter(|r| r.w > 0. && r.h > 0. && r.overlaps(Rect::new(0., 0., w, h)))
+            .collect();
+        if self.cutouts.is_empty() {
+            return;
+        }
+        let faces: Vec<_> = self
+            .controls
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_face())
+            .map(|(i, _)| i + 1)
+            .collect();
+        let mut groups = vec![faces.clone()];
+        groups.extend(
+            (0..self.element_count())
+                .filter(|i| !faces.contains(i))
+                .map(|i| vec![i]),
+        );
+        for group in groups {
+            let original: Vec<_> = group.iter().map(|&i| self.element(i)).collect();
+            if !original
+                .iter()
+                .any(|r| self.cutouts.iter().any(|c| r.overlaps(*c)))
+            {
+                continue;
+            }
+            let mut candidates = Vec::new();
+            for r in &original {
+                for c in &self.cutouts {
+                    if r.overlaps(*c) {
+                        candidates.extend([
+                            (c.x - r.w - 8. - r.x, 0.),
+                            (c.x + c.w + 8. - r.x, 0.),
+                            (0., c.y - r.h - 8. - r.y),
+                            (0., c.y + c.h + 8. - r.y),
+                        ]);
+                    }
+                }
+            }
+            candidates
+                .sort_by(|(ax, ay), (bx, by)| (ax * ax + ay * ay).total_cmp(&(bx * bx + by * by)));
+            if let Some((dx, dy)) = candidates.into_iter().find(|(dx, dy)| {
+                original.iter().all(|r| {
+                    let moved = Rect::new(r.x + dx, r.y + dy, r.w, r.h);
+                    moved.x >= 0.
+                        && moved.y >= 0.
+                        && moved.x + moved.w <= w
+                        && moved.y + moved.h <= h
+                        && !self.cutouts.iter().any(|c| moved.overlaps(*c))
+                        && !(0..self.element_count())
+                            .filter(|i| !group.contains(i))
+                            .any(|i| moved.overlaps(self.element(i)))
+                })
+            }) {
+                for (&i, r) in group.iter().zip(original) {
+                    self.set_element(i, Rect::new(r.x + dx, r.y + dy, r.w, r.h));
+                }
+            }
+        }
     }
 
     pub fn mask_at(&self, x: f32, y: f32) -> u16 {
@@ -444,8 +531,11 @@ impl Default for Preset {
 }
 impl Preset {
     pub fn is_default(&self, w: f32, h: f32) -> bool {
-        let layout = self.layout(w, h);
-        let defaults = Layout::new(w, h);
+        self.is_default_with_cutouts(w, h, &[])
+    }
+    pub fn is_default_with_cutouts(&self, w: f32, h: f32, cutouts: &[Rect]) -> bool {
+        let layout = self.layout_with_cutouts(w, h, cutouts);
+        let defaults = Self::default().layout_with_cutouts(w, h, cutouts);
         !self.allow_overlap
             && self.follow_thumb
             && layout.game.same_bounds(defaults.game)
@@ -453,6 +543,9 @@ impl Preset {
                 .all(|i| layout.element(i).same_bounds(defaults.element(i)))
     }
     pub fn layout(&self, w: f32, h: f32) -> Layout {
+        self.layout_with_cutouts(w, h, &[])
+    }
+    pub fn layout_with_cutouts(&self, w: f32, h: f32, cutouts: &[Rect]) -> Layout {
         let mut layout = Layout::new(w, h);
         for (i, r) in self
             .elements
@@ -474,6 +567,7 @@ impl Preset {
                 );
             }
         }
+        layout.avoid_cutouts(w, h, cutouts);
         layout.place_game(w, h, self.allow_overlap, self.game_scale, self.game_offset);
         layout
     }
@@ -681,6 +775,53 @@ impl Touches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn landscape_camera_keeps_the_picture_centered_and_controls_clear() {
+        let density = 2.4375;
+        let (w, h) = (2342. / density, 1021. / density);
+        let old_width = Layout::new(2160. / density, h).game.w;
+        for x in [0., 2160. / density] {
+            let camera = Rect::new(x, 484. / density, 182. / density, 112. / density);
+            let layout = Preset::default().layout_with_cutouts(w, h, &[camera]);
+            assert!((layout.game.x + layout.game.w / 2. - w / 2.).abs() < 0.01);
+            assert!(layout.game.w >= old_width);
+            assert!(!layout.game.overlaps(camera));
+            for i in 0..layout.element_count() {
+                let r = layout.element(i);
+                assert!(
+                    !r.overlaps(camera),
+                    "camera touches {}",
+                    layout.element_name(i)
+                );
+                assert!(r.x >= 0. && r.y >= 0. && r.x + r.w <= w && r.y + r.h <= h);
+            }
+            let plain = Layout::new(w, h);
+            let shifts: Vec<_> = layout
+                .controls
+                .iter()
+                .zip(&plain.controls)
+                .filter(|(c, _)| c.is_face())
+                .map(|(c, old)| (c.bounds.x - old.bounds.x, c.bounds.y - old.bounds.y))
+                .collect();
+            assert!(shifts
+                .iter()
+                .all(|(x, y)| (x - shifts[0].0).abs() < 0.01 && (y - shifts[0].1).abs() < 0.01));
+        }
+    }
+    #[test]
+    fn short_landscape_system_keys_do_not_take_direction_or_face_targets() {
+        for (w, h) in [(800., 304.), (861., 360.), (960., 419.)] {
+            let layout = Layout::new(w, h);
+            for c in layout.controls.iter().filter(|c| !c.is_face()) {
+                assert!(!c.bounds.overlaps(layout.dpad), "{} at {w}x{h}", c.label);
+                assert!(!layout
+                    .controls
+                    .iter()
+                    .filter(|other| other.is_face())
+                    .any(|other| c.bounds.overlaps(other.bounds)));
+            }
+        }
+    }
     #[test]
     fn folding_ignores_stale_metrics_and_keeps_each_saved_profile() {
         let inner = safe_content([2076, 2152], [1080, 2342], [0, 182, 0, 190]);

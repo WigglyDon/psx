@@ -14,14 +14,16 @@ classes forward indispensable activity/service callbacks. SwanStation remains
 unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
 [build.md](build.md), `rust-toolchain.toml` and `Cargo.lock` record reproduction.
 
-- All 48 host tests pass, including atomic card reopening, bounded audio and
+- All 52 host tests pass, including atomic card reopening, bounded audio and
   live speed changes, captured simultaneous touch, following-thumb behavior,
   clear picture/control geometry, saved display profiles, stale-inset handling,
   corner editing/reset, continuous volume, centered panels, library migration,
   file/companion validation, disc grouping, artwork, checkpoint integrity and
   mutually exclusive speaker tap/hold with drift/interruption cancellation,
   snapping with slow-drag escape, returning from background audio headroom,
-  and the pinned free firmware without replacing supplied files.
+  the pinned free firmware without replacing supplied files, and centered
+  landscape picture/control placement around either side's camera, short
+  landscape system-key clearance, editor reset and camera-safe live volume.
 - Host and Android ARM64 Clippy pass with warnings denied; formatting passes.
 - APK signature, resources/notices, ARM64 ABI, EGL dependency and 16 KB
   ZIP/ELF LOAD alignment checks pass. C++ runtime linkage is static.
@@ -181,15 +183,36 @@ card and session data remain private.
 
 ## Corresponding source and release limits
 
-The owner subsequently requested a single blue Cross button on grey plastic.
+The Cross-button APK below was subsequently installed over the existing app.
+Crash restored into gameplay in outer-display landscape. Three steady ten-second
+windows measured 59.80–59.84 fps, 3.83–3.96 ms core time, hardware output only,
+zero audio underruns and zero dropped samples in the retained observation.
+This is separate from an audible or background-audio acceptance check. Relevant
+app data was backed up before and after installation, and background play remained
+off. Only psx was stopped; the Fold was locked and verified screen-off before release.
+
+The owner identified a real horizontal offset in this viewport. Its drawable
+was 2342×1080 with content 2160×1021: a 182-pixel camera-edge exclusion shifted
+the content center by 91 pixels. The camera's bounding rectangle occupied only
+part of that side. New source uses local side-camera obstacles, staggered
+shoulder caps and Start/Select pills, plus the shared camera-aware editor and
+volume panel. A host geometry preview at the measured dimensions yields a
+1361×1021 picture centered at physical x=1171, with every target clear of the
+camera; this is a model result, not a new device measurement. The hidden-handle
+navigation mode and changed landscape UI require their own device pass.
+The prepared landscape APK SHA-256 is
+`65c6af3fe5a98d5c022f120a20ddcd1f58af3232036e64ee434c8eae46b1e6d4`;
+resource/notices, signature, native ABI and ZIP/ELF alignment checks pass.
+
+The owner's single blue Cross button on grey plastic is the current identity.
 The standalone, favicon, masthead and Android adaptive/themed artwork now use
 that geometry. The 512-pixel export, 16-pixel favicon and masthead were visually
 inspected off-device. Android resources compiled, and the signed APK passed
 its notice/resource, ABI and ZIP/ELF alignment checks. Its SHA-256 is
 `f2e51a184bb6a01a6fd1c1e2ef79780dbbc8fd59768e8c0dbf4c729f295f3185`.
-This artwork-only update has not been installed or inspected in a launcher;
-the owner will announce when the Fold is available. No phone access was used
-to prepare it, and no gameplay or borrowed core code changed.
+This artwork-only update was prepared without phone access and subsequently
+installed as recorded above. Its launcher appearance has not been inspected;
+no gameplay or borrowed core code changed in that artwork revision.
 
 `cargo xtask source` exports committed project/core files and locked Rust
 sources with their original notices. The clean extracted `9dbbb20` archive ran

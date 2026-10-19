@@ -211,7 +211,7 @@ impl Platform {
                         &controller,
                         "setSystemBarsBehavior",
                         "(I)V",
-                        &[JValue::Int(2)],
+                        &[JValue::Int(if sdk >= 31 { 1 } else { 2 })],
                     )?;
                     let navigation = env
                         .call_static_method(
@@ -221,11 +221,17 @@ impl Platform {
                             &[],
                         )?
                         .i()?;
-                    // Leave system navigation available: hiding it turns the
-                    // first Home swipe into a reveal-only gesture. Insets keep
-                    // our touch targets clear of the system-owned strip.
                     env.call_method(&controller, "hide", "(I)V", &[JValue::Int(status)])?;
-                    env.call_method(&controller, "show", "(I)V", &[JValue::Int(navigation)])?;
+                    // BEHAVIOR_DEFAULT keeps gesture navigation active even
+                    // while hidden (API 31+). Transient-bars mode consumed the
+                    // first swipe on the Fold. Older releases retain visible
+                    // navigation. Reserve its touch strip in either mode.
+                    env.call_method(
+                        &controller,
+                        if sdk >= 31 { "hide" } else { "show" },
+                        "(I)V",
+                        &[JValue::Int(navigation)],
+                    )?;
                 }
             } else {
                 // Edge-to-edge fullscreen status area, with navigation shown.
@@ -400,6 +406,10 @@ impl Platform {
             };
             let mut edges = [0; 4];
             let mut cutouts = Vec::new();
+            let size = [
+                env.call_method(&view, "getWidth", "()I", &[])?.i()?,
+                env.call_method(&view, "getHeight", "()I", &[])?.i()?,
+            ];
             for (i, name) in [
                 "getSystemWindowInsetLeft",
                 "getSystemWindowInsetTop",
@@ -410,6 +420,46 @@ impl Platform {
             .enumerate()
             {
                 edges[i] = env.call_method(&insets, name, "()I", &[])?.i()?;
+            }
+            if sdk >= 30 {
+                let bars = env
+                    .call_static_method("android/view/WindowInsets$Type", "systemBars", "()I", &[])?
+                    .i()?;
+                let occupied = env
+                    .call_method(
+                        &insets,
+                        "getInsets",
+                        "(I)Landroid/graphics/Insets;",
+                        &[JValue::Int(bars)],
+                    )?
+                    .l()?;
+                let navigation = env
+                    .call_static_method(
+                        "android/view/WindowInsets$Type",
+                        "navigationBars",
+                        "()I",
+                        &[],
+                    )?
+                    .i()?;
+                let nav = env
+                    .call_method(
+                        &insets,
+                        "getInsetsIgnoringVisibility",
+                        "(I)Landroid/graphics/Insets;",
+                        &[JValue::Int(navigation)],
+                    )?
+                    .l()?;
+                for (i, field) in ["left", "top", "right", "bottom"].iter().enumerate() {
+                    let bar = env.get_field(&occupied, field, "I")?.i()?;
+                    let nav = env.get_field(&nav, field, "I")?.i()?;
+                    // A landscape camera only excludes its actual rectangle,
+                    // not the entire edge. System navigation remains reserved.
+                    edges[i] = if size[0] > size[1] && (i == 0 || i == 2) {
+                        bar.max(nav)
+                    } else {
+                        edges[i].max(bar).max(nav)
+                    };
+                }
             }
             let cutout = env
                 .call_method(
@@ -443,13 +493,11 @@ impl Platform {
                 .iter()
                 .enumerate()
                 {
-                    edges[i] = edges[i].max(env.call_method(&cutout, name, "()I", &[])?.i()?);
+                    if sdk < 30 || size[0] <= size[1] || (i != 0 && i != 2) {
+                        edges[i] = edges[i].max(env.call_method(&cutout, name, "()I", &[])?.i()?);
+                    }
                 }
             }
-            let size = [
-                env.call_method(&view, "getWidth", "()I", &[])?.i()?,
-                env.call_method(&view, "getHeight", "()I", &[])?.i()?,
-            ];
             let resources = env
                 .call_method(
                     &view,

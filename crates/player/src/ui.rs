@@ -258,6 +258,7 @@ pub struct Editor {
     pub width: f32,
     pub height: f32,
     pub guides: [Option<f32>; 2],
+    cutouts: Vec<Rect>,
     pointer: Option<EditorPointer>,
 }
 
@@ -314,7 +315,10 @@ pub enum EditResult {
 
 impl Editor {
     pub fn new(preset: Preset, width: f32, height: f32) -> Self {
-        let layout = preset.layout(width, height);
+        Self::with_cutouts(preset, width, height, Vec::new())
+    }
+    pub fn with_cutouts(preset: Preset, width: f32, height: f32, cutouts: Vec<Rect>) -> Self {
+        let layout = preset.layout_with_cutouts(width, height, &cutouts);
         Self {
             preset,
             layout,
@@ -322,6 +326,7 @@ impl Editor {
             width,
             height,
             guides: [None; 2],
+            cutouts,
             pointer: None,
         }
     }
@@ -372,14 +377,22 @@ impl Editor {
     }
     pub fn selected_is_default(&self) -> bool {
         let expected = if self.selected < self.layout.element_count() {
-            Layout::new(self.width, self.height).element(self.selected)
+            self.defaults().element(self.selected)
         } else {
             let mut reset = self.preset.clone();
             reset.game_scale = 1.;
             reset.game_offset = [0.5, 0.5];
-            reset.layout(self.width, self.height).game
+            reset
+                .layout_with_cutouts(self.width, self.height, &self.cutouts)
+                .game
         };
         self.selected_bounds().same_bounds(expected)
+    }
+    fn defaults(&self) -> Layout {
+        Preset::default().layout_with_cutouts(self.width, self.height, &self.cutouts)
+    }
+    pub fn cutouts(&self) -> &[Rect] {
+        &self.cutouts
     }
     /// Visible corner grips share the same 48-point touch areas as rendering.
     pub fn handles(&self) -> [(f32, f32); 4] {
@@ -481,7 +494,9 @@ impl Editor {
         } else {
             let mut full = self.preset.clone();
             full.game_scale = 1.;
-            let area = full.layout(self.width, self.height).game;
+            let area = full
+                .layout_with_cutouts(self.width, self.height, &self.cutouts)
+                .game;
             let slack_x = area.w - self.layout.game.w;
             let slack_y = area.h - self.layout.game.h;
             let mut r = original;
@@ -495,13 +510,15 @@ impl Editor {
                 self.preset.game_offset[1] = ((r.y - area.y) / slack_y).clamp(0., 1.);
             }
         }
-        self.layout = self.preset.layout(self.width, self.height);
+        self.layout = self
+            .preset
+            .layout_with_cutouts(self.width, self.height, &self.cutouts);
         // Keep the drag's unsnapped origin. Incrementing the snapped position
         // would trap slow finger movement at a guide.
     }
     fn snap_move(&mut self, mut r: Rect, area: Rect) -> Rect {
         let threshold = 6. / (self.preview().w / self.width);
-        let defaults = Layout::new(self.width, self.height);
+        let defaults = self.defaults();
         let mut references = vec![if self.selected < defaults.element_count() {
             defaults.element(self.selected)
         } else {
@@ -629,7 +646,9 @@ impl Editor {
             self.layout.set_element(self.selected, resized);
             self.preset.capture(&self.layout, self.width, self.height);
         }
-        self.layout = self.preset.layout(self.width, self.height);
+        self.layout = self
+            .preset
+            .layout_with_cutouts(self.width, self.height, &self.cutouts);
     }
     pub fn up(&mut self, id: i32, x: f32, y: f32) -> Option<EditResult> {
         let pointer = self.pointer?;
@@ -654,16 +673,16 @@ impl Editor {
             }
             EditorButton::Reset => {
                 if self.selected < self.layout.element_count() {
-                    self.layout.set_element(
-                        self.selected,
-                        Layout::new(self.width, self.height).element(self.selected),
-                    );
+                    self.layout
+                        .set_element(self.selected, self.defaults().element(self.selected));
                     self.preset.capture(&self.layout, self.width, self.height);
                 } else {
                     self.preset.game_scale = 1.;
                     self.preset.game_offset = [0.5, 0.5];
                 }
-                self.layout = self.preset.layout(self.width, self.height);
+                self.layout =
+                    self.preset
+                        .layout_with_cutouts(self.width, self.height, &self.cutouts);
             }
             EditorButton::Cancel => return Some(EditResult::Cancel),
             EditorButton::Done => return Some(EditResult::Done),
@@ -679,6 +698,33 @@ impl Editor {
 #[cfg(test)]
 mod editor_tests {
     use super::*;
+    #[test]
+    fn camera_layout_reset_matches_play_and_does_not_change_the_saved_source() {
+        let (w, h) = (2342. / 2.4375, 1021. / 2.4375);
+        let camera = Rect::new(2160. / 2.4375, 484. / 2.4375, 182. / 2.4375, 112. / 2.4375);
+        let original = Preset::default();
+        let mut editor = Editor::with_cutouts(original.clone(), w, h, vec![camera]);
+        let play = original.layout_with_cutouts(w, h, &[camera]);
+        assert!(editor.layout.game.same_bounds(play.game));
+        editor.selected = 1;
+        let r = editor.map(editor.layout.element(1));
+        editor.down(1, r.x + r.w / 2., r.y + r.h / 2.);
+        editor.motion(1, r.x + r.w / 2. - 25., r.y + r.h / 2.);
+        editor.up(1, r.x + r.w / 2. - 25., r.y + r.h / 2.);
+        assert!(!editor.selected_is_default());
+        let (r, _) = editor
+            .buttons()
+            .into_iter()
+            .find(|(_, b)| *b == EditorButton::Reset)
+            .unwrap();
+        editor.down(1, r.x + r.w / 2., r.y + r.h / 2.);
+        editor.up(1, r.x + r.w / 2., r.y + r.h / 2.);
+        assert!(editor.selected_is_default());
+        assert!(
+            (0..editor.layout.element_count()).all(|i| !editor.layout.element(i).overlaps(camera))
+        );
+        assert!(original.elements.is_empty());
+    }
 
     #[test]
     fn alignment_guides_snap_to_a_peer_and_slow_drag_can_escape() {
@@ -857,6 +903,7 @@ pub struct Menu {
     pub settings: Option<usize>,
     pub over_game: bool,
     pub anchor: Option<Rect>,
+    pub cutouts: Vec<Rect>,
     pointer: Option<(i32, f32, f32, bool)>,
     slider_pointer: Option<(i32, usize)>,
     slider_change: Option<(usize, u8)>,
@@ -894,12 +941,38 @@ impl Menu {
             let w = (width - 24.).clamp(0., 320.);
             let h = (48. + 16. + self.rows.iter().map(|r| r.height).sum::<f32>())
                 .min((height - 24.).max(0.));
-            return Rect::new(
+            let panel = Rect::new(
                 (anchor.x + anchor.w / 2. - w / 2.).clamp(12., (width - w - 12.).max(12.)),
                 (anchor.y + anchor.h + 8.).clamp(8., (height - h - 8.).max(8.)),
                 w,
                 h,
             );
+            if !self.cutouts.iter().any(|r| panel.overlaps(*r)) {
+                return panel;
+            }
+            // An anchored volume panel can reach a side camera even though
+            // the centered settings sheet does not. Slide it clear locally.
+            let candidates = self.cutouts.iter().flat_map(|c| {
+                [
+                    Rect::new(c.x - w - 8., panel.y, w, h),
+                    Rect::new(c.x + c.w + 8., panel.y, w, h),
+                    Rect::new(panel.x, c.y - h - 8., w, h),
+                    Rect::new(panel.x, c.y + c.h + 8., w, h),
+                ]
+            });
+            return candidates
+                .filter(|r| {
+                    r.x >= 0.
+                        && r.y >= 0.
+                        && r.x + r.w <= width
+                        && r.y + r.h <= height
+                        && !self.cutouts.iter().any(|c| r.overlaps(*c))
+                })
+                .min_by(|a, b| {
+                    ((a.x - panel.x).hypot(a.y - panel.y))
+                        .total_cmp(&(b.x - panel.x).hypot(b.y - panel.y))
+                })
+                .unwrap_or(panel);
         }
         if !self.over_game {
             return Rect::new(0., 0., width, height);
@@ -1103,6 +1176,33 @@ impl Menu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn side_camera_moves_the_volume_panel_without_losing_live_slider_input() {
+        let mut row = Row::action("Game volume", "");
+        row.slider = Some(75);
+        row.height = 104.;
+        let mut menu = Menu::new("Volume", "", vec![row], "Back");
+        menu.anchor = Some(Rect::new(840., 4., 48., 48.));
+        let camera = Rect::new(886., 198., 75., 46.);
+        menu.cutouts = vec![camera];
+        let panel = menu.surface(961., 419.);
+        assert!(!panel.overlaps(camera));
+        assert!(
+            panel.x >= 0.
+                && panel.y >= 0.
+                && panel.x + panel.w <= 961.
+                && panel.y + panel.h <= 419.
+        );
+        let slider = menu.slider_rect(0, panel.w, panel.h);
+        menu.down(
+            4,
+            slider.x + slider.w - 8.,
+            slider.y + 24.,
+            panel.w,
+            panel.h,
+        );
+        assert_eq!(menu.take_slider_change(), Some((0, 100)));
+    }
     #[test]
     fn slider_updates_during_drag_and_cancel_keeps_the_last_listening_level() {
         let mut row = Row::action("Game volume", "");
