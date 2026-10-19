@@ -549,12 +549,15 @@ pub fn prepare(root: &Path, id: &GameId, renderer: &str) -> Result<PathBuf> {
             std::os::unix::fs::symlink(&target, &link).map_err(|e| e.to_string())?;
         }
     }
-    prepare_firmware(
-        &system,
-        root.join("resume")
-            .join(format!("{}.state", id.as_str()))
-            .exists(),
-    )?;
+    let has_progress = root
+        .join("resume")
+        .join(format!("{}.state", id.as_str()))
+        .exists()
+        || fs::read_dir(pcsx2.join("memcards"))
+            .map_err(|e| e.to_string())?
+            .next()
+            .is_some();
+    prepare_firmware(&system, has_progress)?;
     let ini = pcsx2.join("inis/armsx2-libretro.ini");
     // Source-bound settings version. Retain donor defaults for unspecified
     // keys, and explicitly disable adaptive guest clocks for qualification.
@@ -592,7 +595,7 @@ fn firmware_binding(system: &Path) -> Result<Firmware> {
 pub fn firmware_identity(system: &Path) -> Result<String> {
     Ok(firmware_binding(system)?.sha256)
 }
-fn prepare_firmware(system: &Path, has_checkpoint: bool) -> Result<()> {
+fn prepare_firmware(system: &Path, has_progress: bool) -> Result<()> {
     use sha2::{Digest, Sha256};
     let bios = system.join("pcsx2/bios");
     let manifest = system.join("firmware.json");
@@ -613,7 +616,7 @@ fn prepare_firmware(system: &Path, has_checkpoint: bool) -> Result<()> {
             }
         }
         names.sort();
-        if has_checkpoint && names.len() > 1 {
+        if has_progress && names.len() > 1 {
             return Err("This older PS2 session has no firmware binding and multiple firmware files are available. Keep its original firmware as the only PS2 firmware file before reopening. Its checkpoint and cards are kept.".into());
         }
         let file = names
@@ -843,6 +846,28 @@ mod tests {
         fs::write(bios.join("owner.bin"), image(1)).unwrap();
         assert!(prepare_firmware(&root, true).is_err());
         assert!(!root.join("firmware.json").exists());
+        // A legacy entry with only an ordinary card is still an existing
+        // session. Missing a checkpoint must not authorize a firmware change.
+        let legacy = root.join("legacy");
+        fs::create_dir_all(legacy.join("system/ps2")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&bios, legacy.join("system/ps2/bios")).unwrap();
+        #[cfg(not(unix))]
+        {
+            fs::create_dir_all(legacy.join("system/ps2/bios")).unwrap();
+            for name in ["owner.bin", "earlier.bin"] {
+                fs::copy(bios.join(name), legacy.join("system/ps2/bios").join(name)).unwrap();
+            }
+        }
+        let cards = legacy.join("ps2/abc123/pcsx2/memcards");
+        fs::create_dir_all(&cards).unwrap();
+        fs::write(cards.join("Mcd001.ps2"), b"owner progress").unwrap();
+        assert!(prepare(&legacy, &GameId::parse("abc123").unwrap(), "fixture").is_err());
+        assert!(!legacy.join("ps2/abc123/firmware.json").exists());
+        assert_eq!(
+            fs::read(cards.join("Mcd001.ps2")).unwrap(),
+            b"owner progress"
+        );
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
