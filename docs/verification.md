@@ -338,10 +338,10 @@ locked/screen-off handback was verified before releasing the transaction.
 The ten-minute window overran during delayed tool interactions, disclosed to
 the owner. No device-wide settings or package permissions were modified.
 
-With the current default dock, the recorded inner-landscape geometry models a
+Before the larger-controls update, the recorded inner-landscape dock modeled a
 1871.3×1403.5 picture. A full-width 2152-pixel 4:3 picture needs 1614 pixels of
-height, which the separate control dock does not leave. Inner portrait models
-1956.7×1467.5; folded landscape models 1361.3×1021. These are layout-model results,
+height, which the separate control dock did not leave. Inner portrait modeled
+1956.7×1467.5; folded landscape modeled 1361.3×1021. These are prior layout-model results,
 not new measured device picture bounds. New resize diagnostics include the
 actual picture bounds so future device checks can distinguish these limits
 from further regressions.
