@@ -1,8 +1,112 @@
 //! Small native menu model. No platform handles or emulation ownership.
 use crate::artwork::Artwork;
 use crate::input::{DpadFeedback, Layout, Preset, Rect};
+use std::time::{Duration, Instant};
 
 pub const ROW_HEIGHT: f32 = 64.;
+
+/// A captured toolbar press: a hold never also becomes a tap on release.
+#[derive(Default)]
+pub struct HoldPress(Option<Press>);
+pub enum PressAction {
+    Tap,
+    Hold,
+}
+struct Press {
+    id: i32,
+    origin: [f32; 2],
+    started: Instant,
+    eligible: bool,
+}
+impl HoldPress {
+    pub fn begin(&mut self, id: i32, x: f32, y: f32, now: Instant) {
+        if self.0.is_none() {
+            self.0 = Some(Press {
+                id,
+                origin: [x, y],
+                started: now,
+                eligible: true,
+            });
+        }
+    }
+    pub fn owns(&self, id: i32) -> bool {
+        self.0.as_ref().is_some_and(|p| p.id == id)
+    }
+    pub fn motion(&mut self, id: i32, x: f32, y: f32) {
+        if let Some(p) = &mut self.0 {
+            if p.id == id && (x - p.origin[0]).hypot(y - p.origin[1]) > 12. {
+                p.eligible = false;
+            }
+        }
+    }
+    pub fn held(&mut self, now: Instant) -> bool {
+        if let Some(p) = &mut self.0 {
+            if p.eligible && now.duration_since(p.started) >= Duration::from_millis(500) {
+                p.eligible = false;
+                return true;
+            }
+        }
+        false
+    }
+    pub fn release(&mut self, id: i32, x: f32, y: f32, now: Instant) -> Option<PressAction> {
+        if !self.owns(id) {
+            return None;
+        }
+        self.motion(id, x, y);
+        self.0.take().filter(|p| p.eligible).map(|p| {
+            if now.duration_since(p.started) >= Duration::from_millis(500) {
+                PressAction::Hold
+            } else {
+                PressAction::Tap
+            }
+        })
+    }
+    pub fn cancel(&mut self) {
+        self.0 = None;
+    }
+}
+
+#[cfg(test)]
+mod press_tests {
+    use super::*;
+    #[test]
+    fn tap_and_hold_are_exclusive_and_another_finger_cannot_release() {
+        let now = Instant::now();
+        let mut press = HoldPress::default();
+        press.begin(1, 20., 20., now);
+        assert!(press.release(2, 20., 20., now).is_none());
+        assert!(!press.held(now + Duration::from_millis(400)));
+        assert!(matches!(
+            press.release(1, 22., 21., now),
+            Some(PressAction::Tap)
+        ));
+        press.begin(1, 20., 20., now);
+        assert!(press.held(now + Duration::from_millis(500)));
+        assert!(!press.held(now + Duration::from_secs(1)));
+        assert!(press
+            .release(1, 20., 20., now + Duration::from_secs(1))
+            .is_none());
+        press.begin(1, 20., 20., now);
+        assert!(matches!(
+            press.release(1, 20., 20., now + Duration::from_millis(510)),
+            Some(PressAction::Hold)
+        ));
+    }
+    #[test]
+    fn drifting_or_interruption_cancels_both_actions() {
+        let now = Instant::now();
+        let mut press = HoldPress::default();
+        press.begin(1, 20., 20., now);
+        press.motion(1, 60., 20.);
+        press.motion(1, 20., 20.);
+        assert!(!press.held(now + Duration::from_secs(1)));
+        assert!(press.release(1, 20., 20., now).is_none());
+        press.begin(1, 20., 20., now);
+        press.cancel();
+        assert!(!press.held(now + Duration::from_secs(1)));
+        assert!(press.release(1, 20., 20., now).is_none());
+    }
+}
 
 #[derive(Default)]
 pub struct Row {
@@ -29,6 +133,7 @@ pub struct Visuals {
     pub playback_paused: bool,
     pub playback_speed: u8,
     pub muted: bool,
+    pub pause_overlay: f32,
     pulses: [f32; 16],
 }
 
@@ -58,6 +163,16 @@ impl Visuals {
         let previous_icon_frames = ((self.time / 0.32) as u64, (self.time / 0.22) as u64);
         self.time += dt as f64;
         let mut active = false;
+        active |= approach(
+            &mut self.pause_overlay,
+            if self.has_game && self.playback_paused && !menu {
+                1.
+            } else {
+                0.
+            },
+            dt,
+            0.055,
+        );
         active |= approach(
             &mut self.dpad.active,
             if dpad.is_some() { 1. } else { 0. },

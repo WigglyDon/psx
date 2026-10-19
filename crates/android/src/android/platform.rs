@@ -199,10 +199,10 @@ impl Platform {
                     )?
                     .l()?;
                 if !controller.is_null() {
-                    let bars = env
+                    let status = env
                         .call_static_method(
                             "android/view/WindowInsets$Type",
-                            "systemBars",
+                            "statusBars",
                             "()I",
                             &[],
                         )?
@@ -213,15 +213,27 @@ impl Platform {
                         "(I)V",
                         &[JValue::Int(2)],
                     )?;
-                    env.call_method(&controller, "hide", "(I)V", &[JValue::Int(bars)])?;
+                    let navigation = env
+                        .call_static_method(
+                            "android/view/WindowInsets$Type",
+                            "navigationBars",
+                            "()I",
+                            &[],
+                        )?
+                        .i()?;
+                    // Leave system navigation available: hiding it turns the
+                    // first Home swipe into a reveal-only gesture. Insets keep
+                    // our touch targets clear of the system-owned strip.
+                    env.call_method(&controller, "hide", "(I)V", &[JValue::Int(status)])?;
+                    env.call_method(&controller, "show", "(I)V", &[JValue::Int(navigation)])?;
                 }
             } else {
-                // Public immersive-sticky fallback on the supported API 28–29.
+                // Edge-to-edge fullscreen status area, with navigation shown.
                 env.call_method(
                     &view,
                     "setSystemUiVisibility",
                     "(I)V",
-                    &[JValue::Int(0x1706)],
+                    &[JValue::Int(0x704)],
                 )?;
             }
             Ok(())

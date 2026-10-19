@@ -335,6 +335,45 @@ impl Graphics {
             offset: origin,
             screen: [self.width as f32 / density, self.height as f32 / density],
         };
+        if frame.is_some() && editor.is_none() && visuals.pause_overlay > 0. {
+            canvas.opacity = visuals.pause_overlay;
+            let picture = layout.game.fit(4. / 3.);
+            canvas.polygon(
+                &[
+                    (picture.x, picture.y),
+                    (picture.x + picture.w, picture.y),
+                    (picture.x + picture.w, picture.y + picture.h),
+                    (picture.x, picture.y + picture.h),
+                ],
+                [0., 0., 0., 0.18],
+            );
+            let cx = picture.x + picture.w / 2.;
+            let cy = picture.y + picture.h / 2.;
+            canvas.panel(
+                Rect::new(cx - 108., cy - 38., 216., 76.),
+                [0.04, 0.06, 0.09, 0.96],
+            );
+            let (title, detail) = if visuals.audio_blocked {
+                ("INTERRUPTED", "Audio is unavailable")
+            } else {
+                ("PAUSED", "Tap play to resume")
+            };
+            canvas.text(
+                cx - canvas.font.measure(title, 22.) / 2.,
+                cy - 24.,
+                title,
+                22.,
+                [0.88, 0.96, 0.93, 1.],
+            );
+            canvas.text(
+                cx - canvas.font.measure(detail, 13.) / 2.,
+                cy + 9.,
+                detail,
+                13.,
+                [0.62, 0.72, 0.79, 1.],
+            );
+            canvas.opacity = 1.;
+        }
         let volume_popup = menu.is_some_and(|m| m.anchor.is_some());
         if visuals.has_game && editor.is_none() && (visuals.overlay < 1. || volume_popup) {
             canvas.opacity = if volume_popup {

@@ -14,11 +14,12 @@ classes forward indispensable activity/service callbacks. SwanStation remains
 unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
 [build.md](build.md), `rust-toolchain.toml` and `Cargo.lock` record reproduction.
 
-- All 43 host tests pass, including atomic card reopening, bounded audio and
+- All 45 host tests pass, including atomic card reopening, bounded audio and
   live speed changes, captured simultaneous touch, following-thumb behavior,
   clear picture/control geometry, saved display profiles, stale-inset handling,
   corner editing/reset, continuous volume, centered panels, library migration,
-  file/companion validation, disc grouping, artwork and checkpoint integrity.
+  file/companion validation, disc grouping, artwork, checkpoint integrity and
+  mutually exclusive speaker tap/hold with drift/interruption cancellation.
 - Host and Android ARM64 Clippy pass with warnings denied; formatting passes.
 - APK signature, resources/notices, ARM64 ABI, EGL dependency and 16 KB
   ZIP/ELF LOAD alignment checks pass. C++ runtime linkage is static.
@@ -92,13 +93,36 @@ must pass on the corrected APK before this milestone is closed. The user's
 checkpoint and card were preserved privately before replacing the test build.
 The corrected runtime source is `806f3ef`; its initial APK SHA-256 is
 `20eebba91a9442f2db621d86ee8daaf7d81e1368806634792f911eb067a6b255`.
-It is built and awaiting its device pass, not yet a verified runtime correction.
+The subsequent artwork-only build below is now installed for acceptance.
 
-The subsequent memory-card branding revision changes artwork only. Its prepared
+The subsequent memory-card branding revision changes artwork only. Its installed
 APK SHA-256 is `40a38c2c3369c221390f1e09927413c191686df7caf11589ccecf69e0244d7ef`.
 The masthead, adaptive/themed icons and 16/32/48 pixel favicon were updated
 together. Android resource compilation and signed APK checks pass; this
-branding build is not yet installed or visually verified on the Fold.
+build ran gameplay on the Fold. Launcher-icon appearance has not been inspected.
+
+On this build, a paused game was checkpointed, backgrounded, force-stopped and
+launched in a fresh process. The same scene and explicit pause returned; the
+new process logged automatic session restoration. A Home/launcher return and
+another explicit launch both reused the existing activity, retained the same
+process and scene, and produced no second GLES startup or core-owner refusal.
+The owner was also playing during the earlier update observation, so that
+observation does not establish an exact scene comparison across that update.
+The owner then physically folded/unfolded and rotated the displays and reported
+the layouts working very well, with possible off-center folded-landscape spacing
+near the camera. Recorded drawable/inset transitions reached outer portrait and
+landscape on the same core thread. The revised background-transition pass remains
+pending. A USB interruption during this check was followed by fresh admission;
+no actions were replayed against an absent device.
+
+The owner's follow-up changes keep Android navigation visible for direct Home
+gestures, add a clear fading pause indicator and change the speaker to tap for
+mute/hold for the live slider. The 45 host tests and host/Android Clippy checks
+cover the updated source; the next APK requires its own device pass. No longer
+play or thermal result is inferred from these focused checks.
+The prepared APK SHA-256 is
+`1532fb0f00596222cf6cad08a1235148af3baa2d47618f2021d3ef3ee1eff1c6`;
+signature, resource/notices, ARM64 and 16 KB alignment verification pass.
 
 ## Corresponding source and release limits
 
@@ -117,6 +141,11 @@ Its clean Gitless source tree ran all 43 host tests offline. The manifest,
 background adapter, resume implementation, brand master and upstream license
 compare exactly with the committed inputs; its archive inventory excludes
 private game/card/firmware, build, target and local-evidence root directories.
+
+The matching artwork revision `7c050369a20b` source archive has SHA-256
+`035183c152de8861f2342fe4fb773c48f240291cd9a5b3f2ac78b09f338939e9`.
+Its brand inputs match the installed APK's source revision; it retains the
+same runtime and borrowed notices.
 
 The donor's included OpenBIOS remains the no-proprietary-firmware route. Its
 startup transition/cutoff is unresolved: the existing fast-boot patch does not

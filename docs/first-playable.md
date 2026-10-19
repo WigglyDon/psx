@@ -95,8 +95,9 @@ forgiving in unused control space without taking touches from the picture.
 Settings during play are a native sheet over the running game. Opening the
 cog releases held input and preserves explicit pause intent. Provide a
 small separate pause/play, speed, volume and settings controls near the
-top, using spare camera-margin space where safe. The volume control opens a
-compact slider popover with mute; zero mutes and raising it restores sound.
+top, using spare camera-margin space where safe. Tap the speaker to mute or
+unmute; hold it to open the compact live volume slider. Zero mutes and raising
+the slider restores sound. Make intentional pause obvious on the frozen picture.
 Persist a useful perceptual volume range. Tap speed to cycle only 1x, 2x and
 5x, retaining pitched audio unless muted. Achieved speed depends on the
 game/device; measure the actual modes. Keep the main settings sheet small.
@@ -166,6 +167,9 @@ Minimizing pauses by default. An off-by-default Run in background toggle may
 continue the session through Android's supported foreground playback route,
 with a visible notification and pause action. Respect explicit pause and audio
 focus. Reopening must reuse the existing player, never create a second core owner.
+Keep Android navigation available for a single Home gesture, with controller
+touches clear of the system navigation strip. Preserve camera-safe placement
+and verify the resulting folded-landscape spacing.
 
 Replace prototype branding with original app/repository artwork and favicon
 assets. Remove obsolete paths, redundant state writes and stale public-facing

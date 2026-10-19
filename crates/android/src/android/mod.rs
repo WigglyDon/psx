@@ -19,7 +19,7 @@ use psx_player::{
     retro::{Core, HostConfig},
     saves::MemoryCard,
     settings::{PlaybackSettings, Speed},
-    ui::{EditResult, Editor, Menu, Row, Visuals},
+    ui::{EditResult, Editor, HoldPress, Menu, PressAction, Row, Visuals},
     Activity,
 };
 use sound::Sound;
@@ -102,6 +102,7 @@ struct Player {
     sound: Option<Sound>,
     activity: Activity,
     touches: Touches,
+    speaker_press: HoldPress,
     layout: Layout,
     density: f32,
     insets: [i32; 4],
@@ -173,6 +174,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         sound: None,
         activity: Activity::default(),
         touches: Touches::default(),
+        speaker_press: HoldPress::default(),
         layout: Layout::new(360., 800.),
         density: 1.,
         insets: [0; 4],
@@ -280,6 +282,12 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             }
         }
         player.input(&app);
+        if player.speaker_press.held(Instant::now()) {
+            player.platform.haptic(&app);
+            if let Err(error) = player.action(&app, Action::Sound) {
+                player.fail(error);
+            }
+        }
         player.sync_background(&app);
         if let Some(work) = &player.checkpoint_work {
             if let Ok(result) = work.try_recv() {
@@ -476,6 +484,7 @@ impl Player {
                 self.platform.focus(app, true);
             }
             MainEvent::Pause | MainEvent::Stop => {
+                self.speaker_press.cancel();
                 self.activity.foreground = false;
                 self.touches.cancel();
                 if !self.activity.background_playback {
@@ -501,6 +510,7 @@ impl Player {
         Ok(())
     }
     fn resize(&mut self, app: &AndroidApp) -> Result<(), String> {
+        self.speaker_press.cancel();
         let previous = (
             self.graphics.width,
             self.graphics.height,
@@ -612,6 +622,36 @@ impl Player {
         while events.next(|event| match event {
             InputEvent::MotionEvent(motion) => {
                 self.dirty = true;
+                let pointer = motion.pointer_at_index(motion.pointer_index());
+                let x = (pointer.x() - self.graphics.content.x) / self.density;
+                let y = (pointer.y() - self.graphics.content.y) / self.density;
+                if motion.action() == MotionAction::Cancel {
+                    self.speaker_press.cancel();
+                }
+                if motion.action() == MotionAction::Move {
+                    for p in motion.pointers() {
+                        self.speaker_press.motion(
+                            p.pointer_id(),
+                            (p.x() - self.graphics.content.x) / self.density,
+                            (p.y() - self.graphics.content.y) / self.density,
+                        );
+                    }
+                }
+                if matches!(motion.action(), MotionAction::Up | MotionAction::PointerUp)
+                    && self.speaker_press.owns(pointer.pointer_id())
+                {
+                    if let Some(press) =
+                        self.speaker_press
+                            .release(pointer.pointer_id(), x, y, Instant::now())
+                    {
+                        action = Some(match press {
+                            PressAction::Tap => Action::ToggleMute,
+                            PressAction::Hold => Action::Sound,
+                        });
+                        self.platform.haptic(app);
+                    }
+                    return InputStatus::Handled;
+                }
                 if self.editor.is_none()
                     && self.core.is_some()
                     && matches!(
@@ -633,7 +673,9 @@ impl Player {
                     } else if self.layout.speed.contains(x, y) {
                         Some(Action::CycleSpeed)
                     } else if self.layout.mute.contains(x, y) {
-                        Some(Action::Sound)
+                        self.speaker_press
+                            .begin(pointer.pointer_id(), x, y, Instant::now());
+                        return InputStatus::Handled;
                     } else {
                         None
                     };
@@ -728,6 +770,9 @@ impl Player {
                             )
                             .then(|| motion.pointer_at_index(motion.pointer_index()).pointer_id());
                             for pointer in motion.pointers() {
+                                if self.speaker_press.owns(pointer.pointer_id()) {
+                                    continue;
+                                }
                                 let x = (pointer.x() - self.graphics.content.x) / self.density;
                                 let y = (pointer.y() - self.graphics.content.y) / self.density;
                                 if self.activity.can_run() {
@@ -875,6 +920,7 @@ impl Player {
     }
 
     fn navigate(&mut self, app: &AndroidApp, screen: Screen) {
+        self.speaker_press.cancel();
         self.closing_menu = None;
         self.screen = screen;
         self.touches.cancel();
@@ -1799,6 +1845,7 @@ impl Player {
         self.flush()
     }
     fn cancel_input(&mut self) {
+        self.speaker_press.cancel();
         self.touches.cancel();
         if let Some(menu) = &mut self.menu {
             menu.cancel();
@@ -1824,6 +1871,7 @@ impl Player {
         Ok(())
     }
     fn fail(&mut self, error: String) {
+        self.speaker_press.cancel();
         self.dirty = true;
         log::error!("{error}");
         self.message = error;

@@ -161,6 +161,16 @@ orientation: all four rotations when
 the user permits rotation, respecting their rotation lock.
 [Android orientation contract](https://developer.android.com/guide/topics/manifest/activity-element#screen)
 
+Only the status bar is hidden. Android navigation remains shown so the first
+Home gesture switches apps instead of merely revealing a hidden bar. Its
+reported navigation inset stays outside controller touch targets. Edge-to-edge
+drawing and camera-safe insets remain independent; an asymmetric camera margin
+can move the center of usable landscape content away from the physical center.
+[Android immersive mode](https://developer.android.com/develop/ui/views/layout/immersive)
+
+Intentional pause adds a fading PAUSED panel over the frozen picture; audio-focus
+interruption has its own label. Opening settings still preserves pause intent.
+
 Audio-focus denial before the first frame leaves the play controls visible
 with an interruption message. Play retries focus; it never overrides another
 app's audio ownership. Android's reported
@@ -200,8 +210,10 @@ files only when the selected game needs them, using an actionable message.
 Keep navigation accessible and usable across display sizes. Treat reliable
 reopening, sound interruptions and saved progress as part of the experience.
 
-The speaker control opens a compact volume popover with a slider and mute,
-independent of system media volume. Zero mutes; raising the slider unmutes.
+Tap the speaker control to mute/unmute. Holding for half a second opens a compact
+volume popover with a live slider and mute, independent of system media volume.
+The captured hold never also mutes on release; finger drift, display changes and
+interruptions cancel the pending gesture. Zero mutes; raising the slider unmutes.
 The mute action retains the last chosen listening level. The main settings
 list has no duplicate Sound or Speed subpages. Shared Rust settings are
 atomically persisted. The
