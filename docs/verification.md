@@ -123,6 +123,8 @@ play or thermal result is inferred from these focused checks.
 The prepared APK SHA-256 is
 `1532fb0f00596222cf6cad08a1235148af3baa2d47618f2021d3ef3ee1eff1c6`;
 signature, resource/notices, ARM64 and 16 KB alignment verification pass.
+Its source revision is `3eb8379712da`. The matching source archive SHA-256 is
+`0acce81be96c93d4e134f964c1f1f8f5724b0204d61abe2deb65f00c90976b7e`.
 
 ## Corresponding source and release limits
 
