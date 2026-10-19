@@ -369,8 +369,12 @@ impl Layout {
         if margin < 48. {
             return;
         }
-        let defaults = Self::new(w, h);
-        if (self.controls.len() + 1..self.element_count())
+        let defaults = if self.sticks.is_empty() {
+            Self::new(w, h)
+        } else {
+            Self::ps2(w, h)
+        };
+        if (self.controls.len() + 1..self.controls.len() + 5)
             .any(|i| !self.element(i).same_bounds(defaults.element(i)))
         {
             return;
@@ -1035,6 +1039,14 @@ mod tests {
         assert!(
             (0..layout.element_count()).all(|i| layout.element(i).same_bounds(restored.element(i)))
         );
+        let mut margin = restored;
+        margin.toolbar_in_top_margin(960., 420., 64., &[]);
+        assert!(margin.pause.y < 0.);
+        assert!(margin.sticks[0].same_bounds(layout.sticks[0]));
+        margin.pause.x -= 20.;
+        let custom = margin.pause;
+        margin.toolbar_in_top_margin(960., 420., 64., &[]);
+        assert!(margin.pause.same_bounds(custom));
     }
     #[test]
     fn ps2_control_profiles_do_not_modify_legacy_ps1_profiles() {
