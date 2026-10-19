@@ -1,5 +1,5 @@
 diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
-index 24210fb06..d965765a7 100644
+index 24210fb06..e0bfc20a2 100644
 --- a/pcsx2-libretro/Main.cpp
 +++ b/pcsx2-libretro/Main.cpp
 @@ -77,6 +77,8 @@
@@ -30,7 +30,7 @@ index 24210fb06..d965765a7 100644
  
 +// psx adapter: expose the existing CPU-owner pause and file-card flush. Host
 +// policy remains in Rust. Stop the GS handoff before a blocking CPU callback.
-+RETRO_API bool retro_psx_set_paused(bool paused)
++extern "C" RETRO_API bool retro_psx_set_paused(bool paused)
 +{
 +	if (!LibretroCore::s_vm_thread_running.load(std::memory_order_acquire) || !VMManager::HasValidVM())
 +		return false;
@@ -58,7 +58,7 @@ index 24210fb06..d965765a7 100644
 +	return ok;
 +}
 +
-+RETRO_API bool retro_psx_flush_cards(void)
++extern "C" RETRO_API bool retro_psx_flush_cards(void)
 +{
 +	if (!LibretroCore::s_vm_thread_running.load(std::memory_order_acquire) || !VMManager::HasValidVM())
 +		return false;
@@ -67,12 +67,12 @@ index 24210fb06..d965765a7 100644
 +	return ok;
 +}
 +
-+RETRO_API bool retro_psx_ready(void)
++extern "C" RETRO_API bool retro_psx_ready(void)
 +{
 +	return LibretroCore::s_vm_thread_running.load(std::memory_order_acquire) && VMManager::HasValidVM();
 +}
 +
-+RETRO_API bool retro_psx_set_speed(float multiplier)
++extern "C" RETRO_API bool retro_psx_set_speed(float multiplier)
 +{
 +	if (!retro_psx_ready())
 +		return false;

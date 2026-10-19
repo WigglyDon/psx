@@ -711,6 +711,29 @@ fn verify_apk() -> Result<()> {
         if headers.contains("libc++_shared.so") {
             return Err("The APK is missing a required C++ shared runtime.".into());
         }
+        if name == "libarmsx2.so" {
+            let symbols = output(&mut command(&readelf, ["--dyn-syms", "--wide", &path]))?;
+            for required in [
+                "retro_psx_ready",
+                "retro_psx_set_paused",
+                "retro_psx_flush_cards",
+                "retro_psx_set_speed",
+            ] {
+                if !symbols.lines().any(|line| {
+                    let columns: Vec<_> = line.split_whitespace().collect();
+                    columns.len() >= 8
+                        && columns[3] == "FUNC"
+                        && columns[4] == "GLOBAL"
+                        && columns[5] == "DEFAULT"
+                        && columns[6] != "UND"
+                        && columns[7] == required
+                }) {
+                    return Err(
+                        format!("The PS2 library lacks required C ABI export {required}.").into(),
+                    );
+                }
+            }
+        }
         println!("{name}: AArch64; all ELF LOAD alignments >=16KB");
     }
     let entries = output(&mut command("unzip", ["-Z1", "build/psx-development.apk"]))?;

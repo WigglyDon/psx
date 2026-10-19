@@ -30,6 +30,21 @@ The Unix Rust adapter now calls descriptor-owned `flock` directly, also used
 by the host competing-writer/process-death fixtures. Contention and underlying
 I/O failures have distinct messages; ownership protection is retained.
 
+Candidate `1c121dd47e7a` restored the same paused FF7 scene through that owner
+on the Fold. All eight existing PS1 library records, five ordinary card files
+and controller profiles compared unchanged against the fresh backup. PS2
+firmware import and content-based scan/add succeeded. FF7's native pin
+confirmation callback, actual launcher cold/warm entry, repeated same-game
+intents and missing-entry recovery ran without replacing the paused scene.
+
+The first PS2 launch then failed before emulation: the new adapter functions
+lacked explicit C linkage and were hidden by the donor's `retro_*` export
+map. The adapter now declares C linkage, and package verification rejects
+missing adapter exports. This check rejected the failing artifact. PS2
+gameplay, sound, saving, measured speed and both engine-switch directions
+remain unverified. The working PS1 candidate was retained and the third
+device window ended with verified locked/screen-off return.
+
 ## Implemented, awaiting device qualification
 
 Rust distinguishes a validated stable game ID, durable saved session and

@@ -4,6 +4,10 @@ Apply to exactly `83fe4e293f71ab5587ef81b06143725bf8c6a30b`.
 The original submodule is unchanged. `cargo xtask ps2` stages it and applies
 `0001-host-pause-and-card-flush.patch` before building.
 
+The four exported adapter functions explicitly use C linkage; the donor's
+version script exports only `retro_*`. Package verification requires each
+defined public C symbol, catching a C++-mangled/hidden adapter before install.
+
 The patch forwards four narrow operations through the donor's existing CPU
 queue: readiness, pause, file-card flush and nominal playback speed. It releases
 the GL/Vulkan frame handoff before a blocking pause, so the native CPU and GS
