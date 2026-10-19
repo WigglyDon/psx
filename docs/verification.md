@@ -90,6 +90,9 @@ active marker when an empty player closes, and reconciles late EGL dimensions
 with size-tagged insets. Fresh launch/re-entry and inner/outer rotation checks
 must pass on the corrected APK before this milestone is closed. The user's
 checkpoint and card were preserved privately before replacing the test build.
+The corrected source is `806f3ef`; its APK SHA-256 is
+`20eebba91a9442f2db621d86ee8daaf7d81e1368806634792f911eb067a6b255`.
+It is built and awaiting its device pass, not yet a verified runtime correction.
 
 ## Corresponding source and release limits
 
@@ -101,6 +104,13 @@ passed. Later source archives were inspected for matching application/license
 files and exclusion of private root directories. Updated source delivery must
 be paired with the exact final APK source revision; an extracted developer's
 new signing key must not replace the owner's existing installation.
+
+The matching `806f3ef2250e` source archive has SHA-256
+`9392768973f182b2b9e769a1053cfe47a9e9087911c2c5d28977c54a2703da18`.
+Its clean Gitless source tree ran all 43 host tests offline. The manifest,
+background adapter, resume implementation, brand master and upstream license
+compare exactly with the committed inputs; its archive inventory excludes
+private game/card/firmware, build, target and local-evidence root directories.
 
 The donor's included OpenBIOS remains the no-proprietary-firmware route. Its
 startup transition/cutoff is unresolved: the existing fast-boot patch does not
