@@ -28,6 +28,11 @@ handles. `psx-android` owns only platform event/SDK calls, EGL/window
 presentation and AAudio delivery. Rust `xtask` builds and packages the app.
 See [build.md](build.md) for the callback-only platform shim.
 
+Android reuses one `singleTask` player activity for launcher and notification
+returns. This prevents a second NativeActivity thread from competing with a
+still-open session; the process-wide core lease remains a refusal guard.
+[Android launch modes](https://developer.android.com/guide/topics/manifest/activity-element#lmode)
+
 `android_main` is the sole core/GL owner. The core is deliberately neither
 Send nor Sync. A thread-local session callback pointer remains live through
 unload/deinit. Audio callbacks consume a bounded atomic stereo FIFO and never
@@ -71,6 +76,11 @@ explicit at the Rust boundary.
 Surface destruction is not an instruction to erase a game session. Handle
 pause, resume, focus, cancellation, orientation and folded/unfolded layouts.
 Release held input on interruption. Preserve intentional user pause.
+Drawable dimensions are reconciled after EGL adopts a new buffer, including
+when Android sends its final resize callback before that adoption. Insets,
+cutouts and density arrive with their decor-view dimensions; another display's
+insets cannot constrain the current drawable. NativeActivity's content rectangle
+is not combined with dimensions from a different stage of the transition.
 
 Touch press transitions come from shared Rust input state. Android provides
 a short virtual-key haptic for a newly engaged direction or button, including
@@ -113,6 +123,13 @@ Do not read whole discs into memory by default.
 Keep memory-card persistence separate from optional save-state resume.
 Persist ordinary in-game saves safely and prove them after process restart.
 Do not let an old save state silently roll back newer memory-card progress.
+Automatic checkpoints use the pinned core's public serialize/unserialize ABI,
+between frames on the same execution/GL owner. A bounded worker hashes and
+atomically writes one captured state; no worker calls emulation or GL. Periodic
+writes do not block playback on storage sync. Background, explicit pause and
+closure wait for durability. Resume validates core/disc inputs, payload integrity
+and the contemporaneous card before entering the core, then restores the durable
+card. See [formats.md](formats.md) for recovery and reset behavior.
 
 ## Everyday use
 
@@ -128,7 +145,10 @@ the largest clear 4:3 picture is computed from their rectangular targets.
 The default layout compares arrangements at the actual window dimensions.
 On a sufficiently wide square display, shoulders and system buttons occupy
 the space between thumb clusters. The dock adjusts its height while retaining
-face-button sizes and directional response. Wide phone layouts use side rails,
+face-button sizes and directional response. Thumb clusters leave 32 logical
+points below their lowest target. The compact band reduces vertical spread
+within the same reserved area, retaining face-button size and picture extent;
+its less-used system buttons keep their own separate row. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture
 height. The small pause/play, speed, volume and settings toolbar uses a clear
 part of an already excluded top margin when available, avoiding the actual
@@ -186,20 +206,36 @@ The mute action retains the last chosen listening level. The main settings
 list has no duplicate Sound or Speed subpages. Shared Rust settings are
 atomically persisted. The
 real-time consumer applies a bounded gain while consuming the same FIFO;
-muting never accumulates sound to replay later. Slider dragging previews the
-value and commits once on lift; cancellation restores the previous value.
+muting never accumulates sound to replay later. Slider dragging changes the
+audio gain immediately and retains pointer capture; cancellation keeps the
+last listening level. Preference writes are debounced after interaction and
+flushed on interruption.
 The slider spans a perceptual -56 to 0 dB range, with zero silent. Migration
 from the initial linear slider preserves its approximate loudness.
 
 Tapping speed cycles 1x, 2x and 5x target emulation speed, without a menu.
 Faster modes retain pitched sound unless muted. The fixed-rate audio consumer
 averages source-frame groups at the selected multiplier, preserving stereo;
-the bounded FIFO uses a proportionate fill target. Speed changes clear the
-stopped queue before reopening audio. The libretro fast-forward query reflects
+the bounded FIFO uses a proportionate fill target. Speed changes are adopted
+at the next audio callback without reopening the device. Only the consumer
+trims excess old-speed backlog to the new fill target. The libretro fast-forward query reflects
 the selected mode, with video and audio still enabled. Emulation/rendering
 runs on the sole owner thread; no emulation internals change. Frontend
 presentation is bounded to 60 Hz above 1x. Achieved speed remains a measurement,
 not a guarantee from the selected multiplier.
+
+Run in background is off by default. Minimizing pauses emulation, cancels input,
+closes audio and checkpoints, without changing explicit pause intent. Opting in
+starts Android's media-playback foreground service while the app is visible,
+with an ongoing notification offering return and Pause. A callback-only generated
+Service forwards lifecycle to Rust; it owns no core or UI logic. The existing
+execution thread can continue on its retained EGL pbuffer when the window goes
+away. Explicit pause and audio-focus loss still stop playback; there is no boot
+receiver or automatic service resurrection. The service stops on pause, disabling
+the option, closing the game or destroying the player. Notification permission is
+requested only on opt-in. Android's service and audio-focus requirements are
+documented in its [background audio contract](https://developer.android.com/about/versions/17/changes/bg-audio)
+and [service types](https://developer.android.com/develop/background-work/services/fgs/service-types).
 
 The launcher icon is original psx vector artwork. Borrowed notices remain in
 About and APK assets. The current no-proprietary-firmware route runs the

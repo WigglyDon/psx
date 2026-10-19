@@ -1,3 +1,4 @@
+mod background;
 mod graphics;
 mod platform;
 mod sound;
@@ -11,9 +12,10 @@ use platform::{Event, Platform, PICK_FIRMWARE, PICK_GAME, PICK_STORAGE};
 use psx_player::{
     artwork::Artwork,
     audio::AudioQueue,
-    files::{self, Game},
-    input::{ControllerSettings, Layout, Rect, Touches},
+    files::Game,
+    input::{safe_content, ControllerSettings, Layout, Rect, Touches},
     library::{self, Library},
+    resume,
     retro::{Core, HostConfig},
     saves::MemoryCard,
     settings::{PlaybackSettings, Speed},
@@ -63,6 +65,8 @@ enum Action {
     Resume,
     Firmware,
     Close,
+    Restart,
+    ToggleBackground,
     About,
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -101,6 +105,9 @@ struct Player {
     layout: Layout,
     density: f32,
     insets: [i32; 4],
+    inset_size: [i32; 2],
+    last_insets_request: Instant,
+    playback_changed: Option<Instant>,
     cutouts: Vec<[i32; 4]>,
     top_margin_available: bool,
     screen: Screen,
@@ -124,6 +131,12 @@ struct Player {
     next_frame: Instant,
     next_present: Instant,
     last_flush: Instant,
+    last_checkpoint: Instant,
+    checkpoint_dirty: bool,
+    checkpoint_work: Option<mpsc::Receiver<Result<(), String>>>,
+    restore_pending: bool,
+    background_requested: bool,
+    background_ready: bool,
     last_report: Instant,
     frames: u64,
     run_time: Duration,
@@ -144,7 +157,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     let playback = PlaybackSettings::load(&root).map_err(|e| e.to_string())?;
     let queue = Arc::new(AudioQueue::new(8192));
     queue.set_volume(playback.output_volume());
-    queue.set_speed_stopped(playback.speed.multiplier());
+    queue.set_speed(playback.speed.multiplier());
     let mut player = Player {
         library: Library::load(&root)
             .map_err(|e| format!("The saved library could not be read: {e}"))?,
@@ -163,6 +176,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         layout: Layout::new(360., 800.),
         density: 1.,
         insets: [0; 4],
+        inset_size: [0; 2],
+        last_insets_request: now,
+        playback_changed: None,
         cutouts: Vec::new(),
         top_margin_available: false,
         screen: Screen::Home,
@@ -186,6 +202,12 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         next_frame: now,
         next_present: now,
         last_flush: now,
+        last_checkpoint: now,
+        checkpoint_dirty: false,
+        checkpoint_work: None,
+        restore_pending: true,
+        background_requested: false,
+        background_ready: false,
         last_report: now,
         frames: 0,
         run_time: Duration::ZERO,
@@ -209,9 +231,63 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 }
             }
         });
-        player.input(&app);
         for event in platform::events() {
             player.platform_event(&app, event);
+        }
+        // EGL can adopt the new buffer size on swap, after NativeActivity's
+        // final resize notification. Reconcile it before hit testing, even if
+        // Android sends no further lifecycle event.
+        if player.activity.surface {
+            let before = [player.graphics.width, player.graphics.height];
+            if let Err(error) = player.graphics.resize() {
+                player.fail(error);
+            } else if before != [player.graphics.width, player.graphics.height] {
+                player.touches.cancel();
+                if let Err(error) = player.resize(&app) {
+                    player.fail(error);
+                }
+                player.dirty = true;
+            }
+            if player.inset_size != [player.graphics.width, player.graphics.height]
+                && player.last_insets_request.elapsed() >= Duration::from_millis(100)
+            {
+                player.platform.insets(&app);
+                player.last_insets_request = Instant::now();
+            }
+        }
+        if player
+            .playback_changed
+            .is_some_and(|t| t.elapsed() >= Duration::from_millis(500))
+        {
+            if let Err(error) = player.save_playback() {
+                player.fail(error);
+            }
+        }
+        if player.restore_pending && player.activity.surface && player.activity.foreground {
+            player.restore_pending = false;
+            match resume::active(&player.root) {
+                Ok(Some(id)) => {
+                    if let Some(game) = player.library.games.iter().find(|g| g.id == id).cloned() {
+                        if let Err(error) = player.start(game) {
+                            player.fail(error);
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    player.fail(format!("The previous session could not be read: {error}"))
+                }
+            }
+        }
+        player.input(&app);
+        player.sync_background(&app);
+        if let Some(work) = &player.checkpoint_work {
+            if let Ok(result) = work.try_recv() {
+                player.checkpoint_work = None;
+                if let Err(error) = result {
+                    player.fail(error);
+                }
+            }
         }
         if let Some(receiver) = &player.import {
             if let Ok(result) = receiver.try_recv() {
@@ -283,14 +359,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             && player.activity.surface
             && player.core.is_none()
         {
-            player.navigate(
-                &app,
-                if player.core.is_some() {
-                    Screen::Settings
-                } else {
-                    Screen::Home
-                },
-            );
+            player.navigate(&app, Screen::Home);
         }
         if player.screen == Screen::Error && player.menu.is_none() {
             player.refresh_menu(&app);
@@ -351,9 +420,10 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     }
     player.stop_sound();
     player.cancel_work.store(true, Ordering::Relaxed);
-    let result = player.flush();
+    let result = player.checkpoint();
     player.core.take();
     player.platform.focus(&app, false);
+    player.platform.background(&app, false);
     result
 }
 
@@ -372,7 +442,11 @@ impl Player {
                 self.platform.insets(app);
             }
             MainEvent::TerminateWindow { .. } => {
-                self.interrupt()?;
+                if self.activity.background_playback {
+                    self.cancel_input();
+                } else {
+                    self.interrupt()?;
+                }
                 self.activity.surface = false;
                 self.graphics.detach()?;
             }
@@ -391,7 +465,11 @@ impl Player {
             }
             MainEvent::LostFocus => {
                 self.activity.focused = false;
-                self.interrupt()?;
+                if self.activity.background_playback {
+                    self.cancel_input();
+                } else {
+                    self.interrupt()?;
+                }
             }
             MainEvent::Resume { .. } => {
                 self.activity.foreground = true;
@@ -399,12 +477,16 @@ impl Player {
             }
             MainEvent::Pause | MainEvent::Stop => {
                 self.activity.foreground = false;
-                self.activity.audio_focus = false;
-                self.interrupt()?;
-                self.platform.focus(app, false);
+                self.touches.cancel();
+                if !self.activity.background_playback {
+                    self.activity.audio_focus = false;
+                    self.interrupt()?;
+                    self.platform.focus(app, false);
+                }
+                self.checkpoint_interruption()?;
             }
             MainEvent::SaveState { .. } => {
-                self.flush()?;
+                self.checkpoint_interruption()?;
             }
             MainEvent::LowMemory => {
                 self.flush()?;
@@ -412,6 +494,7 @@ impl Player {
             MainEvent::Destroy => {
                 self.destroyed = true;
                 self.interrupt()?;
+                self.checkpoint()?;
             }
             _ => {}
         }
@@ -428,29 +511,17 @@ impl Player {
             self.density,
         );
         self.graphics.resize()?;
-        let content = app.content_rect();
-        let right = if content.right > 0 {
-            content.right
-        } else {
-            self.graphics.width
-        };
-        let bottom = if content.bottom > 0 {
-            content.bottom
-        } else {
-            self.graphics.height
-        };
-        self.graphics.content_rect(
-            content.left.max(self.insets[0]),
-            content.top.max(self.insets[1]),
-            right.min(self.graphics.width - self.insets[2]),
-            bottom.min(self.graphics.height - self.insets[3]),
+        let content = safe_content(
+            [self.graphics.width, self.graphics.height],
+            self.inset_size,
+            self.insets,
         );
-        self.density = app
-            .config()
-            .density()
-            .map(|d| d as f32 / 160.)
-            .filter(|d| *d >= 0.5 && *d <= 6.)
-            .unwrap_or(1.);
+        self.graphics.content_rect(
+            content.x as i32,
+            content.y as i32,
+            (content.x + content.w) as i32,
+            (content.y + content.h) as i32,
+        );
         let (w, h) = self.dimensions();
         if self
             .editor
@@ -475,7 +546,10 @@ impl Player {
                 )
             })
             .collect();
-        if self.top_margin_available && self.activity.audio_focus {
+        if self.inset_size == [self.graphics.width, self.graphics.height]
+            && self.top_margin_available
+            && self.activity.audio_focus
+        {
             self.layout.toolbar_in_top_margin(
                 w,
                 h,
@@ -656,25 +730,7 @@ impl Player {
                             for pointer in motion.pointers() {
                                 let x = (pointer.x() - self.graphics.content.x) / self.density;
                                 let y = (pointer.y() - self.graphics.content.y) / self.density;
-                                if new_pointer == Some(pointer.pointer_id())
-                                    && self.layout.pause.contains(x, y)
-                                    && self.core.is_some()
-                                {
-                                    action = Some(Action::Settings);
-                                    feedback = true;
-                                } else if new_pointer == Some(pointer.pointer_id())
-                                    && self.core.is_some()
-                                    && self.layout.playback.contains(x, y)
-                                {
-                                    action = Some(Action::TogglePause);
-                                    feedback = true;
-                                } else if new_pointer == Some(pointer.pointer_id())
-                                    && self.core.is_some()
-                                    && self.layout.speed.contains(x, y)
-                                {
-                                    action = Some(Action::CycleSpeed);
-                                    feedback = true;
-                                } else if self.activity.can_run() {
+                                if self.activity.can_run() {
                                     let pressed = if new_pointer == Some(pointer.pointer_id()) {
                                         let (w, h) = self.dimensions();
                                         self.touches.down(
@@ -784,12 +840,29 @@ impl Player {
                 self.picker = false;
                 self.fail(error);
             }
-            Event::Insets(edges, cutouts, top_margin_available) => {
+            Event::Background(ready) => {
+                self.background_ready = ready;
+                self.activity.background_playback = ready && self.playback.run_in_background;
+            }
+            Event::PauseBackground => {
+                self.activity.user_paused = true;
+                self.checkpoint_dirty = self.core.is_some();
+                if let Err(error) = self.interrupt().and_then(|_| self.checkpoint()) {
+                    self.fail(error);
+                }
+            }
+            Event::Insets(size, density, edges, cutouts, top_margin_available) => {
                 if edges != self.insets
+                    || size != self.inset_size
+                    || density != self.density
                     || cutouts != self.cutouts
                     || top_margin_available != self.top_margin_available
                 {
                     self.insets = edges;
+                    self.inset_size = size;
+                    if (0.5..=6.).contains(&density) {
+                        self.density = density;
+                    }
                     self.cutouts = cutouts;
                     self.top_margin_available = top_margin_available;
                     self.touches.cancel();
@@ -880,7 +953,6 @@ impl Player {
                     self.game = Some(game.clone());
                     self.library.put(game.clone());
                     self.library.save(&self.root).map_err(|e| e.to_string())?;
-                    files::remember(&self.root, &game).map_err(|e| e.to_string())?;
                     self.message = format!("Disc {} inserted. Resume when ready.", index + 1);
                     self.navigate(app, Screen::Settings);
                 } else {
@@ -968,6 +1040,8 @@ impl Player {
                     self.activity.user_paused = true;
                     self.interrupt()?;
                 }
+                self.checkpoint_dirty = self.core.is_some();
+                self.checkpoint()?;
                 self.dirty = true;
                 if self.menu.is_some() {
                     self.refresh_menu(app);
@@ -983,21 +1057,24 @@ impl Player {
             }
             Action::SetVolume(value) => {
                 self.playback.set_volume(value);
-                self.save_playback()?;
-                self.refresh_menu(app);
+                self.queue.set_volume(self.playback.output_volume());
+                self.playback_changed = Some(Instant::now());
+                // Keep the captured slider and its pointer alive across moves.
+                if let Some(menu) = &mut self.menu {
+                    if let Some(row) = menu.rows.get_mut(1) {
+                        row.title = if value == 0 { "Unmute" } else { "Mute" }.into();
+                    }
+                }
+                self.dirty = true;
             }
             Action::CycleSpeed => {
-                // Both producer and stream are stopped before resetting the
-                // queue. Returning to 1x starts fresh audio, never sped-up backlog.
-                self.interrupt()?;
                 self.playback.speed = match self.playback.speed {
                     Speed::Normal => Speed::Double,
                     Speed::Double => Speed::Quintuple,
                     Speed::Quintuple => Speed::Normal,
                 };
-                self.queue
-                    .set_speed_stopped(self.playback.speed.multiplier());
-                self.save_playback()?;
+                self.queue.set_speed(self.playback.speed.multiplier());
+                self.playback_changed = Some(Instant::now());
                 self.next_frame = Instant::now();
                 self.dirty = true;
             }
@@ -1056,8 +1133,23 @@ impl Player {
             }
             Action::Close => {
                 self.close()?;
-                self.message = "Game closed. Completed in-game memory-card saves are kept.".into();
+                self.message = "Session saved. Choose the game to resume.".into();
                 self.navigate(app, Screen::Home);
+            }
+            Action::Restart => {
+                if let Some(game) = self.game.clone() {
+                    self.close()?;
+                    resume::discard(&self.root, &game).map_err(|e| e.to_string())?;
+                    self.start(game)?;
+                }
+            }
+            Action::ToggleBackground => {
+                self.playback.run_in_background = !self.playback.run_in_background;
+                self.save_playback()?;
+                if self.playback.run_in_background {
+                    self.platform.background_permission(app);
+                }
+                self.refresh_menu(app);
             }
             Action::About => self.navigate(app, Screen::About),
             Action::License(path) => self.navigate(app, Screen::License(path)),
@@ -1087,9 +1179,26 @@ impl Player {
         )
     }
 
-    fn save_playback(&self) -> Result<(), String> {
+    fn sync_background(&mut self, app: &AndroidApp) {
+        let want = self.playback.run_in_background
+            && self.core.is_some()
+            && !self.activity.user_paused
+            && !self.destroyed;
+        if want != self.background_requested && (!want || self.activity.foreground) {
+            self.background_requested = want;
+            if !want {
+                self.background_ready = false;
+            }
+            self.platform.background(app, want);
+        }
+        self.activity.background_playback = want && self.background_ready;
+    }
+
+    fn save_playback(&mut self) -> Result<(), String> {
         self.queue.set_volume(self.playback.output_volume());
-        self.playback.save(&self.root).map_err(|e| e.to_string())
+        self.playback.save(&self.root).map_err(|e| e.to_string())?;
+        self.playback_changed = None;
+        Ok(())
     }
 
     fn refresh_menu(&mut self, app: &AndroidApp) {
@@ -1161,6 +1270,11 @@ impl Player {
                     "Layout, size and optional overlap".into(),
                 );
                 add(
+                    Action::ToggleBackground,
+                    "Run in background".into(),
+                    "Keep playing when minimized · off pauses automatically".into(),
+                );
+                add(
                     Action::Firmware,
                     "PS1 firmware".into(),
                     "Optional · choose your own compatible dump".into(),
@@ -1172,9 +1286,14 @@ impl Player {
                 );
                 if self.core.is_some() {
                     add(
+                        Action::Restart,
+                        "Restart game".into(),
+                        "Boot the disc again; keep the memory card".into(),
+                    );
+                    add(
                         Action::Close,
                         "Close game".into(),
-                        "Keeps completed in-game saves; checkpoints may be temporary".into(),
+                        "Save this session and return to the library".into(),
                     );
                 }
                 (
@@ -1467,6 +1586,13 @@ impl Player {
                 row.toggle = Some(preset.allow_overlap);
             }
         }
+        if self.screen == Screen::Settings {
+            for (row, action) in menu.rows.iter_mut().zip(&self.actions) {
+                if matches!(action, Action::ToggleBackground) {
+                    row.toggle = Some(self.playback.run_in_background);
+                }
+            }
+        }
         if self.screen == Screen::Sound {
             menu.anchor = Some(self.layout.mute);
             menu.rows[0].slider = Some(self.playback.volume);
@@ -1522,11 +1648,24 @@ impl Player {
         self.game = Some(game.clone());
         self.library.put(game.clone());
         self.library.save(&self.root).map_err(|e| e.to_string())?;
-        files::remember(&self.root, &game).map_err(|e| e.to_string())?;
         self.activity.user_paused = false;
+        self.checkpoint_dirty = false;
+        let checkpoint = resume::load(&self.root, &game, self.core.as_mut().unwrap().card_ram()?)
+            .map_err(|e| e.to_string())?;
+        if let Some(checkpoint) = checkpoint {
+            let core = self.core.as_mut().unwrap();
+            core.restore_checkpoint(&checkpoint.bytes)?;
+            // The durable card is authoritative even if the donor embeds one.
+            core.restore_card(self.card.as_ref().unwrap())?;
+            core.run(); // Produce the restored picture, including paused resumes.
+            self.activity.user_paused = checkpoint.metadata.paused;
+            resume::mark_active(&self.root, &game).map_err(|e| e.to_string())?;
+            log::info!("Automatic session restored");
+        }
         self.closing_menu = self.menu.take();
         self.next_frame = Instant::now();
         self.last_flush = Instant::now();
+        self.last_checkpoint = Instant::now() - Duration::from_secs(30);
         self.last_report = Instant::now();
         self.frames = 0;
         self.run_time = Duration::ZERO;
@@ -1540,6 +1679,7 @@ impl Player {
         core.state_mut().buttons = self.touches.frame_mask();
         let before = Instant::now();
         core.run();
+        self.checkpoint_dirty = true;
         self.run_time += before.elapsed();
         self.frames += 1;
         if core.state().shutdown {
@@ -1571,6 +1711,9 @@ impl Player {
             self.flush()?;
             self.last_flush = Instant::now();
         }
+        if self.last_checkpoint.elapsed() >= Duration::from_secs(30) {
+            self.queue_checkpoint()?;
+        }
         if self.last_report.elapsed() >= Duration::from_secs(10) {
             let elapsed = self.last_report.elapsed().as_secs_f64();
             let core = self.core.as_ref().unwrap();
@@ -1589,14 +1732,73 @@ impl Player {
         }
         Ok(())
     }
+    fn checkpoint(&mut self) -> Result<(), String> {
+        self.finish_checkpoint()?;
+        self.queue_checkpoint()?;
+        self.finish_checkpoint()
+    }
+    fn checkpoint_interruption(&mut self) -> Result<(), String> {
+        if self.activity.background_playback {
+            // Continue-play callbacks can arrive repeatedly during one
+            // transition. Keep one bounded write in flight without waiting
+            // for storage while the same core/audio owner is still running.
+            self.queue_checkpoint()
+        } else {
+            self.checkpoint()
+        }
+    }
+    fn finish_checkpoint(&mut self) -> Result<(), String> {
+        if let Some(work) = self.checkpoint_work.take() {
+            work.recv()
+                .map_err(|_| "The session save worker stopped.".to_string())??;
+        }
+        Ok(())
+    }
+    fn queue_checkpoint(&mut self) -> Result<(), String> {
+        if self.checkpoint_work.is_some() {
+            return Ok(());
+        }
+        self.flush()?;
+        if !self.checkpoint_dirty {
+            return Ok(());
+        }
+        if let (Some(core), Some(game)) = (&mut self.core, &self.game) {
+            let state = core.checkpoint()?;
+            let card = core.card_ram()?.to_vec();
+            let game = game.clone();
+            let root = self.root.clone();
+            let paused = self.activity.user_paused;
+            let (tx, rx) = mpsc::sync_channel(1);
+            self.checkpoint_work = Some(rx);
+            std::thread::spawn(move || {
+                let result = resume::save(&root, &game, paused, &card, &state)
+                    .map_err(|e| format!("The session could not be saved: {e}"));
+                if result.is_ok() {
+                    log::info!("Automatic session saved");
+                }
+                let _ = tx.send(result);
+            });
+            self.checkpoint_dirty = false;
+            self.last_checkpoint = Instant::now();
+        }
+        Ok(())
+    }
     fn stop_sound(&mut self) {
         self.sound.take();
         self.queue.clear_stopped();
     }
     fn interrupt(&mut self) -> Result<(), String> {
+        if self.playback_changed.is_some() {
+            self.save_playback()?;
+        }
         self.frames = 0;
         self.run_time = Duration::ZERO;
         self.last_report = Instant::now();
+        self.cancel_input();
+        self.stop_sound();
+        self.flush()
+    }
+    fn cancel_input(&mut self) {
         self.touches.cancel();
         if let Some(menu) = &mut self.menu {
             menu.cancel();
@@ -1607,15 +1809,18 @@ impl Player {
         if let Some(core) = &mut self.core {
             core.state_mut().buttons = 0;
         }
-        self.stop_sound();
-        self.flush()
     }
     fn close(&mut self) -> Result<(), String> {
+        let had_game = self.core.is_some();
         self.interrupt()?;
+        self.checkpoint()?;
         self.core.take();
         self.card = None;
         self.game = None;
         self.queue.clear_stopped();
+        if had_game {
+            resume::clear_active(&self.root).map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
     fn fail(&mut self, error: String) {

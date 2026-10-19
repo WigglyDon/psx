@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" fill="none">
+  <title>psx — a native PS1 player</title>
+  <rect width="1200" height="320" rx="20" fill="#0B1018"/>
+  <g transform="translate(42 52) scale(2)">
+    <path fill="#EDF2EC" d="M28 31H44L80 77H64Z"/>
+    <path fill="#91F5B6" d="M64 31H80L62 53L53 42ZM46 55L55 66L44 77H28Z"/>
+  </g>
+  <g fill="#EDF2EC" fill-rule="evenodd" transform="translate(302 93)">
+    <path d="M0 24H17V31Q25 22 39 22Q66 22 66 52Q66 83 39 83Q26 83 18 74V108H0ZM18 52Q18 68 32 68Q47 68 47 52Q47 37 32 37Q18 37 18 52Z"/>
+    <path d="M80 64Q94 72 108 69Q120 65 107 60L96 57Q74 51 80 36Q86 19 110 22Q125 23 133 29L126 42Q115 35 104 37Q95 40 105 44L118 48Q140 54 134 70Q127 87 105 83Q88 82 78 75Z"/>
+    <path d="M146 24H167L180 43L193 24H214L191 52L215 81H194L180 62L166 81H145L169 52Z"/>
+  </g>
+  <text x="302" y="248" fill="#A7B6BE" font-family="sans-serif" font-size="26" letter-spacing=".2">A native PS1 player.</text>
+  <text x="1140" y="265" text-anchor="end" fill="#91F5B6" font-family="sans-serif" font-size="16" letter-spacing="2">MACHINE RHYTHM</text>
+</svg>

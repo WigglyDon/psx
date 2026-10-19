@@ -626,7 +626,7 @@ pub struct Menu {
     pub over_game: bool,
     pub anchor: Option<Rect>,
     pointer: Option<(i32, f32, f32, bool)>,
-    slider_pointer: Option<(i32, usize, u8)>,
+    slider_pointer: Option<(i32, usize)>,
     slider_change: Option<(usize, u8)>,
 }
 
@@ -683,7 +683,7 @@ impl Menu {
         let h = (header + footer + self.rows.iter().map(|r| r.height).sum::<f32>())
             .min((height - 24.).max(0.))
             .min(height * 0.72);
-        Rect::new((width - w) / 2., height - h - 12., w, h)
+        Rect::new((width - w) / 2., (height - h) / 2., w, h)
     }
 
     pub fn viewport(&self, width: f32, height: f32) -> Rect {
@@ -754,12 +754,13 @@ impl Menu {
     }
 
     fn slide(&mut self, id: i32, x: f32, width: f32, height: f32) {
-        if let Some((active, index, _)) = self.slider_pointer {
+        if let Some((active, index)) = self.slider_pointer {
             if id == active {
                 let r = self.slider_rect(index, width, height);
                 self.rows[index].slider = Some(
                     (((x - r.x - 8.) / (r.w - 16.).max(1.)).clamp(0., 1.) * 100.).round() as u8,
                 );
+                self.slider_change = self.rows[index].slider.map(|value| (index, value));
             }
         }
     }
@@ -772,12 +773,13 @@ impl Menu {
         if self.pointer.is_none() && self.slider_pointer.is_none() {
             if self.viewport(width, height).contains(x, y) {
                 for (index, row) in self.rows.iter().enumerate() {
-                    if let Some(value) = row.slider.filter(|_| row.enabled) {
-                        if self.slider_rect(index, width, height).contains(x, y) {
-                            self.slider_pointer = Some((id, index, value));
-                            self.slide(id, x, width, height);
-                            return;
-                        }
+                    if row.slider.is_some()
+                        && row.enabled
+                        && self.slider_rect(index, width, height).contains(x, y)
+                    {
+                        self.slider_pointer = Some((id, index));
+                        self.slide(id, x, width, height);
+                        return;
                     }
                 }
             }
@@ -806,7 +808,7 @@ impl Menu {
 
     /// MAX is the primary action; MAX-1 is back; MAX-2 dismisses a game sheet.
     pub fn up(&mut self, id: i32, x: f32, y: f32, width: f32, height: f32) -> Option<usize> {
-        if let Some((active, index, _)) = self.slider_pointer {
+        if let Some((active, index)) = self.slider_pointer {
             if id == active {
                 self.slide(id, x, width, height);
                 self.slider_change = self.rows[index].slider.map(|value| (index, value));
@@ -853,7 +855,7 @@ impl Menu {
         for (index, row) in self.rows.iter().enumerate() {
             offset += row.height;
             if target < offset {
-                return row.enabled.then_some(index);
+                return (row.enabled && row.slider.is_none()).then_some(index);
             }
         }
         None
@@ -861,9 +863,7 @@ impl Menu {
 
     pub fn cancel(&mut self) {
         self.pointer = None;
-        if let Some((_, index, original)) = self.slider_pointer.take() {
-            self.rows[index].slider = Some(original);
-        }
+        self.slider_pointer = None;
         self.slider_change = None;
     }
 }
@@ -872,7 +872,7 @@ impl Menu {
 mod tests {
     use super::*;
     #[test]
-    fn slider_capture_commits_once_on_lift_and_cancellation_restores_the_value() {
+    fn slider_updates_during_drag_and_cancel_keeps_the_last_listening_level() {
         let mut row = Row::action("Game volume", "");
         row.slider = Some(70);
         row.height = 104.;
@@ -881,10 +881,10 @@ mod tests {
         menu.down(4, r.x + 8., r.y + 24., 420., 800.);
         menu.motion(4, r.x + r.w - 8., r.y + 24., 420., 800.);
         assert_eq!(menu.rows[0].slider, Some(100));
-        assert_eq!(menu.take_slider_change(), None);
+        assert_eq!(menu.take_slider_change(), Some((0, 100)));
         assert_eq!(menu.up(5, r.x, r.y, 420., 800.), None);
         menu.cancel();
-        assert_eq!(menu.rows[0].slider, Some(70));
+        assert_eq!(menu.rows[0].slider, Some(100));
         menu.down(4, r.x + 8., r.y + 24., 420., 800.);
         assert_eq!(menu.up(4, r.x + 8., r.y + 24., 420., 800.), None);
         assert_eq!(menu.take_slider_change(), Some((0, 0)));
@@ -897,7 +897,7 @@ mod tests {
         let mut menu = Menu::new("Sound", "", vec![Row::action("Mute", "")], "Back");
         menu.over_game = true;
         let panel = menu.surface(852., 817.);
-        assert!(panel.y > 400.);
+        assert!((panel.y + panel.h / 2. - 817. / 2.).abs() < 0.01);
         assert!(panel.w < 852.);
         menu.down(3, 50., -50., panel.w, panel.h);
         assert_eq!(menu.up(9, 50., -50., panel.w, panel.h), None);

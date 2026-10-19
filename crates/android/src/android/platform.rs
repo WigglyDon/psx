@@ -22,11 +22,13 @@ pub enum Event {
     Storage(Option<Vec<PathBuf>>),
     ScanUnavailable,
     Focus(i32),
+    Background(bool),
+    PauseBackground,
     Error(String),
-    Insets([i32; 4], Vec<[i32; 4]>, bool),
+    Insets([i32; 2], f32, [i32; 4], Vec<[i32; 4]>, bool),
 }
 static EVENTS: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
-fn post(event: Event) {
+pub(super) fn post(event: Event) {
     if let Ok(mut events) = EVENTS.lock() {
         if events.len() < 16 {
             events.push_back(event);
@@ -80,6 +82,41 @@ pub struct Platform {
 type JResult<T> = jni::errors::Result<T>;
 
 impl Platform {
+    pub fn background(&self, app: &AndroidApp, enabled: bool) {
+        self.ui(app, move |env, activity| {
+            super::background::set(env, activity, enabled)
+        });
+    }
+    pub fn background_permission(&self, app: &AndroidApp) {
+        self.ui(app, |env, activity| {
+            if env
+                .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?
+                .i()?
+                >= 33
+            {
+                let permission = env.new_string("android.permission.POST_NOTIFICATIONS")?;
+                if env
+                    .call_method(
+                        activity,
+                        "checkSelfPermission",
+                        "(Ljava/lang/String;)I",
+                        &[JValue::Object(&permission)],
+                    )?
+                    .i()?
+                    != 0
+                {
+                    let permissions = env.new_object_array(1, "java/lang/String", &permission)?;
+                    env.call_method(
+                        activity,
+                        "requestPermissions",
+                        "([Ljava/lang/String;I)V",
+                        &[JValue::Object(&permissions), JValue::Int(104)],
+                    )?;
+                }
+            }
+            Ok(())
+        });
+    }
     pub unsafe fn new(app: &AndroidApp) -> Result<Self, String> {
         let vm = JavaVM::from_raw(app.vm_as_ptr() as _).map_err(|e| e.to_string())?;
         let activity = {
@@ -309,7 +346,7 @@ impl Platform {
                 .l()?;
             let insets = env
                 .call_method(
-                    view,
+                    &view,
                     "getRootWindowInsets",
                     "()Landroid/view/WindowInsets;",
                     &[],
@@ -397,7 +434,34 @@ impl Platform {
                     edges[i] = edges[i].max(env.call_method(&cutout, name, "()I", &[])?.i()?);
                 }
             }
-            post(Event::Insets(edges, cutouts, top_margin_available));
+            let size = [
+                env.call_method(&view, "getWidth", "()I", &[])?.i()?,
+                env.call_method(&view, "getHeight", "()I", &[])?.i()?,
+            ];
+            let resources = env
+                .call_method(
+                    &view,
+                    "getResources",
+                    "()Landroid/content/res/Resources;",
+                    &[],
+                )?
+                .l()?;
+            let metrics = env
+                .call_method(
+                    resources,
+                    "getDisplayMetrics",
+                    "()Landroid/util/DisplayMetrics;",
+                    &[],
+                )?
+                .l()?;
+            let density = env.get_field(metrics, "density", "F")?.f()?;
+            post(Event::Insets(
+                size,
+                density,
+                edges,
+                cutouts,
+                top_margin_available,
+            ));
             Ok(())
         });
     }

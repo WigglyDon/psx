@@ -198,11 +198,8 @@ pub fn extension(name: &str) -> String {
         .to_lowercase()
 }
 
-pub fn remember(root: &Path, game: &Game) -> io::Result<()> {
-    atomic_write(&root.join("recent.json"), &serde_json::to_vec(game)?)
-}
-
-pub fn recent(root: &Path) -> Option<Game> {
+/// Read-only migration for installations before the persistent library.
+pub(crate) fn legacy_recent(root: &Path) -> Option<Game> {
     let game: Game = serde_json::from_slice(&fs::read(root.join("recent.json")).ok()?).ok()?;
     if game.path.is_file() {
         Some(game)
@@ -244,8 +241,6 @@ mod tests {
         docs.insert("track.bin".into(), digest);
         let game = finish_import(&root, &stage, &docs).unwrap();
         assert!(game.path.exists());
-        remember(&root, &game).unwrap();
-        assert_eq!(recent(&root).unwrap().id, game.id);
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -390,6 +390,22 @@ public final class PsxActivity extends android.app.NativeActivity implements
 }
 "#,
     )?;
+    let service_java = Path::new("build/apk/PlaybackService.java");
+    // Service callbacks, like NativeActivity callbacks, cannot be registered
+    // directly through the NDK. Lifecycle/notification policy remains Rust.
+    fs::write(
+        service_java,
+        r#"package com.machinerhythm.psx;
+public final class PlaybackService extends android.app.Service {
+ static { System.loadLibrary("psx"); }
+ private native int started(android.content.Intent intent);
+ private native void stopped();
+ @Override public int onStartCommand(android.content.Intent intent, int flags, int id) { return started(intent); }
+ @Override public android.os.IBinder onBind(android.content.Intent intent) { return null; }
+ @Override public void onDestroy() { stopped(); super.onDestroy(); }
+}
+"#,
+    )?;
     execute(&mut command(
         "java",
         [
@@ -403,6 +419,7 @@ public final class PsxActivity extends android.app.NativeActivity implements
             "-d".into(),
             "build/apk/classes".into(),
             java.as_os_str().into(),
+            service_java.as_os_str().into(),
         ],
     ))?;
     execute(&mut command(
@@ -415,6 +432,7 @@ public final class PsxActivity extends android.app.NativeActivity implements
             "--output".into(),
             "build/apk/dex".into(),
             "build/apk/classes/com/machinerhythm/psx/PsxActivity.class".into(),
+            "build/apk/classes/com/machinerhythm/psx/PlaybackService.class".into(),
         ],
     ))?;
     notices()?;

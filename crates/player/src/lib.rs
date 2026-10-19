@@ -3,6 +3,7 @@ pub mod audio;
 pub mod files;
 pub mod input;
 pub mod library;
+pub mod resume;
 pub mod retro;
 pub mod saves;
 pub mod settings;
@@ -17,14 +18,15 @@ pub struct Activity {
     pub surface: bool,
     pub audio_focus: bool,
     pub loading: bool,
+    /// Explicit opt-in, effective only while a platform playback service owns
+    /// background execution. Audio focus and pause intent still apply.
+    pub background_playback: bool,
 }
 
 impl Activity {
     pub fn can_run(&self) -> bool {
         !self.user_paused
-            && self.foreground
-            && self.focused
-            && self.surface
+            && ((self.foreground && self.focused && self.surface) || self.background_playback)
             && self.audio_focus
             && !self.loading
     }
@@ -51,6 +53,21 @@ mod tests {
         assert!(!activity.can_run());
         activity.user_paused = false;
         activity.surface = false;
+        assert!(!activity.can_run());
+    }
+    #[test]
+    fn background_play_requires_opt_in_service_focus_and_explicit_play_intent() {
+        let mut activity = Activity {
+            audio_focus: true,
+            ..Activity::default()
+        };
+        assert!(!activity.can_run());
+        activity.background_playback = true;
+        assert!(activity.can_run());
+        activity.user_paused = true;
+        assert!(!activity.can_run());
+        activity.user_paused = false;
+        activity.audio_focus = false;
         assert!(!activity.can_run());
     }
 }

@@ -72,6 +72,15 @@ access for a file-picker product.
 
 ## Product quality
 
+Optional background play uses an explicitly started media-playback foreground
+service with an ongoing notification and pause action; it is off by default.
+The app declares the service type and its permissions, follows audio-focus
+loss and never starts playback from boot. Play submission must include the
+foreground-service declaration and justify this actual user-requested use;
+the prototype implementation is not approval of that declaration.
+[Android service types](https://developer.android.com/develop/background-work/services/fgs/service-types)
+and [background audio](https://developer.android.com/about/versions/17/changes/bg-audio).
+
 Open game, play, pause and return reliably. Choose technical defaults in the
 application, with short actionable messages for missing inputs. Provide
 comfortable touch controls and accessible navigation. Keep save durability,

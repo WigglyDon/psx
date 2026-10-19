@@ -149,6 +149,28 @@ remain outside this milestone. If a donor integration requires substantial core 
 report the concrete blocker and evaluate a narrower integration or donor
 change rather than silently expanding the task.
 
+### Owner follow-up: responsiveness and product cleanup
+
+Retain committed control profiles and consistent toolbar hit testing through
+folds and rotations. Give thumb controls more bottom clearance while retaining
+the largest clear 4:3 picture and usable button sizes. Center the ordinary
+in-game panels in safe content; keep anchored volume controls near their icon.
+Apply volume while dragging and change speed without reopening the audio device.
+
+Automatically checkpoint the emulated machine and restore the active session
+after a fresh process, preserving disc selection and pause intent. Keep ordinary
+memory cards authoritative; reject incompatible or stale states without rolling
+back newer card progress. Offer an explicit disc restart that retains the card.
+
+Minimizing pauses by default. An off-by-default Run in background toggle may
+continue the session through Android's supported foreground playback route,
+with a visible notification and pause action. Respect explicit pause and audio
+focus. Reopening must reuse the existing player, never create a second core owner.
+
+Replace prototype branding with original app/repository artwork and favicon
+assets. Remove obsolete paths, redundant state writes and stale public-facing
+copy while preserving existing data, borrowed notices and useful verification.
+
 ## Required local resources
 
 A local implementation session with Rust/Android build tools and normal

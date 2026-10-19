@@ -342,6 +342,9 @@ pub struct Core {
     deinit: unsafe extern "C" fn(),
     memory: unsafe extern "C" fn(u32) -> *mut c_void,
     memory_size: unsafe extern "C" fn(u32) -> usize,
+    serialize_size: unsafe extern "C" fn() -> usize,
+    serialize: unsafe extern "C" fn(*mut c_void, usize) -> bool,
+    unserialize: unsafe extern "C" fn(*const c_void, usize) -> bool,
     library: Library,
     loaded: bool,
     context_active: bool,
@@ -490,6 +493,15 @@ impl Core {
                 unsafe extern "C" fn(u32) -> *mut c_void
             ),
             memory_size: symbol!("retro_get_memory_size", unsafe extern "C" fn(u32) -> usize),
+            serialize_size: symbol!("retro_serialize_size", unsafe extern "C" fn() -> usize),
+            serialize: symbol!(
+                "retro_serialize",
+                unsafe extern "C" fn(*mut c_void, usize) -> bool
+            ),
+            unserialize: symbol!(
+                "retro_unserialize",
+                unsafe extern "C" fn(*const c_void, usize) -> bool
+            ),
             state,
             library,
             loaded: false,
@@ -551,6 +563,31 @@ impl Core {
         unsafe {
             (self.run_fn)();
         }
+    }
+    /// Sole execution/GL owner only, between frames. The pinned donor writes
+    /// its complete machine and disc-tray state through this public ABI.
+    pub fn checkpoint(&mut self) -> Result<Vec<u8>> {
+        let size = unsafe { (self.serialize_size)() };
+        if size == 0 || size > crate::resume::MAX_STATE_SIZE {
+            return Err("The core cannot create a bounded resume checkpoint.".into());
+        }
+        let mut bytes = vec![0; size];
+        if !unsafe { (self.serialize)(bytes.as_mut_ptr().cast(), size) } {
+            return Err("The game could not create its resume checkpoint.".into());
+        }
+        Ok(bytes)
+    }
+    pub fn restore_checkpoint(&mut self, bytes: &[u8]) -> Result<()> {
+        if bytes.is_empty()
+            || bytes.len() > crate::resume::MAX_STATE_SIZE
+            || !unsafe { (self.unserialize)(bytes.as_ptr().cast(), bytes.len()) }
+        {
+            return Err(
+                "The saved session could not resume. Your memory card is preserved.".into(),
+            );
+        }
+        self.state.buttons = 0;
+        Ok(())
     }
     pub fn disc_status(&self) -> Option<(u32, u32)> {
         unsafe { Some(((self.state.disk.index?)(), (self.state.disk.count?)())) }

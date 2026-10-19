@@ -501,7 +501,6 @@ dependencies = [
  "jni 0.21.1",
  "khronos-egl",
  "libc",
- "libloading",
  "log",
  "ndk",
  "psx-player",

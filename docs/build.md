@@ -49,11 +49,11 @@ page sizes, preserving a path to testing without changing core internals.
 Actual speed and complete memory mapping behavior on 16 KB Android remain
 unverified until that environment runs the application.
 
-## The Android callback shim
+## Android callback shims
 
 `android-activity` supplies the NativeActivity lifecycle and input callbacks,
 but Android's activity-result and audio-focus-listener
-callbacks are Java virtual methods/interfaces. The build generates one small
+callbacks are Java virtual methods/interfaces. The build generates a small
 `PsxActivity` class, extending NativeActivity and forwarding those signatures
 to exported Rust JNI functions. It contains no picker, UI, file, save, input,
 audio or emulation policy. All those decisions and SDK calls are Rust.
@@ -61,6 +61,14 @@ Its static `System.loadLibrary("psx")` associates the native library with the
 class loader so Java can resolve those exported callbacks; NativeActivity's
 own native loading does not establish that JNI association.
 This is the minimal platform callback exception allowed by `AGENTS.md`.
+
+Android also requires a Service subclass for optional background playback.
+The generated `PlaybackService` forwards start/destroy callbacks into Rust and
+is unbound; notification construction, pause actions, permission handling and
+all playback decisions remain Rust. It never owns or calls the core. The
+manifest declares the media-playback foreground-service permissions and
+notification permission. The service starts only for enabled, active play and
+does not restart itself after termination. Background play is off by default.
 
 The host explicitly links EGL and rejects unresolved native symbols at link
 time. APK verification also checks its `libEGL.so` dependency. The Android

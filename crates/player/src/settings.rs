@@ -25,6 +25,7 @@ pub struct PlaybackSettings {
     pub volume: u8,
     pub muted: bool,
     pub speed: Speed,
+    pub run_in_background: bool,
     #[serde(default)]
     volume_curve: u8,
     last_volume: u8,
@@ -35,6 +36,7 @@ impl Default for PlaybackSettings {
             volume: 50,
             muted: false,
             speed: Speed::Normal,
+            run_in_background: false,
             volume_curve: 1,
             last_volume: 50,
         }
@@ -117,6 +119,7 @@ mod tests {
         .unwrap();
         let migrated = PlaybackSettings::load(&root).unwrap();
         assert_eq!(migrated.volume, 50);
+        assert!(!migrated.run_in_background);
         assert_eq!(migrated.volume_curve, 1);
         assert_eq!(PlaybackSettings::load(&root).unwrap().volume, 50);
         fs::remove_dir_all(root).unwrap();
@@ -137,9 +140,11 @@ mod tests {
         settings.muted = true;
         assert_eq!(settings.output_volume(), 0);
         settings.muted = false;
+        settings.run_in_background = true;
         let restored: PlaybackSettings =
             serde_json::from_slice(&serde_json::to_vec(&settings).unwrap()).unwrap();
         assert_eq!(restored.output_volume(), 65);
         assert_eq!(restored.speed.multiplier(), 1);
+        assert!(restored.run_in_background);
     }
 }

@@ -35,6 +35,21 @@ impl Rect {
     }
 }
 
+/// Window-inset callbacks and drawable resizes arrive independently. Never
+/// apply another display's edges to the current drawable.
+pub fn safe_content(size: [i32; 2], inset_size: [i32; 2], edges: [i32; 4]) -> Rect {
+    let [w, h] = size;
+    let [left, top, right, bottom] = if size == inset_size { edges } else { [0; 4] };
+    let left = left.clamp(0, w.max(0));
+    let top = top.clamp(0, h.max(0));
+    Rect::new(
+        left as f32,
+        top as f32,
+        (w - left - right.max(0)).max(1) as f32,
+        (h - top - bottom.max(0)).max(1) as f32,
+    )
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Control {
     pub bounds: Rect,
@@ -92,11 +107,11 @@ impl Layout {
         let size = (cluster * 0.36).clamp(48., 72.);
         let offset = (cluster - size) / 2.;
         let well_height = if compact {
-            (h - w * 0.75 - 8.).clamp(160., cluster)
+            (h - w * 0.75 - 8.).clamp(160., cluster) - 24.
         } else {
             cluster
         };
-        let fy = h - if compact { 8. } else { 76. } - well_height / 2.;
+        let fy = h - if compact { 32. } else { 76. } - well_height / 2.;
         let fx = w - 16. - cluster / 2.;
         let dpad = Rect::new(16., fy - well_height / 2., cluster, well_height);
         let pause = Rect::new(w - 56., 4., 48., 48.);
@@ -159,7 +174,7 @@ impl Layout {
                 x
             };
             controls.push(Control {
-                bounds: Rect::new(x, h - 56., 96., 48.),
+                bounds: Rect::new(x, h - if compact { 56. } else { 64. }, 96., 48.),
                 label,
                 mask: 1 << id,
             });
@@ -182,8 +197,8 @@ impl Layout {
         let cluster = (h - 184.).clamp(112., 160.);
         let size = (cluster * 0.4).clamp(48., 64.);
         let offset = (cluster - size) / 2.;
-        let (fx, fy) = (w - 16. - cluster / 2., h - 8. - cluster / 2.);
-        layout.dpad = Rect::new(16., h - 8. - cluster, cluster, cluster);
+        let (fx, fy) = (w - 16. - cluster / 2., h - 32. - cluster / 2.);
+        layout.dpad = Rect::new(16., h - 32. - cluster, cluster, cluster);
         let shoulder = (cluster - 8.) / 2.;
         for c in &mut layout.controls {
             let (x, y, width, height) = match c.label {
@@ -665,6 +680,33 @@ impl Touches {
 mod tests {
     use super::*;
     #[test]
+    fn folding_ignores_stale_metrics_and_keeps_each_saved_profile() {
+        let inner = safe_content([2076, 2152], [1080, 2342], [0, 182, 0, 190]);
+        assert_eq!((inner.w, inner.h), (2076., 2152.));
+        let settled = safe_content([2076, 2152], [2076, 2152], [0, 160, 0, 0]);
+        assert_eq!((settled.w, settled.h, settled.y), (2076., 1992., 160.));
+        let root = std::env::temp_dir().join(format!("psx-fold-layouts-{}", std::process::id()));
+        let mut settings = ControllerSettings::default();
+        for (w, h, x) in [(443., 861., 23.), (852., 817., 31.), (861., 443., 19.)] {
+            let mut preset = Preset::default();
+            let mut layout = preset.layout(w, h);
+            layout.dpad.x = x;
+            preset.capture(&layout, w, h);
+            settings.set(w, h, preset);
+        }
+        settings.save(&root).unwrap();
+        let settings = ControllerSettings::load(&root).unwrap();
+        for (w, h, x) in [
+            (861., 443., 19.),
+            (852., 817., 31.),
+            (443., 861., 23.),
+            (852., 817., 31.),
+        ] {
+            assert!((settings.preset(w, h).layout(w, h).dpad.x - x).abs() < 0.01);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn top_margin_toolbar_avoids_the_camera_and_preserves_the_larger_picture() {
         for (w, h) in [(852., 817.), (817., 852.)] {
             let mut layout = Layout::new(w, h);
@@ -731,7 +773,7 @@ mod tests {
             let after = layout.element(i);
             if i == 0 {
                 assert_eq!(before.w, after.w);
-                assert!(after.h >= 160.);
+                assert!(after.h >= 136.);
             } else {
                 assert_eq!((before.w, before.h), (after.w, after.h));
             }
@@ -763,6 +805,31 @@ mod tests {
         for control in &layout.controls {
             assert!(!layout.game.overlaps(control.bounds));
             assert!(control.bounds.w >= 48. && control.bounds.h >= 48.);
+        }
+    }
+
+    #[test]
+    fn thumb_clearance_keeps_the_maximum_picture_and_other_button_rows_separate() {
+        for (w, h) in [(852., 817.), (817., 852.), (886., 443.)] {
+            let mut layout = Layout::new(w, h);
+            layout.toolbar_in_top_margin(w, h, 66., &[]);
+            layout.place_game(w, h, false, 1., [0.5, 0.5]);
+            assert!(layout.dpad.y + layout.dpad.h <= h - 32. + 0.01);
+            for face in layout.controls.iter().filter(|c| c.is_face()) {
+                assert!(face.bounds.y + face.bounds.h <= h - 32. + 0.01);
+            }
+            for (i, a) in layout.controls.iter().enumerate() {
+                for b in layout.controls.iter().skip(i + 1) {
+                    if !a.is_face() || !b.is_face() {
+                        assert!(!a.bounds.overlaps(b.bounds));
+                    }
+                }
+            }
+            if w / h < 1.35 {
+                assert!((layout.game.w - w).abs() < 0.01);
+            } else {
+                assert!(layout.game.h >= h * 0.9);
+            }
         }
     }
 

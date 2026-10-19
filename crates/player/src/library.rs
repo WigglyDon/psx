@@ -21,17 +21,19 @@ pub struct Library {
 
 impl Library {
     pub fn load(root: &Path) -> io::Result<Self> {
-        let mut library = match fs::read(root.join("library.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Self::default(),
-            Err(e) => return Err(e),
-        };
-        if let Some(game) = files::recent(root) {
-            if !library.games.iter().any(|g| g.id == game.id) {
-                library.games.push(game);
+        match fs::read(root.join("library.json")) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                let library = Self {
+                    games: files::legacy_recent(root).into_iter().collect(),
+                };
+                if !library.games.is_empty() {
+                    library.save(root)?;
+                }
+                Ok(library)
             }
+            Err(e) => Err(e),
         }
-        Ok(library)
     }
 
     pub fn save(&self, root: &Path) -> io::Result<()> {
@@ -382,6 +384,27 @@ pub fn add(root: &Path, selected: Vec<FoundGame>, cancel: &AtomicBool) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_recent_migrates_once_and_never_repopulates_a_saved_library() {
+        let root =
+            std::env::temp_dir().join(format!("psx-library-migration-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("fixture.iso");
+        fs::write(&path, b"synthetic migration fixture").unwrap();
+        let game = Game {
+            id: "abc123".into(),
+            title: "Fixture".into(),
+            path,
+            discs: vec![],
+            last_disc: 0,
+        };
+        fs::write(root.join("recent.json"), serde_json::to_vec(&game).unwrap()).unwrap();
+        assert_eq!(Library::load(&root).unwrap().games.len(), 1);
+        Library::default().save(&root).unwrap();
+        assert!(Library::load(&root).unwrap().games.is_empty());
+        assert!(root.join("recent.json").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn disc_grouping_keeps_region_and_uses_numeric_order() {
         assert_eq!(

@@ -1,143 +1,116 @@
 # FIRST-PLAYABLE-1 verification
 
-Reviewed 2026-10-18. The Fold has run actual hardware-rendered gameplay,
-owner-confirmed clear sound, simultaneous touch controls and an ordinary
-memory-card save loaded after a fresh process and APK update. The latest
-interface and faster playback modes have separate acceptance work below.
-Build success is not a gameplay or store-approval result.
+Reviewed 2026-10-18. Hardware-rendered gameplay, owner-confirmed clear sound,
+simultaneous touch controls and a completed memory-card save loaded after a
+fresh process have run on the stock Fold. Automatic session restore has also
+returned to gameplay after a fresh process and an APK update. Latest display
+and lifecycle corrections remain under acceptance; build success and older
+play observations do not establish acceptance of later changes.
 
-## Current build
+## Build checks
 
-The installed APK was built from `7478102`, with SHA-256
-`7aa9e3bd8578e79f6ee1911fbc2997a40773af76945a6497ea77a0f9be10e975`.
-Existing app data is retained. The final volume popover fits both controls
-without scrolling, and its listening level and 1x choice survived an update
-and fresh process. Close game returned to the saved library.
+All new player, platform, UI and build logic is Rust. The generated Android
+classes forward indispensable activity/service callbacks. SwanStation remains
+unchanged at `e436e9b85374def58d211df7f78880f0f4a917b4`.
+[build.md](build.md), `rust-toolchain.toml` and `Cargo.lock` record reproduction.
 
-All new player, platform, UI and build logic is Rust. The generated
-NativeActivity subclass only forwards indispensable Android callbacks.
-SwanStation remains unchanged at
-`e436e9b85374def58d211df7f78880f0f4a917b4`. Build inputs and reproduction are
-in [build.md](build.md), `rust-toolchain.toml` and `Cargo.lock`.
-
-- All 37 host tests pass. They cover bounded audio/gain/resampling, independent
-  touch input and cancellation, following-thumb behavior, clear picture/control
-  geometry, perceptual-volume migration, menu/slider interactions, corner
-  resizing/reset/persistence, companion validation, disc grouping/card identity,
-  artwork decoding and atomic card reopening/corrupt-length preservation.
+- All 43 host tests pass, including atomic card reopening, bounded audio and
+  live speed changes, captured simultaneous touch, following-thumb behavior,
+  clear picture/control geometry, saved display profiles, stale-inset handling,
+  corner editing/reset, continuous volume, centered panels, library migration,
+  file/companion validation, disc grouping, artwork and checkpoint integrity.
 - Host and Android ARM64 Clippy pass with warnings denied; formatting passes.
-- APK signature, required resources/notices, ARM64 ABI, EGL dependency and
-  16 KB ZIP/ELF LOAD alignment checks pass. The C++ runtime is statically linked.
-- Minimum Android API is 28; target API is 36. Alignment checks establish
-  packaging compatibility, not complete 16 KB runtime support.
-- The pinned upstream license hash matches; original core/dependency, font,
-  Rust runtime and NDK notices are retained. Games, proprietary firmware,
-  saved progress, keys, device identifiers, raw logs and captures stay private.
+- APK signature, resources/notices, ARM64 ABI, EGL dependency and 16 KB
+  ZIP/ELF LOAD alignment checks pass. C++ runtime linkage is static.
+- Minimum Android API is 28; target API is 36. Alignment is a packaging result,
+  not proof of complete 16 KB runtime support.
+- The pinned GPL license hash matches; inherited core/dependency, Rust, NDK
+  and font notices remain intact. Games, proprietary firmware, saves, keys,
+  device identifiers, raw logs and captures remain private.
 
-## Actual play, sound and saving
-
-These are observations from earlier playable APKs; they do not establish
-acceptance of every later interface or speed change.
+## Device observations
 
 | Behavior | Observed result |
 | --- | --- |
-| Ordinary open | System document selection, including CUE/BIN multi-selection, imported a private copy and launched an owner-selected disc. Later library entries launch through embedded single-/multi-disc menus. |
-| Rendering | GLES hardware output on the physical GPU through Android's ANGLE driver; hardware-frame counters and zero software frames during the measured play windows. |
-| Sound | AAudio at 44.1 kHz stereo; the owner confirmed clear audible game sound. |
-| Two-thumb input | The owner confirmed moving while jumping/spinning. Each new press produces one haptic pulse, without repeated vibration while held. |
-| Following D-pad | Direction continued outside the visible well, reversed there and cleared on lift. The visual stayed inside its well and eased back. The owner reported a major improvement in feel. |
-| Ordinary card save | An in-game Save Game completed. Close game, force-stop, fresh process and the game's Load Game returned to the saved character and location. This was a real card save, not a checkpoint or host state. |
-| Save across update | The same ordinary save loaded after the following-controller APK update. Its actual memory-card icon appeared in the library. |
-| Runtime disc change | A nonzero starting disc booted. Loading an existing card produced the game's request for another disc. The embedded disc menu changed it in the same session and play continued. |
-| Display/lifecycle | The owner played through fold/unfold and rotation in the larger-picture/live-settings build. The core/game process was retained across observed display transitions. Updated layouts still need the final posture pass. |
+| Ordinary open | Document selection, including CUE/BIN companions, imported and launched an owner-selected disc. Embedded library/disc menus subsequently launch private single- and multi-disc games. |
+| Rendering and sound | GLES hardware output on the physical GPU through ANGLE; hardware-frame counters and zero software frames in measured windows. AAudio delivers 44.1 kHz stereo; the owner confirmed clear audible output. |
+| Simultaneous input | The owner confirmed movement with jumping/spinning. Presses have one haptic pulse without hold repetition. Captured D-pad drift/reversal/release ran; the owner reported a substantial improvement. |
+| Ordinary card save | An in-game save completed, then loaded the saved character/location after Close game, force-stop and a fresh process. The same save loaded after an APK update. This is separate from emulator checkpoints. |
+| Runtime disc change | A nonzero starting disc booted. An existing save requested another disc; the embedded menu inserted it in the same session and play continued. |
+| Library and editor | Eight games/thirteen discs persist. Explicit scan/selection, companion rejection, numeric disc grouping and retained card IDs ran. A corner resize persisted; individual Reset, Cancel and whole-profile reset ran without replacing unrelated owner data. |
+| Embedded UI | Console panels, typography, geometric control symbols, local card icons/placeholders and live settings render natively. Settings preserve intentional pause. Volume zero/mute/restore and speed cycling ran. The latest centered settings panel was visually verified. |
+| Continuous volume | DOWN/MOVE changed the visible volume before UP on the Fold, with slider capture retained. The real-time gain uses that same setting immediately. This is a visual/input observation, not a microphone measurement. |
+| Automatic session resume | Gameplay was paused, backgrounded, force-stopped and reopened in a fresh process. The same location and explicit pause returned. A later update retained and restored that checkpoint. The bounded files stayed private. |
+| Optional background play | The new toggle starts a media-playback foreground service with an ongoing notification and pause action. Counters advance while minimized. Turning it off removes the service; minimizing then stops playback/counters and saves the session. The transition hitch and re-entry defect found below are being corrected. |
 
-A 70-second early owner-play window measured 59.80–59.84 fps against the
-core's 59.8173 Hz, with 3.53–5.26 ms average core time, hardware output only
-and no additional FIFO underruns or dropped frames. Initial startup counters
-were 72 underruns and 787 dropped frames; the later window does not erase them.
+The original 70-second play window measured 59.80–59.84 fps against 59.8173 Hz,
+with 3.53–5.26 ms average core time and no additional FIFO underruns or drops.
+Its startup already counted 72 underruns and 787 dropped audio frames. A later
+50-second following-controller window measured 59.81–59.84 fps, 4.38–4.82 ms
+core time, one new underrun and no dropped audio frames. These were bounded
+walking/gameplay observations, not thermal endurance or broad compatibility.
 
-The following-controller build (`19e12cf`, APK
-`0d54e692f50c81c07d0284db6b732353c0c8d02e6a0dcab7e088e103a3f56875`)
-recorded a separate 50-second walking/drift/reversal/standing observation:
-59.81–59.84 fps, 4.38–4.82 ms average core time, hardware output only, one new
-FIFO underrun and no dropped audio frames. Neither window is a combat,
-thermal-endurance or broad-compatibility measurement.
+## Speed and interruption checks
 
-## Native interface, collection and controls
+After the owner's call ended, a normal-mode window measured 59.79–59.83 fps.
+An owner-selected 2× run reached 119.59 fps in a steady ten-second window.
+A separate 5× gameplay run reached 299.03–299.15 fps across four consecutive
+ten-second windows: approximately 500% of the donor timing, 2.11–2.21 ms
+average core time, hardware output only, no drops and no further underruns
+within those four windows. Startup/display/speed transitions had already
+accumulated underruns; this is not a claim of uninterrupted audio throughout.
+The owner reported that play worked well, then identified display-layout and
+responsiveness defects. The multiplier label alone is not an achieved-speed
+measurement.
 
-The saved collection retains eight games and thirteen discs. Scan storage
-ran through Android's explicit app-specific grant and showed honest scan
-coverage, rejected/missing inputs and archive limits. Companion BIN tracks
-were not listed as separate games. Selection, adding entries and a fresh
-process retained the collection and existing card identities. Multi-disc
-sets expose numerically ordered initial and runtime disc selection.
+The before-first-frame audio-focus-denial check also ran: visible controls and
+an interruption message remain available, and the toolbar stays below visible
+system decoration. Later normal play returned when audio focus was available.
+Another app's audio ownership was not overridden.
 
-The embedded menus, errors, source/license pages, Noto Sans and geometric
-control symbols render in Rust. Local card artwork and distinct placeholders
-appear without an online game database. The current console-style library,
-starting-disc menu and settings sheet render on the inner display. Before/after
-private comparisons found byte-identical cards and controller presets across
-this update pass; the original volume, mute state and 1x choice were restored.
+The first background-play pass maintained approximately 59.75–59.84 fps while
+minimized. Several lifecycle callbacks each synchronously saved a checkpoint
+while play continued, producing a visible/audio transition hitch. The correction
+routes continue-play snapshots through the existing bounded worker; default
+pause/closure still wait for durability. This correction requires a new pass.
 
-Controller editing ran on the Fold: a corner drag resized the D-pad and Done
-persisted it through a new process/update. Reset restored only the selected
-element and disappeared at its default. Cancel left the saved layout
-byte-identical. Whole-layout reset turned overlap off, restored following and
-hid itself when the profile matched defaults. The tests additionally exercise
-all four grips, aspect preservation, independent fingers and display shapes.
-Only task-created layout experiments were reset.
+## Current acceptance work
 
-The earlier live-settings build (APK
-`40c923db00a68c089108597371e8015dd776d978de316fb2e7f08701f9c2389e`)
-showed settings over a game that continued running. Pause intent has a
-separate control. The latest toolbar, volume popover and speed-cycle UI ran
-while Android denied audio focus during an interruption:
+The session-resume APK `7514054ad984a48cf372d280833c98c7498c9b73e8d60c8c630ed78a9c911b6c`
+proved fresh-process restore and continuous slider capture. The branded build
+`19029ff340e5105e4a558ee7ba630c291248b1c4fedacc450adc9c4b66d8edf1`
+proved restore across update, higher thumb clearance, centered panels and the
+background service behavior above. These hashes identify private development
+APKs, not published store releases.
 
-- Before-first-frame interruption now shows a message and visible play controls.
-- The quick controls sit below the visible system status bar during interruption.
-- Speaker opens the volume popover; zero mutes, raising the slider unmutes,
-  and Mute/Unmute retains the selected level. The original listening level
-  was restored after the check.
-- Speed cycles 1x → 2x → 5x → 1x by single taps, without opening a submenu;
-  the check returned it to 1x.
+The owner then reproduced a second NativeActivity starting inside the same
+process when reopening. The process-wide core lease correctly refused another
+owner. Source now requests one reusable `singleTask` activity, preserves the
+active marker when an empty player closes, and reconciles late EGL dimensions
+with size-tagged insets. Fresh launch/re-entry and inner/outer rotation checks
+must pass on the corrected APK before this milestone is closed. The user's
+checkpoint and card were preserved privately before replacing the test build.
 
-This interruption pass did not run gameplay or produce game sound. Achieved
-2x/5x speed, pitched audio quality, return from audio-focus denial, and the
-latest layouts across inner/outer rotations remain pending. The interface
-showing a multiplier is not proof that the core achieved it.
+## Corresponding source and release limits
 
-## Corresponding source
+`cargo xtask source` exports committed project/core files and locked Rust
+sources with their original notices. The clean extracted `9dbbb20` archive ran
+37 tests offline, verified the core inventory and built a complete signed
+ARM64 APK without Git metadata. Its signature/resource/ABI/alignment checks
+passed. Later source archives were inspected for matching application/license
+files and exclusion of private root directories. Updated source delivery must
+be paired with the exact final APK source revision; an extracted developer's
+new signing key must not replace the owner's existing installation.
 
-`cargo xtask source` exports committed public project/core files and the
-locked Rust dependency sources with their notices. Archive inspection found
-no project-private game/card/firmware, signing, capture/log, build, target or
-Git directories. The exact host, upstream GPL and font license files matched
-those in a clean extracted archive.
+The donor's included OpenBIOS remains the no-proprietary-firmware route. Its
+startup transition/cutoff is unresolved: the existing fast-boot patch does not
+support OpenBIOS. The host does not guess when to hide/crop game output or use
+proprietary startup artwork as branding.
 
-The extracted `9dbbb20` source archive ran all 37 host tests offline, verified
-the pinned core inventory, generated notices and built a complete signed
-ARM64 APK without Git metadata. Signature/resource/ABI/alignment checks also
-passed there. Its build tool code is the release-source tooling used by the
-later UI commits. This verifies that packaging path; it is not another device
-runtime result. Each extracted build generates its own private development
-key and should not replace the owner's existing signed installation.
+16 KB runtime/performance, custom-UI accessibility, Play AAB delivery, broad-scan
+and foreground-service eligibility, and the combined App Store distribution
+basis remain unverified. Physical stock-iOS non-JIT testing is deferred until
+an Apple computer is available. See [distribution.md](distribution.md).
 
-## Remaining release limits
-
-The issue stays open for the current device acceptance above. The donor's
-included OpenBIOS is the current no-proprietary-firmware route. Its startup
-transition/cutoff remains unresolved: the donor's existing fast-boot patch
-does not support OpenBIOS. The host has not guessed a time to hide or crop
-that output, and proprietary startup artwork is not used as app branding.
-
-16 KB runtime/performance, custom-UI accessibility qualification, a Play AAB,
-broad-scan permission eligibility and this application's combined App Store
-distribution basis are unverified. The owner deferred physical stock-iOS
-non-JIT gameplay/audio until an Apple computer is available. See
-[distribution.md](distribution.md). Source packaging and MIT host attribution
-do not settle the borrowed core's GPL/store obligations.
-
-Continue acceptance under
-[FIRST-PLAYABLE-1 #1](https://github.com/WigglyDon/psx/issues/1). Publish only
-suitable source and summarized observations; keep private inputs and raw
-device evidence local.
+Continue under [FIRST-PLAYABLE-1 #1](https://github.com/WigglyDon/psx/issues/1).
+Publish source and suitable summaries; keep private inputs and raw evidence local.

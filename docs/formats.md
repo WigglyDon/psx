@@ -58,10 +58,8 @@ compatible dump; it stays private. The donor checks known hashes and region.
 No proprietary firmware is bundled or downloaded.
 
 Slot 1 uses the core's Libretro interface: a 128 KB card, already inserted.
-Use the game's own save menu or save points. Checkpoints may last only for
-the current session. Opening a game boots its disc; use the game's Load
-option for completed saves. The library does not represent a checkpoint or
-emulator save state.
+Use the game's own save menu or save points for ordinary completed saves.
+Automatic emulator resume is separate from these memory-card saves.
 
 Rust restores the card before the first frame, compares it each second and
 flushes on pause, focus loss, background, surface destruction and normal
@@ -73,10 +71,24 @@ Initial identity uses the primary file and companion names/content hashes,
 independent of document URI. A new dump or renamed files can create another
 identity. Reopening the same imported copy preserves its card. A disc set
 keeps its existing card identity when more discs are merged, including discs
-added before the original starting disc. Optional emulator states/automatic
-state resume are not implemented, so cannot roll back newer card progress.
+added before the original starting disc.
 An uncatchable process kill during an unfinished save may lose unsynced
 changes. Acceptance requires an ordinary save loaded in a fresh process.
+
+Automatic sessions retain the emulated machine, selected disc and pause intent.
+Backgrounding, explicit pause and Close game checkpoint the current session;
+periodic checkpoints run every 30 seconds. Reopening the app resumes its active
+game; choosing a closed game resumes its own checkpoint. Restart game boots
+the disc again while retaining its memory card. A sudden kill can lose the
+time since the last completed checkpoint.
+
+Resume files are bounded, private and atomically replaced. Their header pins
+the core revision and disc identities/paths and records hashes of the machine
+payload and contemporaneous card. A changed card or incompatible/damaged
+checkpoint is reported before restoration; Restart game remains available.
+The durable card is restored after the machine state, so an old checkpoint
+cannot silently roll back newer card progress. Adding/reordering discs or
+changing the selected starting disc may require restarting instead of resuming.
 
 Imported games, firmware, collection metadata, controller layouts and cards
 remain local. There is no Internet permission. The default development APK

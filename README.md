@@ -1,70 +1,63 @@
+![psx — a native PS1 player from Machine Rhythm](assets/brand/readme.svg)
+
 # psx
 
-A small native PlayStation 1 player from Machine Rhythm.
+A native PlayStation 1 player. Choose your games, make yourself comfortable,
+and play. Built by Machine Rhythm, starting with Android foldables.
 
-**Open a local game. Play.**
+- A local game library with explicit storage scanning and multi-disc support.
+- A large, unstretched picture, separate from the controls by default.
+- A following D-pad, simultaneous touch input and press haptics.
+- Movable, resizable controls with separate saved display layouts.
+- Compact in-game settings, volume, pause and 1× / 2× / 5× playback.
+- Durable memory cards and automatic session resume.
 
-## Status
+No accounts, analytics, uploads or bundled games. Your games, firmware and
+saved progress stay on your device.
 
-The Rust Android host launches an owner-selected PS1 disc on a
-stock Fold through the system picker, with hardware-rendered gameplay and
-owner-confirmed clear audio. Host tests and ARM64/signature/16 KB alignment
-checks pass. The owner confirms simultaneous touch and discrete press haptics.
-An ordinary in-game card save has loaded after a fresh process and APK update.
-Updated fold/lifecycle acceptance is still being checked; see
-[observations](docs/verification.md).
-The Rust-rendered interface now includes a persistent game collection,
-explicit storage scanning/selection, multi-disc menus, local thumbnails and
-controller layout editing with separate picture/control space by default.
-Corner resizing, contextual reset and layout persistence have run on the
-Fold. The new play surface adds live console-style settings, a top toolbar,
-volume popover, speed cycling and layouts for folded landscape. Those latest
-toolbar/popover interactions have run on the Fold, including interruption
-before the first game frame. Faster-mode sound/performance and the latest
-layouts across display postures remain under device acceptance.
-The first implementation target is a stock Android foldable.
-The product is intended for eventual Google Play and Apple App Store release.
-Store acceptance and iOS performance have not been established.
+## Development status
 
-## Direction
+Actual hardware-rendered gameplay, clear sound, simultaneous controls and an
+ordinary memory-card save loaded after a fresh process have run on a stock
+Fold. Automatic session restore has also returned to gameplay after a fresh
+process. The latest fold-layout corrections, higher thumb controls and
+optional background playback are under device verification.
 
-- Rust owns the player, host, UI, input, file access, saves and runtime policy.
-- [SwanStation](https://github.com/libretro/swanstation) is the initial Android
-  core candidate, through its libretro C interface. Its upstream C++ stays
-  intact. Cross-platform selection depends on the distribution checks below.
-- A persistent local game collection and one play surface, with sensible
-  defaults chosen by the application.
-- Native execution and the core's existing rendering paths.
-- Comfortable simultaneous touch input, stable sound and durable memory-card saves.
-- Local game files: scan accessible storage once and choose games to keep.
-  Add games repeats the scan; manual browsing is optional. No accounts or uploads.
-- Shared Rust player behavior with small Android and iOS platform adapters.
-- Clean everyday use: clear file errors, comfortable controls, dependable
-  pause/resume and accessible navigation. Development diagnostics stay hidden
-  from the ordinary play flow.
+This is active development, with a signed development APK build path.
+Google Play and Apple App Store releases are intended; store acceptance,
+16 KB Android runtime and stock-iOS performance remain unverified.
+See [observed results and limits](docs/verification.md).
 
-The active milestone is [FIRST-PLAYABLE-1 #1](https://github.com/WigglyDon/psx/issues/1).
-[Build instructions](docs/build.md) produce the development APK.
-[Files and saves](docs/formats.md) describe supported inputs and current limits.
-[Architecture](docs/architecture.md) records the small ownership boundary.
-[Distribution](docs/distribution.md) records the early store requirements,
-including iOS execution without JIT and the borrowed core's licensing.
-[AGENTS.md](AGENTS.md) gives the development entry point.
+## Build and contribute
+
+```sh
+git clone --recurse-submodules https://github.com/WigglyDon/psx
+cd psx
+```
+
+[Build instructions](docs/build.md) cover the Rust/Android tools, APK and
+corresponding-source archive. [FIRST-PLAYABLE-1](https://github.com/WigglyDon/psx/issues/1)
+tracks implementation and acceptance.
+
+| Document | Purpose |
+| --- | --- |
+| [Architecture](docs/architecture.md) | Execution, platform and interface boundaries |
+| [Files and saves](docs/formats.md) | Supported inputs, storage access and recovery |
+| [Distribution](docs/distribution.md) | Core licensing and eventual store requirements |
+| [AGENTS.md](AGENTS.md) | Development instructions |
 
 ## Source and attribution
 
-Original psx contributions are licensed under **MIT**, as provided
-in [LICENSE](LICENSE). Third-party material retains its own copyright,
-attribution and license. A distributed player containing SwanStation must
-also satisfy the core's applicable GPL obligations; our MIT license does not
-relicense the core or exempt the combined distribution.
+Original psx code and [brand artwork](assets/brand/README.md) use **MIT**.
+The pinned [SwanStation](https://github.com/libretro/swanstation) core retains
+its upstream C++ and GPL terms. It derives from DuckStation; psx does not
+claim authorship of either emulation engine. All new player and host logic
+is Rust, behind a narrow libretro C interface.
 
-SwanStation is a DuckStation-derived project maintained upstream. psx does
-not claim authorship of those emulation engines. The exact initial core
-revision is recorded in [upstream.lock.json](upstream.lock.json); attribution
-and incorporation requirements are in [THIRD_PARTY.md](THIRD_PARTY.md).
+A combined distribution must satisfy the core's applicable GPL requirements;
+MIT and FFI do not remove them. See [THIRD_PARTY.md](THIRD_PARTY.md),
+[LICENSE](LICENSE) and [upstream.lock.json](upstream.lock.json). Core,
+dependency and font notices are retained in source and the APK.
 
-The core is retained unchanged as a pinned Git submodule. License files from
-the core and Rust dependencies are also packaged inside the development APK.
-Game images and proprietary firmware are not part of this repository.
-
+Game images and proprietary firmware are not distributed here. PlayStation
+is a Sony trademark; this independent project is not affiliated with Sony.
