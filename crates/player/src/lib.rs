@@ -1,9 +1,12 @@
 pub mod artwork;
 pub mod audio;
+pub mod content;
+pub mod engine;
 pub mod files;
 mod firmware;
 pub mod input;
 pub mod library;
+pub mod ps2;
 pub mod resume;
 pub mod retro;
 pub mod saves;

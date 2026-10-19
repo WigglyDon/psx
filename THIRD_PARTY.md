@@ -78,3 +78,32 @@ must satisfy all applicable core and dependency obligations; the original
 host's MIT grant does not relicense SwanStation. Generated bindings should
 identify their source headers.
 
+
+## ARMSX2 PS2 candidate
+
+ARMSX2 derives from PCSX2. Its unmodified source is pinned at
+`83fe4e293f71ab5587ef81b06143725bf8c6a30b` in `vendor/armsx2`.
+The exact root `COPYING.GPLv3` has SHA-256
+`8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903`;
+individual files retain their original GPL and other terms. Credit the
+PCSX2 and ARMSX2 contributors and each dependency's named authors.
+The original tree retains all inherited copyright and dependency notices.
+The host adapter changes and their purpose are recorded in
+[patches/armsx2](patches/armsx2/README.md); they do not replace core internals.
+
+The resolved Android dependency graph, including nested shaderc sources, is
+locked in [revisions.tsv](vendor/armsx2-dependencies/revisions.tsv).
+It includes libpng, libjpeg-turbo, Zstandard, LZ4, WebP, SDL3, FreeType/dlg,
+PlutoVG/PlutoSVG, curl (without TLS), libpcap, shaderc, glslang, SPIR-V tools
+and headers, Abseil, Effcee, GoogleTest and RE2. These names are an inventory,
+not a replacement for their exact source notices. The original donor also
+retains its in-tree `3rdparty` sources. Android links its NDK's zlib and
+static C++ runtime. Matching fonts, shaders and native compatibility resources
+come from the same core revision; no floating patch archive is downloaded.
+
+The APK includes original core/dependency/resource notices. The corresponding
+source bundle contains the exact donor, integration patch, complete resolved
+dependency trees and Rust build recipe. Bundling this candidate adds its GPL
+and dependency obligations to the combined distribution; the MIT Rust license
+and ABI boundary do not remove them. Android qualification does not establish
+stock-iOS execution, App Store rights or marketplace acceptance.

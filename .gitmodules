@@ -1,3 +1,6 @@
 [submodule "vendor/swanstation"]
 	path = vendor/swanstation
 	url = https://github.com/libretro/swanstation.git
+[submodule "vendor/armsx2"]
+	path = vendor/armsx2
+	url = https://github.com/ARMSX2/ARMSX2.git

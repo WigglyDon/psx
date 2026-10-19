@@ -1,6 +1,7 @@
 mod background;
 mod graphics;
 mod platform;
+mod shortcuts;
 mod sound;
 
 use android_activity::{
@@ -8,15 +9,16 @@ use android_activity::{
     AndroidApp, InputStatus, MainEvent, PollEvent,
 };
 use graphics::Graphics;
-use platform::{Event, Platform, PICK_FIRMWARE, PICK_GAME, PICK_STORAGE};
+use platform::{Event, Platform, PICK_FIRMWARE, PICK_GAME, PICK_PS2_FIRMWARE, PICK_STORAGE};
 use psx_player::{
     artwork::Artwork,
     audio::AudioQueue,
-    files::Game,
+    engine::Core,
+    files::{Game, System},
     input::{safe_content, ControllerSettings, Layout, Rect, Touches},
     library::{self, Library},
     resume,
-    retro::{Core, HostConfig},
+    retro::HostConfig,
     saves::MemoryCard,
     session::{GameId, Launch, Runtime, SavedSession, State as SessionState},
     settings::{PlaybackSettings, Speed},
@@ -40,7 +42,11 @@ enum Action {
     Scan,
     GrantStorage,
     ChooseGame(usize),
+    GameActions(usize),
+    PinGame(GameId),
+    Relink(usize),
     ChooseDisc(usize),
+    ChooseSystem(usize, System),
     ToggleGame(usize),
     SelectAll,
     AddSelected,
@@ -65,6 +71,7 @@ enum Action {
     Back,
     Resume,
     Firmware,
+    Ps2Firmware,
     Close,
     Restart,
     ToggleBackground,
@@ -79,6 +86,9 @@ enum Screen {
     Results,
     Adding,
     Discs(usize),
+    Console(usize),
+    GameActions(usize),
+    Recover(Option<usize>),
     About,
     License(&'static str),
     Controllers,
@@ -123,6 +133,7 @@ struct Player {
     last_visual: Instant,
     editor: Option<Editor>,
     picker: bool,
+    relink: Option<(Game, usize)>,
     scan_available: bool,
     actions: Vec<Action>,
     back_action: Action,
@@ -138,6 +149,7 @@ struct Player {
     last_flush: Instant,
     last_checkpoint: Instant,
     checkpoint_dirty: bool,
+    checkpoint_valid: bool,
     checkpoint_after_present: bool,
     checkpoint_work: Option<mpsc::Receiver<Result<(), String>>>,
     restore_pending: bool,
@@ -199,6 +211,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         last_visual: now,
         editor: None,
         picker: false,
+        relink: None,
         scan_available: cfg!(feature = "storage-scan"),
         actions: Vec::new(),
         back_action: Action::Scan,
@@ -214,6 +227,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         last_flush: now,
         last_checkpoint: now,
         checkpoint_dirty: false,
+        checkpoint_valid: false,
         checkpoint_after_present: false,
         checkpoint_work: None,
         restore_pending: true,
@@ -295,13 +309,21 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.fail(error);
             }
         }
+        if player.activity.surface && player.activity.foreground && !player.activity.loading {
+            if let Some(launch) = platform::next_launch() {
+                player.restore_pending = false;
+                if let Err(error) = player.open_game(&app, launch) {
+                    player.fail(error);
+                }
+            }
+        }
         if player.restore_pending && player.activity.surface && player.activity.foreground {
             player.restore_pending = false;
             match resume::active(&player.root) {
                 Ok(Some(id)) => {
                     let result = GameId::parse(&id)
                         .map_err(String::from)
-                        .and_then(|id| player.open_game(Launch::OpenGame(id)));
+                        .and_then(|id| player.open_game(&app, Launch::OpenGame(id)));
                     if let Err(error) = result {
                         player.fail(error);
                     }
@@ -320,6 +342,11 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             }
         }
         player.sync_background(&app);
+        if let Some(core) = &mut player.core {
+            if let Err(error) = core.pause(!player.activity.can_run()) {
+                player.fail(error);
+            }
+        }
         player.queue.set_paused(player.activity.user_paused);
         player
             .queue
@@ -330,6 +357,8 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.dirty |= player.checkpoint_after_present;
                 if let Err(error) = result {
                     player.fail(error);
+                } else {
+                    player.checkpoint_valid = true;
                 }
             }
         }
@@ -343,7 +372,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                             .map_err(String::from)
                             .and_then(|id| {
                                 player.library.put(game);
-                                player.open_game(Launch::OpenGame(id))
+                                player.open_game(&app, Launch::OpenGame(id))
                             });
                         if let Err(e) = result {
                             player.fail(e);
@@ -434,6 +463,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             })
         });
         player.visuals.has_game = player.core.is_some();
+        player.visuals.axes = player.touches.axes();
         player.visuals.audio_blocked = !player.activity.audio_focus;
         player.visuals.playback_paused =
             player.activity.user_paused || !player.activity.audio_focus;
@@ -488,9 +518,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     }
     player.stop_sound();
     player.cancel_work.store(true, Ordering::Relaxed);
-    let result = player.checkpoint();
-    player.core.take();
-    player.session.take();
+    let result = player.unload(false);
     player.platform.focus(&app, false);
     player.platform.background(&app, false);
     result
@@ -820,6 +848,8 @@ impl Player {
                                     Some(Action::Back)
                                 } else if index == usize::MAX - 2 {
                                     Some(Action::Resume)
+                                } else if index >= Menu::SECONDARY {
+                                    Some(Action::GameActions(index - Menu::SECONDARY))
                                 } else {
                                     self.actions.get(index).cloned()
                                 };
@@ -905,9 +935,16 @@ impl Player {
                     self.platform.storage(app, false);
                 } else if let Some(intent) = intent {
                     self.activity.loading = true;
-                    self.import = Some(self.platform.import(self.root.clone(), request, intent));
+                    self.import = Some(self.platform.import(
+                        self.root.clone(),
+                        request,
+                        intent,
+                        self.relink.take(),
+                    ));
                     self.message = "Copying your selected files into private storage. Large discs can take a moment.".into();
                     self.refresh_menu(app);
+                } else {
+                    self.relink = None;
                 }
             }
             Event::Storage(roots) => {
@@ -955,6 +992,16 @@ impl Player {
                         self.fail(error);
                     }
                 }
+            }
+            Event::LaunchError(message) => {
+                self.restore_pending = false;
+                self.message = message;
+                self.navigate(app, Screen::Recover(None));
+            }
+            Event::Notice(message) => {
+                self.message = message;
+                self.dirty = true;
+                self.refresh_menu(app);
             }
             Event::Error(error) => {
                 self.picker = false;
@@ -1020,7 +1067,7 @@ impl Player {
         self.screen = screen;
         self.touches.cancel();
         if let Some(core) = &mut self.core {
-            core.state_mut().buttons = 0;
+            core.input(0, [0; 4], false);
         }
         if let Err(error) = self.flush() {
             self.fail(error);
@@ -1046,12 +1093,14 @@ impl Player {
                 self.picker = true;
                 self.platform.storage(app, true);
             }
-            Action::Browse | Action::Firmware => {
+            Action::Browse | Action::Firmware | Action::Ps2Firmware => {
                 self.picker = true;
                 self.platform.pick(
                     app,
                     if matches!(action, Action::Browse) {
                         PICK_GAME
+                    } else if matches!(action, Action::Ps2Firmware) {
+                        PICK_PS2_FIRMWARE
                     } else {
                         PICK_FIRMWARE
                     },
@@ -1064,7 +1113,34 @@ impl Player {
                     .get(index)
                     .ok_or("The game is no longer in the library.")?
                     .clone();
-                self.open_game(Launch::OpenGame(GameId::parse(&game.id)?))?;
+                self.open_game(app, Launch::OpenGame(GameId::parse(&game.id)?))?;
+            }
+            Action::GameActions(index) => self.navigate(app, Screen::GameActions(index)),
+            Action::Relink(index) => {
+                let game = self
+                    .library
+                    .games
+                    .get(index)
+                    .ok_or("This library entry is unavailable.")?
+                    .clone();
+                let missing = game
+                    .disc_list()
+                    .iter()
+                    .position(|d| fs::File::open(&d.path).is_err())
+                    .unwrap_or(game.last_disc);
+                self.relink = Some((game, missing));
+                self.picker = true;
+                self.platform.pick(app, PICK_GAME);
+            }
+            Action::PinGame(id) => {
+                let game = self
+                    .library
+                    .games
+                    .iter()
+                    .find(|g| g.id == id.as_str())
+                    .ok_or("The game is no longer in the library.")?
+                    .clone();
+                self.platform.pin_game(app, game, &self.root);
             }
             Action::ChooseDisc(index) => {
                 let Screen::Discs(game_index) = self.screen else {
@@ -1096,8 +1172,19 @@ impl Player {
                     game.last_disc = index;
                     let id = GameId::parse(&game.id)?;
                     self.library.put(game);
-                    self.open_game(Launch::OpenGame(id))?;
+                    self.open_game(app, Launch::OpenGame(id))?;
                 }
+            }
+            Action::ChooseSystem(index, system) => {
+                let game = self
+                    .library
+                    .games
+                    .get_mut(index)
+                    .ok_or("The game is no longer in the library.")?;
+                game.system = system;
+                let id = GameId::parse(&game.id)?;
+                self.library.save(&self.root).map_err(|e| e.to_string())?;
+                self.open_game(app, Launch::OpenGame(id))?;
             }
             Action::ToggleGame(index) => {
                 if let Some((_, checked)) = self.scan_games.get_mut(index) {
@@ -1230,7 +1317,7 @@ impl Player {
                 preset.follow_thumb = !preset.follow_thumb;
                 self.controller_settings.set(w, h, preset);
                 self.controller_settings
-                    .save(&self.root)
+                    .save(&self.controls_root())
                     .map_err(|e| e.to_string())?;
                 self.resize(app)?;
                 self.refresh_menu(app);
@@ -1241,7 +1328,7 @@ impl Player {
                 preset.allow_overlap = !preset.allow_overlap;
                 self.controller_settings.set(w, h, preset);
                 self.controller_settings
-                    .save(&self.root)
+                    .save(&self.controls_root())
                     .map_err(|e| e.to_string())?;
                 self.resize(app)?;
                 self.refresh_menu(app);
@@ -1250,7 +1337,7 @@ impl Player {
                 let (w, h) = self.dimensions();
                 self.controller_settings.set(w, h, Default::default());
                 self.controller_settings
-                    .save(&self.root)
+                    .save(&self.controls_root())
                     .map_err(|e| e.to_string())?;
                 self.resize(app)?;
                 self.refresh_menu(app);
@@ -1272,7 +1359,7 @@ impl Player {
                     self.controller_settings
                         .set(editor.width, editor.height, editor.preset);
                     self.controller_settings
-                        .save(&self.root)
+                        .save(&self.controls_root())
                         .map_err(|e| e.to_string())?;
                     self.resize(app)?;
                 }
@@ -1291,7 +1378,7 @@ impl Player {
                 if let Some(game) = self.game.clone() {
                     self.close()?;
                     resume::discard(&self.root, &game).map_err(|e| e.to_string())?;
-                    self.open_game(Launch::OpenGame(GameId::parse(&game.id)?))?;
+                    self.open_game(app, Launch::OpenGame(GameId::parse(&game.id)?))?;
                 }
             }
             Action::ToggleBackground => {
@@ -1329,6 +1416,13 @@ impl Player {
             self.graphics.content.h / self.density,
         )
     }
+    fn controls_root(&self) -> PathBuf {
+        if self.controller_settings.analog() {
+            self.root.join("ps2-controls")
+        } else {
+            self.root.clone()
+        }
+    }
 
     fn cutout_rects(&self) -> Vec<Rect> {
         if self.inset_size != [self.graphics.width, self.graphics.height] {
@@ -1349,6 +1443,7 @@ impl Player {
 
     fn sync_background(&mut self, app: &AndroidApp) {
         let want = self.playback.run_in_background
+            && self.game.as_ref().is_some_and(|g| g.system == System::Ps1)
             && self.core.is_some()
             && !self.activity.user_paused
             && !self.destroyed;
@@ -1437,15 +1532,22 @@ impl Player {
                     "Controller settings".into(),
                     "Layout, size and optional overlap".into(),
                 );
-                add(
-                    Action::ToggleBackground,
-                    "Run in background".into(),
-                    "Keep playing when minimized · off pauses automatically".into(),
-                );
+                if self.game.as_ref().is_none_or(|g| g.system == System::Ps1) {
+                    add(
+                        Action::ToggleBackground,
+                        "Run in background".into(),
+                        "PS1 · keep playing when minimized · off pauses automatically".into(),
+                    );
+                }
                 add(
                     Action::Firmware,
                     "PS1 firmware".into(),
                     "Optional · choose your own compatible dump".into(),
+                );
+                add(
+                    Action::Ps2Firmware,
+                    "PS2 firmware".into(),
+                    "Required · choose your compatible dump".into(),
                 );
                 add(
                     Action::About,
@@ -1706,6 +1808,67 @@ impl Player {
                 rows = paragraphs;
                 ("Licenses".into(), path.into(), "Back".into(), Action::Back)
             }
+            Screen::Recover(index) => {
+                if let Some(index) = index {
+                    add(
+                        Action::Relink(index),
+                        "Locate original disc".into(),
+                        "Verify its contents and keep this entry's progress".into(),
+                    );
+                } else {
+                    add(
+                        Action::Scan,
+                        "Add games".into(),
+                        "Find the original game in storage".into(),
+                    );
+                }
+                (
+                    "Game unavailable".into(),
+                    self.message.clone(),
+                    "Library".into(),
+                    Action::Home,
+                )
+            }
+            Screen::GameActions(index) => {
+                if let Some(game) = self.library.games.get(index) {
+                    if let Ok(id) = GameId::parse(&game.id) {
+                        add(
+                            Action::PinGame(id),
+                            "Add to Home Screen".into(),
+                            "Open this game directly · confirmation required".into(),
+                        );
+                    }
+                    (
+                        game.title.clone(),
+                        self.message.clone(),
+                        "Back".into(),
+                        Action::Home,
+                    )
+                } else {
+                    (
+                        "Game unavailable".into(),
+                        "Return to the library.".into(),
+                        "Back".into(),
+                        Action::Home,
+                    )
+                }
+            }
+            Screen::Console(index) => {
+                for system in [System::Ps1, System::Ps2] {
+                    add(
+                        Action::ChooseSystem(index, system),
+                        system.label().into(),
+                        String::new(),
+                    );
+                }
+                (
+                    "Choose console".into(),
+                    "This container does not identify the console. Choose it once for this game."
+                        .into(),
+                    "Back".into(),
+                    Action::Back,
+                )
+            }
             Screen::Error => {
                 rows = self
                     .graphics
@@ -1727,7 +1890,10 @@ impl Player {
             }
         }
         if self.screen == Screen::Home {
+            self.platform
+                .refresh_game_icons(app, self.library.games.clone(), &self.root);
             for (row, game) in rows.iter_mut().zip(&self.library.games) {
+                row.secondary = true;
                 row.artwork = Some(Artwork::local(
                     &game.id,
                     &game.title,
@@ -1773,8 +1939,31 @@ impl Player {
         self.menu = Some(menu);
         self.dirty = true;
     }
-    fn open_game(&mut self, launch: Launch) -> Result<(), String> {
+    fn open_game(&mut self, app: &AndroidApp, launch: Launch) -> Result<(), String> {
         let Launch::OpenGame(id) = launch;
+        let Some(index) = self.library.games.iter().position(|g| g.id == id.as_str()) else {
+            self.message = "This game is not in this device's library. Add the original files to recover its entry.".into();
+            self.navigate(app, Screen::Recover(None));
+            return Ok(());
+        };
+        if self.library.games[index]
+            .disc_list()
+            .iter()
+            .any(|d| fs::File::open(&d.path).is_err())
+        {
+            self.message = "The game's files moved or access was removed. Locate the original disc; your cards, session and controls are kept.".into();
+            self.navigate(app, Screen::Recover(Some(index)));
+            return Ok(());
+        }
+        if let Some(index) = self
+            .library
+            .games
+            .iter()
+            .position(|g| g.id == id.as_str() && g.system == System::Unknown)
+        {
+            self.navigate(app, Screen::Console(index));
+            return Ok(());
+        }
         let game = self
             .library
             .games
@@ -1784,9 +1973,37 @@ impl Player {
             .ok_or(
                 "This game is not in this device's library. Locate its files to recover the entry.",
             )?;
-        self.start(game)
+        if game.system == System::Ps2 {
+            let asset_name = std::ffi::CString::new("ps2/resources.tsv").unwrap();
+            let mut index = app
+                .asset_manager()
+                .open(&asset_name)
+                .ok_or("Bundled PS2 resources are unavailable.")?;
+            let index = std::str::from_utf8(index.buffer().map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+            for line in index.lines() {
+                let (name, digest) = line.split_once('\t').ok_or("Invalid PS2 resource index.")?;
+                let path = std::ffi::CString::new(format!("ps2/resources/{name}"))
+                    .map_err(|e| e.to_string())?;
+                let mut asset = app
+                    .asset_manager()
+                    .open(&path)
+                    .ok_or("A bundled PS2 resource is missing.")?;
+                psx_player::ps2::install_resource(
+                    &self.root,
+                    name,
+                    digest,
+                    asset.buffer().map_err(|e| e.to_string())?,
+                )?;
+            }
+        }
+        self.start(game)?;
+        self.resize(app)
     }
     fn start(&mut self, game: Game) -> Result<(), String> {
+        if !matches!(game.system, System::Ps1 | System::Ps2) {
+            return Err("This console is not supported yet.".into());
+        }
         let id = GameId::parse(&game.id)?;
         if self.core.is_some() && self.session.as_ref().is_some_and(|s| s.saved.game == id) {
             self.closing_menu = self.menu.take();
@@ -1798,21 +2015,36 @@ impl Player {
         for disc in game.disc_list() {
             fs::File::open(&disc.path).map_err(|_| "This game's files are unavailable. Locate the game to keep its existing progress.".to_string())?;
         }
+        let ps2_system = if game.system == System::Ps2 {
+            Some(psx_player::ps2::prepare(&self.root, &id)?)
+        } else {
+            None
+        };
+        if game.system == System::Ps2 && unsafe { libc::sysconf(libc::_SC_PAGESIZE) } != 4096 {
+            return Err(
+                "This PS2 build requires 4 KiB host pages. Your saved games are kept.".into(),
+            );
+        }
         self.close()?;
         let session =
             Runtime::restoring(&self.root, SavedSession { game: id }).map_err(|e| e.to_string())?;
         let launch_path = game.launch_path(&self.root).map_err(|e| e.to_string())?;
-        let library = Path::new("libswanstation.so");
+        let library = Path::new(if game.system == System::Ps2 {
+            "libarmsx2.so"
+        } else {
+            "libswanstation.so"
+        });
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         let jit = page_size == 4096;
         // Existing cached interpreter avoids 4KB JIT guard/mprotect assumptions
         // on 16KB kernels. Runtime performance there is still unqualified.
         let mut core = unsafe {
             Core::load(
+                game.system,
                 library,
                 &launch_path,
                 HostConfig {
-                    system: &self.root.join("system"),
+                    system: ps2_system.as_deref().unwrap_or(&self.root.join("system")),
                     save: &self.root.join("saves"),
                     audio: self.queue.clone(),
                     framebuffer: self.graphics.framebuffer(),
@@ -1820,13 +2052,33 @@ impl Player {
                     jit,
                     initial_disc: game.last_disc,
                 },
+                self.graphics.gles_version(),
             )?
         };
-        let card = MemoryCard::open(self.root.join("saves").join(format!("{}.srm", game.id)))
-            .map_err(|e| e.to_string())?;
-        core.restore_card(&card)?;
+        let card = if game.system == System::Ps1 {
+            let card = MemoryCard::open(self.root.join("saves").join(format!("{}.srm", game.id)))
+                .map_err(|e| e.to_string())?;
+            core.restore_card(&card)?;
+            Some(card)
+        } else {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !core.ready() {
+                core.run();
+                if Instant::now() >= deadline {
+                    return Err(
+                        "The PS2 firmware or renderer did not finish starting. Your card is kept."
+                            .into(),
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            core.pause(true)?;
+            None
+        };
         let av = core.state().av;
-        if !(45.0..=65.0).contains(&av.timing.fps) || av.timing.sample_rate != 44100. {
+        if !(45.0..=65.0).contains(&av.timing.fps)
+            || !matches!(av.timing.sample_rate, 44100. | 48000.)
+        {
             return Err("The core requested unsupported audio or frame timing.".into());
         }
         log::info!(
@@ -1836,25 +2088,37 @@ impl Player {
             page_size,
             jit
         );
+        self.queue.set_sample_rate(av.timing.sample_rate as usize);
         self.core = Some(core);
         self.session = Some(session);
-        self.card = Some(card);
+        self.card = card;
+        self.controller_settings = if game.system == System::Ps2 {
+            ControllerSettings::load_ps2(&self.root.join("ps2-controls"))
+        } else {
+            ControllerSettings::load(&self.root)
+        }
+        .map_err(|e| e.to_string())?;
         self.game = Some(game.clone());
         self.library.put(game.clone());
         self.library.save(&self.root).map_err(|e| e.to_string())?;
         self.activity.user_paused = false;
         self.checkpoint_dirty = false;
-        let checkpoint = resume::load(&self.root, &game, self.core.as_mut().unwrap().card_ram()?)
-            .map_err(|e| e.to_string())?;
+        self.checkpoint_valid = false;
+        let identity = self.core.as_mut().unwrap().card_identity()?;
+        let checkpoint = resume::load(&self.root, &game, &identity).map_err(|e| e.to_string())?;
         if let Some(checkpoint) = checkpoint {
             let core = self.core.as_mut().unwrap();
             core.restore_checkpoint(&checkpoint.bytes)?;
             // The durable card is authoritative even if the donor embeds one.
-            core.restore_card(self.card.as_ref().unwrap())?;
+            if let Some(card) = &self.card {
+                core.restore_card(card)?;
+            }
+            core.pause(false)?;
             core.run(); // Produce the restored picture, including paused resumes.
             self.activity.user_paused = checkpoint.metadata.paused;
             resume::mark_active(&self.root, &game).map_err(|e| e.to_string())?;
             log::info!("Automatic session restored");
+            self.checkpoint_valid = true;
         }
         self.closing_menu = self.menu.take();
         self.next_frame = Instant::now();
@@ -1869,8 +2133,13 @@ impl Player {
     fn tick(&mut self) -> Result<(), String> {
         self.dirty = true;
         let core = self.core.as_mut().unwrap();
-        core.state_mut().fast_forward = self.playback.speed != Speed::Normal;
-        core.state_mut().buttons = self.touches.frame_mask();
+        core.set_speed(self.playback.speed.multiplier())?;
+        core.pause(false)?;
+        core.input(
+            self.touches.frame_mask(),
+            self.touches.axes(),
+            self.playback.speed != Speed::Normal,
+        );
         let before = Instant::now();
         core.run();
         self.checkpoint_dirty = true;
@@ -1879,7 +2148,10 @@ impl Player {
         if core.state().shutdown {
             return Err("The game session stopped.".into());
         }
-        if core.state().hardware_frames > 0 && core.state().software_frames > 0 {
+        if self.game.as_ref().is_some_and(|g| g.system == System::Ps1)
+            && core.state().hardware_frames > 0
+            && core.state().software_frames > 0
+        {
             return Err("The hardware renderer stopped. Close and reopen the game.".into());
         }
         if core.state().hardware_frames == 0 && self.frames > 600 {
@@ -1899,7 +2171,10 @@ impl Player {
             self.next_frame = Instant::now();
         }
         if self.sound.is_none() {
-            self.sound = Some(Sound::start(self.queue.clone())?);
+            self.sound = Some(Sound::start(
+                self.queue.clone(),
+                core.state().av.timing.sample_rate as i32,
+            )?);
         }
         if self.last_flush.elapsed() >= Duration::from_secs(1) {
             self.flush()?;
@@ -1913,9 +2188,16 @@ impl Player {
         if self.last_report.elapsed() >= Duration::from_secs(10) {
             let elapsed = self.last_report.elapsed().as_secs_f64();
             let core = self.core.as_ref().unwrap();
-            log::info!("playback fps={:.2} speed={:.1}% core_ms={:.2} hw_frames={} sw_frames={} audio_queued={} underruns={} dropped={} target={}x",
+            if let Some([fps, speed, average, minimum, maximum]) = core.state().metrics {
+                log::info!("PS2 native metrics: vps={fps:.2} speed={speed:.1}% frame_ms={average:.2} min_ms={minimum:.2} max_ms={maximum:.2}");
+            }
+            if self.game.as_ref().is_some_and(|g| g.system == System::Ps2) {
+                log::info!("PS2 frontend: calls_per_second={:.2} call_ms={:.2} hardware_frames={} software_frames={} audio_queued={} underruns={} dropped={} requested={}x", self.frames as f64/elapsed, self.run_time.as_secs_f64()*1000./self.frames as f64, core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed),self.playback.speed.multiplier());
+            } else {
+                log::info!("playback fps={:.2} speed={:.1}% core_ms={:.2} hw_frames={} sw_frames={} audio_queued={} underruns={} dropped={} target={}x",
                 self.frames as f64/elapsed,self.frames as f64/elapsed/fps*100.,self.run_time.as_secs_f64()*1000./self.frames as f64,
                 core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed), self.playback.speed.multiplier());
+            }
             self.last_report = Instant::now();
             self.frames = 0;
             self.run_time = Duration::ZERO;
@@ -1923,8 +2205,8 @@ impl Player {
         Ok(())
     }
     fn flush(&mut self) -> Result<(), String> {
-        if let (Some(core), Some(card)) = (&mut self.core, &mut self.card) {
-            core.flush_card(card)?;
+        if let Some(core) = &mut self.core {
+            core.flush_card(self.card.as_mut())?;
         }
         Ok(())
     }
@@ -1948,6 +2230,7 @@ impl Player {
         if let Some(work) = self.checkpoint_work.take() {
             work.recv()
                 .map_err(|_| "The session save worker stopped.".to_string())??;
+            self.checkpoint_valid = true;
         }
         Ok(())
     }
@@ -1962,7 +2245,7 @@ impl Player {
         if let (Some(core), Some(game)) = (&mut self.core, &self.game) {
             let before = Instant::now();
             let state = core.checkpoint()?;
-            let card = core.card_ram()?.to_vec();
+            let card = core.card_identity()?;
             log::info!(
                 "Session snapshot prepared in {:.2} ms",
                 before.elapsed().as_secs_f64() * 1000.
@@ -2010,14 +2293,30 @@ impl Player {
             editor.cancel_touch();
         }
         if let Some(core) = &mut self.core {
-            core.state_mut().buttons = 0;
+            core.input(0, [0; 4], false);
         }
     }
     fn close(&mut self) -> Result<(), String> {
+        self.unload(true)
+    }
+    fn unload(&mut self, clear_active: bool) -> Result<(), String> {
         let had_game = self.core.is_some();
         self.interrupt()?;
         self.checkpoint()?;
+        let before = if self.checkpoint_valid
+            && self.game.as_ref().is_some_and(|g| g.system == System::Ps2)
+        {
+            self.core.as_mut().map(Core::card_identity).transpose()?
+        } else {
+            None
+        };
         self.core.take();
+        if let (Some(game), Some(before)) = (&self.game, before) {
+            let cards = self.root.join("ps2").join(&game.id).join("pcsx2/memcards");
+            let after = psx_player::ps2::card_identity(&cards).map_err(|e| e.to_string())?;
+            resume::seal_closed_cards(&self.root, game, &before, &after)
+                .map_err(|e| e.to_string())?;
+        }
         if let Some(session) = &mut self.session {
             session.state = SessionState::CheckpointedUnloaded;
         }
@@ -2025,7 +2324,7 @@ impl Player {
         self.card = None;
         self.game = None;
         self.queue.clear_stopped();
-        if had_game {
+        if had_game && clear_active {
             resume::clear_active(&self.root).map_err(|e| e.to_string())?;
         }
         Ok(())

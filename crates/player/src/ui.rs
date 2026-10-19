@@ -118,6 +118,7 @@ pub struct Row {
     pub artwork: Option<Artwork>,
     pub toggle: Option<bool>,
     pub slider: Option<u8>,
+    pub secondary: bool,
 }
 
 /// Visual response never delays logical input. Bounded interpolation keeps
@@ -133,6 +134,7 @@ pub struct Visuals {
     pub playback_paused: bool,
     pub playback_speed: u8,
     pub muted: bool,
+    pub axes: [i16; 4],
     pub pause_overlay: f32,
     pulses: [f32; 16],
 }
@@ -432,7 +434,11 @@ impl Editor {
         self.selected_bounds().same_bounds(expected)
     }
     fn defaults(&self) -> Layout {
-        Preset::default().layout_with_cutouts(self.width, self.height, &self.cutouts)
+        Preset {
+            analog: self.preset.analog,
+            ..Preset::default()
+        }
+        .layout_with_cutouts(self.width, self.height, &self.cutouts)
     }
     fn action_selected(&self, index: usize) -> bool {
         self.layout.action_elements().any(|i| i == index)
@@ -1159,6 +1165,7 @@ pub struct Menu {
 }
 
 impl Menu {
+    pub const SECONDARY: usize = 1 << 20;
     pub fn new(
         title: impl Into<String>,
         description: impl Into<String>,
@@ -1409,6 +1416,9 @@ impl Menu {
         for (index, row) in self.rows.iter().enumerate() {
             offset += row.height;
             if target < offset {
+                if row.secondary && x >= viewport.x + viewport.w - 48. {
+                    return Some(Self::SECONDARY + index);
+                }
                 return (row.enabled && row.slider.is_none()).then_some(index);
             }
         }

@@ -1,6 +1,7 @@
 //! Durable launch identities and temporary ownership. No platform handles enter
 //! game identities or saved machines; this milestone assigns one live runtime.
 use std::{
+    collections::VecDeque,
     fs::{self, File, OpenOptions},
     io,
     path::Path,
@@ -39,6 +40,29 @@ impl Launch {
         match self {
             Self::OpenGame(id) => format!("machinerhythm-psx://play/{}", id.as_str()),
         }
+    }
+}
+
+/// Ordered foreground requests. Coalesce repeated delivery, without losing a
+/// later A in an A/B/A switch. Saturation is an explicit busy result.
+#[derive(Default)]
+pub struct LaunchQueue(VecDeque<Launch>);
+impl LaunchQueue {
+    pub fn push(&mut self, launch: Launch) -> Result<(), &'static str> {
+        if self.0.back() == Some(&launch) {
+            return Ok(());
+        }
+        if self.0.len() >= 8 {
+            return Err("Several games are already opening. Please try again shortly.");
+        }
+        self.0.push_back(launch);
+        Ok(())
+    }
+    pub fn pop(&mut self) -> Option<Launch> {
+        self.0.pop_front()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -191,6 +215,27 @@ mod tests {
         }
         assert!(GameId::parse(&"a".repeat(65)).is_err());
         assert!(Launch::from_url("https://play/abc").is_err());
+    }
+    #[test]
+    fn repeated_launches_coalesce_and_different_targets_keep_their_order() {
+        let a = Launch::OpenGame(GameId::parse("abc").unwrap());
+        let b = Launch::OpenGame(GameId::parse("def").unwrap());
+        let mut queue = LaunchQueue::default();
+        for request in [&a, &a, &b, &b, &a] {
+            queue.push(request.clone()).unwrap();
+        }
+        assert_eq!(queue.pop(), Some(a.clone()));
+        assert_eq!(queue.pop(), Some(b));
+        assert_eq!(queue.pop(), Some(a));
+        assert!(queue.is_empty());
+        for i in 0..8 {
+            queue
+                .push(Launch::OpenGame(GameId::parse(&format!("{i:x}")).unwrap()))
+                .unwrap();
+        }
+        assert!(queue
+            .push(Launch::OpenGame(GameId::parse("9").unwrap()))
+            .is_err());
     }
     #[test]
     fn saved_sessions_outlive_runtime_assignment_and_competing_writers_are_refused() {

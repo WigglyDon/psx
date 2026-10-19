@@ -5,6 +5,7 @@ use jni::{
     JNIEnv, JavaVM,
 };
 use psx_player::files::{self, Game};
+use psx_player::session::{Launch, LaunchQueue};
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
@@ -16,6 +17,7 @@ use std::{
 pub const PICK_GAME: i32 = 101;
 pub const PICK_FIRMWARE: i32 = 102;
 pub const PICK_STORAGE: i32 = 103;
+pub const PICK_PS2_FIRMWARE: i32 = 105;
 
 pub enum Event {
     Documents(i32, Option<GlobalRef>),
@@ -25,6 +27,8 @@ pub enum Event {
     Background(bool),
     PauseBackground,
     Error(String),
+    Notice(String),
+    LaunchError(String),
     Insets {
         size: [i32; 2],
         density: f32,
@@ -36,6 +40,44 @@ pub enum Event {
     },
 }
 static EVENTS: Mutex<VecDeque<Event>> = Mutex::new(VecDeque::new());
+static LAUNCHES: Mutex<Option<LaunchQueue>> = Mutex::new(None);
+pub fn next_launch() -> Option<Launch> {
+    LAUNCHES.lock().ok()?.as_mut()?.pop()
+}
+fn receive_launch(env: &mut JNIEnv, intent: &JObject) -> JResult<()> {
+    if intent.is_null() {
+        return Ok(());
+    }
+    let data = env
+        .call_method(intent, "getDataString", "()Ljava/lang/String;", &[])?
+        .l()?;
+    if data.is_null() {
+        return Ok(());
+    }
+    let value: String = env.get_string(&JString::from(data))?.into();
+    let result = Launch::from_url(&value).and_then(|launch| {
+        LAUNCHES
+            .lock()
+            .map_err(|_| "Game launch is temporarily unavailable.")?
+            .get_or_insert_with(LaunchQueue::default)
+            .push(launch)
+    });
+    if let Err(error) = result {
+        post(Event::LaunchError(error.into()));
+    }
+    Ok(())
+}
+#[no_mangle]
+pub extern "system" fn Java_com_machinerhythm_psx_PsxActivity_gameIntent(
+    mut env: JNIEnv,
+    _this: JObject,
+    intent: JObject,
+) {
+    if receive_launch(&mut env, &intent).is_err() {
+        let _ = env.exception_clear();
+        post(Event::Error("This game link could not be opened.".into()));
+    }
+}
 pub(super) fn post(event: Event) {
     if let Ok(mut events) = EVENTS.lock() {
         if events.len() < 16 {
@@ -128,9 +170,14 @@ impl Platform {
     pub unsafe fn new(app: &AndroidApp) -> Result<Self, String> {
         let vm = JavaVM::from_raw(app.vm_as_ptr() as _).map_err(|e| e.to_string())?;
         let activity = {
-            let env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+            let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
             let local = JObject::from_raw(app.activity_as_ptr() as jobject);
             let global = env.new_global_ref(&local).map_err(|e| e.to_string())?;
+            let intent = env
+                .call_method(&local, "getIntent", "()Landroid/content/Intent;", &[])
+                .and_then(|v| v.l())
+                .map_err(|e| e.to_string())?;
+            receive_launch(&mut env, &intent).map_err(|e| e.to_string())?;
             // Android owns this reference, not this local JObject wrapper.
             let _ = local.into_raw();
             global
@@ -141,7 +188,7 @@ impl Platform {
         })
     }
 
-    fn ui(
+    pub(super) fn ui(
         &self,
         app: &AndroidApp,
         callback: impl FnOnce(&mut JNIEnv, &JObject) -> JResult<()> + Send + 'static,
@@ -700,12 +747,27 @@ impl Platform {
         root: PathBuf,
         request: i32,
         intent: GlobalRef,
+        relink: Option<(Game, usize)>,
     ) -> mpsc::Receiver<Result<Option<Game>, String>> {
         let platform = self.clone();
         let (tx, rx) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let result = platform
                 .import_inner(&root, request, &intent)
+                .and_then(|selected| {
+                    if let (Some((game, index)), Some(selected)) = (relink, &selected) {
+                        psx_player::library::relink(
+                            game,
+                            index,
+                            &selected.path,
+                            &std::sync::atomic::AtomicBool::new(false),
+                        )
+                        .map(Some)
+                        .map_err(Into::into)
+                    } else {
+                        Ok(selected)
+                    }
+                })
                 .map_err(|e| e.to_string());
             let _ = tx.send(result);
         });
@@ -845,18 +907,27 @@ impl Platform {
                 env.exception_clear()?;
             }
         }
-        if request == PICK_FIRMWARE {
+        if request == PICK_FIRMWARE || request == PICK_PS2_FIRMWARE {
             if documents.len() != 1 {
-                return Err("Select one PS1 firmware file.".into());
+                return Err("Select one firmware file.".into());
             }
             let name = documents.keys().next().unwrap();
             let path = staging.join(name);
             let size = fs::metadata(&path)?.len();
-            if ![512 * 1024, 4 * 1024 * 1024, 0x3E66F0].contains(&size) {
+            if request == PICK_PS2_FIRMWARE && size != 4 * 1024 * 1024 {
+                return Err("Select a compatible 4 MiB PS2 firmware dump.".into());
+            }
+            if request == PICK_FIRMWARE && ![512 * 1024, 4 * 1024 * 1024, 0x3E66F0].contains(&size)
+            {
                 return Err("That file is not a supported PS1 firmware size. Select a compatible firmware dump.".into());
             }
-            fs::create_dir_all(root.join("system"))?;
-            fs::rename(&path, root.join("system").join(name))?;
+            let system = root.join(if request == PICK_PS2_FIRMWARE {
+                "system/ps2/bios"
+            } else {
+                "system"
+            });
+            fs::create_dir_all(&system)?;
+            fs::rename(&path, system.join(name))?;
             fs::remove_dir_all(staging)?;
             Ok(None)
         } else {

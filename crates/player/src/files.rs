@@ -8,8 +8,33 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum System {
+    #[default]
+    Ps1,
+    Ps2,
+    Ps3,
+    Unknown,
+}
+impl System {
+    pub fn is_ps1(&self) -> bool {
+        *self == Self::Ps1
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ps1 => "PlayStation",
+            Self::Ps2 => "PlayStation 2",
+            Self::Ps3 => "PlayStation 3",
+            Self::Unknown => "Choose console",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Game {
+    #[serde(default, skip_serializing_if = "System::is_ps1")]
+    pub system: System,
     pub id: String,
     pub title: String,
     pub path: PathBuf,
@@ -178,6 +203,9 @@ pub fn finish_import(
         File::open(directory.parent().unwrap())?.sync_all()?;
     }
     Ok(Game {
+        system: crate::content::inspect(&directory.join(name))
+            .map(|i| i.0)
+            .unwrap_or(System::Unknown),
         id,
         title: Path::new(name)
             .file_stem()
@@ -211,6 +239,23 @@ pub(crate) fn legacy_recent(root: &Path) -> Option<Game> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_records_keep_their_ps1_identity_and_serialized_fields() {
+        let old =
+            r#"{"id":"abc123","title":"Existing game","path":"game.cue","discs":[],"last_disc":0}"#;
+        let game: Game = serde_json::from_str(old).unwrap();
+        assert_eq!(game.system, System::Ps1);
+        assert_eq!(game.id, "abc123");
+        assert_eq!(
+            serde_json::to_value(&game).unwrap(),
+            serde_json::from_str::<serde_json::Value>(old).unwrap()
+        );
+        let mut ps2 = game.clone();
+        ps2.system = System::Ps2;
+        let restored: Game = serde_json::from_slice(&serde_json::to_vec(&ps2).unwrap()).unwrap();
+        assert_eq!(restored.system, System::Ps2);
+        assert_eq!(restored.id, game.id);
+    }
     #[test]
     fn companion_paths_cannot_escape_granted_import() {
         assert_eq!(

@@ -152,3 +152,20 @@ merely because it can scan files. Preserve a scoped-access packaging path
 and treat broad-scan Play permission as a separate unresolved release gate;
 do not describe the development APK as cleared for Play submission.
 [Google Play permission policy](https://support.google.com/googleplay/android-developer/answer/10467955?hl=en)
+
+## PS2 extension
+
+PLAYER-2 qualifies ARMSX2 at the exact revision and dependency graph in
+`upstream.lock.json`. Its original GPL and per-file/dependency terms remain
+applicable, including the recorded adapter changes. A combined PS1/PS2 APK
+must carry both engines' notices and complete corresponding-source inputs.
+The qualification build disables floating native patch downloads and bundles
+its native code and matching resources. Proprietary PS2 firmware and games
+remain owner-provided private inputs.
+
+The current PS2 Android candidate uses the existing ARM64 recompilers and a
+4 KiB host-page configuration. Its GLES, real gameplay, performance and save
+results require their own device observations. No stock-iOS non-JIT result,
+16 KiB PS2 runtime result or additional App Store distribution permission has
+been established. The existing PS1 stock-iOS route and all store/privacy gates
+above remain requirements; PS2 qualification does not waive them.

@@ -1,7 +1,7 @@
 //! Local discovery and persistent choices. Scanning never enters the core and
 //! never reads unrelated file contents. Android supplies authorized roots.
 use crate::{
-    files::{self, Disc, Game},
+    files::{self, Disc, Game, System},
     saves::atomic_write,
 };
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, Read},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -58,6 +58,7 @@ pub struct FoundDisc {
 }
 #[derive(Debug, Clone)]
 pub struct FoundGame {
+    pub system: System,
     pub title: String,
     pub key: String,
     pub discs: Vec<FoundDisc>,
@@ -96,80 +97,9 @@ pub fn disc_name(path: &Path) -> (String, u32) {
     (stem.into_owned(), 1)
 }
 
-fn read_at(file: &mut File, offset: u64, size: usize) -> io::Result<Vec<u8>> {
-    file.seek(SeekFrom::Start(offset))?;
-    let mut bytes = vec![0; size];
-    file.read_exact(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn ps1_volume(path: &Path) -> io::Result<bool> {
-    let mut file = File::open(path)?;
-    for (sector, header) in [(2048, 0), (2352, 24), (2352, 16), (2336, 8)] {
-        if let Ok(bytes) = read_at(&mut file, 16 * sector + header, 40) {
-            if bytes[0] == 1 && &bytes[1..6] == b"CD001" && bytes[8..40].starts_with(b"PLAYSTATION")
-            {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
-
 /// Fast structural checks, not a claim of complete game compatibility.
 pub fn inspect_disc(path: &Path) -> io::Result<String> {
-    let extension = files::extension(&path.to_string_lossy());
-    if extension == "cue" {
-        if fs::metadata(path)?.len() > 1024 * 1024 {
-            return Err(io::Error::other("The CUE is too large."));
-        }
-        let text = fs::read_to_string(path)?;
-        let tracks = files::cue_tracks(&text)?;
-        let parent = path
-            .parent()
-            .ok_or_else(|| io::Error::other("The CUE has no directory."))?;
-        let mut ps1 = false;
-        for track in tracks {
-            let track = parent.join(track);
-            if !track.is_file() {
-                return Err(io::Error::other("A CUE track is missing."));
-            }
-            ps1 |= ps1_volume(&track)?;
-        }
-        if ps1 {
-            return Ok("PS1 CUE".into());
-        }
-    } else if matches!(extension.as_str(), "iso" | "bin") {
-        if ps1_volume(path)? {
-            return Ok("PS1 disc image".into());
-        }
-    } else {
-        let mut file = File::open(path)?;
-        let header = read_at(&mut file, 0, 40)?;
-        match extension.as_str() {
-            "chd"
-                if &header[..8] == b"MComprHD"
-                    && (3..=5)
-                        .contains(&u32::from_be_bytes(header[12..16].try_into().unwrap())) =>
-            {
-                return Ok("CHD container; compatibility checked on open".into())
-            }
-            "exe" if &header[..8] == b"PS-X EXE" && file.metadata()?.len() >= 2048 => {
-                return Ok("PS-X EXE".into())
-            }
-            "pbp" if &header[..4] == b"\0PBP" => {
-                let offset = u32::from_le_bytes(header[36..40].try_into().unwrap());
-                let psar = read_at(&mut file, offset as u64, 16)?;
-                if psar.starts_with(b"PSISOIMG0000") || psar.starts_with(b"PSTITLEIMG000000") {
-                    return Ok("PS1 PBP".into());
-                }
-            }
-            _ => {}
-        }
-    }
-    Err(io::Error::other(
-        "The file does not have a supported PS1 image header.",
-    ))
+    crate::content::inspect(path).map(|(_, format)| format)
 }
 
 pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> Scan {
@@ -246,7 +176,7 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> Scan {
             }
         }
     }
-    let mut groups: BTreeMap<String, FoundGame> = BTreeMap::new();
+    let mut groups: BTreeMap<(System, String), FoundGame> = BTreeMap::new();
     for path in candidates {
         if cancel.load(Ordering::Relaxed) {
             break;
@@ -254,15 +184,18 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> Scan {
         if referenced.contains(&path) {
             continue;
         }
-        match inspect_disc(&path) {
-            Ok(format) => {
+        match crate::content::inspect(&path) {
+            Ok((system, format)) => {
                 let (title, number) = disc_name(&path);
                 let key = title.to_lowercase();
-                let game = groups.entry(key.clone()).or_insert_with(|| FoundGame {
-                    title,
-                    key,
-                    discs: Vec::new(),
-                });
+                let game = groups
+                    .entry((system, key.clone()))
+                    .or_insert_with(|| FoundGame {
+                        system,
+                        title,
+                        key,
+                        discs: Vec::new(),
+                    });
                 game.discs.push(FoundDisc {
                     path,
                     number,
@@ -297,9 +230,15 @@ fn digest(path: &Path, cancel: &AtomicBool) -> io::Result<String> {
 }
 
 fn disc_id(path: &Path, cancel: &AtomicBool) -> io::Result<String> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::other("Missing disc name"))?
+        .to_string_lossy();
+    disc_id_as(path, &name, cancel)
+}
+fn disc_id_as(path: &Path, identity_name: &str, cancel: &AtomicBool) -> io::Result<String> {
     let mut selected = BTreeMap::new();
-    let name = path.file_name().unwrap().to_string_lossy().into_owned();
-    selected.insert(name, digest(path, cancel)?);
+    selected.insert(identity_name.to_owned(), digest(path, cancel)?);
     if files::extension(&path.to_string_lossy()) == "cue" {
         for track in files::cue_tracks(&fs::read_to_string(path)?)? {
             selected.insert(
@@ -316,6 +255,32 @@ fn disc_id(path: &Path, cancel: &AtomicBool) -> io::Result<String> {
         hash.update(digest.as_bytes());
     }
     Ok(format!("{:x}", hash.finalize()))
+}
+
+/// Resolve the same saved entry after directory or primary-file relocation.
+/// Verify using its original import identity, never a matching title alone.
+pub fn relink(mut game: Game, index: usize, path: &Path, cancel: &AtomicBool) -> io::Result<Game> {
+    inspect_disc(path)?;
+    let mut discs = game.disc_list();
+    let disc = discs
+        .get_mut(index)
+        .ok_or_else(|| io::Error::other("This disc is no longer in the entry."))?;
+    let name = disc
+        .path
+        .file_name()
+        .ok_or_else(|| io::Error::other("The original disc name is unavailable."))?
+        .to_string_lossy();
+    if disc_id_as(path, &name, cancel)? != disc.id {
+        return Err(io::Error::other("These files do not match the missing disc. Select the original disc contents; this entry's progress is kept."));
+    }
+    disc.path = path.to_owned();
+    if index == 0 {
+        game.path = path.to_owned();
+    }
+    if !game.discs.is_empty() {
+        game.discs = discs;
+    }
+    Ok(game)
 }
 
 /// Only selected games are hashed. Save once after successful completion;
@@ -349,10 +314,12 @@ pub fn add(root: &Path, selected: Vec<FoundGame>, cancel: &AtomicBool) -> io::Re
                 game.disc_list()
                     .iter()
                     .any(|d| discs.iter().any(|new| new.id == d.id))
-                    || disc_name(&game.path).0.to_lowercase() == found.key
+                    || (game.system == found.system
+                        && disc_name(&game.path).0.to_lowercase() == found.key)
             })
             .cloned();
         let mut game = existing.unwrap_or_else(|| Game {
+            system: found.system,
             id: discs[0].id.clone(),
             title: found.title.clone(),
             path: discs[0].path.clone(),
@@ -392,6 +359,7 @@ mod tests {
         let path = root.join("fixture.iso");
         fs::write(&path, b"synthetic migration fixture").unwrap();
         let game = Game {
+            system: System::Ps1,
             id: "abc123".into(),
             title: "Fixture".into(),
             path,
@@ -435,6 +403,7 @@ mod tests {
         let mut bin = vec![0; 2352 * 18];
         let start = 2352 * 16 + 24;
         bin[start..start + 6].copy_from_slice(b"\x01CD001");
+        bin[start + 6] = 1;
         bin[start + 8..start + 19].copy_from_slice(b"PLAYSTATION");
         fs::write(root.join("track.bin"), bin).unwrap();
         fs::write(root.join("fake.iso"), b"not a game").unwrap();
@@ -454,6 +423,19 @@ mod tests {
         assert_eq!(extra.discs.len(), 2);
         assert!(extra.launch_path(&root).unwrap().is_file());
         assert_eq!(extra.id, id);
+        let renamed = root.join("relocated.cue");
+        fs::copy(&cue, &renamed).unwrap();
+        let relinked = relink(extra.clone(), 0, &renamed, &cancel).unwrap();
+        assert_eq!(relinked.id, extra.id);
+        assert_eq!(relinked.discs[0].id, extra.discs[0].id);
+        assert_eq!(relinked.last_disc, extra.last_disc);
+        let mut changed = fs::read(root.join("track.bin")).unwrap();
+        changed[0] ^= 1;
+        fs::write(root.join("track.bin"), changed).unwrap();
+        assert!(relink(extra.clone(), 0, &renamed, &cancel)
+            .unwrap_err()
+            .to_string()
+            .contains("do not match"));
         fs::remove_dir_all(root).unwrap();
     }
 }

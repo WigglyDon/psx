@@ -365,3 +365,43 @@ disc and reports the result. The emulated machine is not reset by a swap.
 These sources justify the initial integration route; they do not prove this
 particular application works on a phone.
 
+
+## PLAYER-2 engine and launch boundary
+
+`engine::Core` selects the two actual bindings from saved `System` metadata;
+it is not a user-facing core selector. Legacy records default to PS1 without
+renaming IDs, cards or profiles. ISO9660 `SYSTEM.CNF` BOOT/BOOT2 metadata can
+distinguish the consoles; a CHD header alone cannot. Ambiguous new entries ask
+once. PS3 has a reserved identifier and no nonfunctional library section.
+
+The PS1 callback path above retains its single-thread TLS ownership. ARMSX2
+has separate CPU/GS owners and creates its own EGL context sharing the host's
+context. Its Rust callbacks use an immutable `Arc` binding, atomic input and
+bounded audio, and synchronized output/metric snapshots. No mutable callback
+reference crosses native threads. The binding and library remain alive until
+native context destruction and CPU/GS teardown finish. Both bindings acquire
+the same process core lease, inside the entry's durable writer lease.
+
+PS2 accepts only actual GLES capability at or above the donor's required
+version, 48 kHz stereo, bounded native-resolution output and a 68 MiB state
+buffer. The adapter forwards supported CPU-owner pause, flush and speed
+operations; timing and completed native performance metrics are distinct from
+frontend calls. Rust disables automatic guest-clock tuning and cycle skipping
+for qualification. PS2 background play is not inherited from PS1's opt-in.
+Dual-analog/digital touch and normalized editor profiles have separate PS2
+storage, retaining all existing PS1 profile names and element positions.
+
+Collection and platform links enter the same `OpenGame(GameId)` flow. Android
+initial intents precede automatic resume. Warm intents enter a bounded ordered
+queue that coalesces adjacent duplicate targets; different targets serialize.
+The link carries no core, executable or writable save path. Missing entries
+and files show a recovery sheet without deleting a saved session or stopping
+another game. Relinking verifies the original content identity using its
+original primary name, permitting directory and primary-file relocation.
+
+Native pinned shortcuts use a stable entry ID, local artwork and explicit
+Activity intent. The platform asks for launcher confirmation. An accepted
+request is distinct from a confirmed pin; a callback-only receiver records the
+latter. Existing pins receive title/local-art updates from the collection.
+Removing a launcher icon does not mutate the collection or saved progress.
+These are implemented contracts; device acceptance is tracked in PLAYER-2.

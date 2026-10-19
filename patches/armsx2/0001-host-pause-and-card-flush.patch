@@ -1,0 +1,163 @@
+diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
+index 24210fb06..d965765a7 100644
+--- a/pcsx2-libretro/Main.cpp
++++ b/pcsx2-libretro/Main.cpp
+@@ -77,6 +77,8 @@
+ #include "pcsx2/GS/Renderers/OpenGL/GLLibretro.h"
+ #include "pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.h"
+ #endif
++
++#include "pcsx2/SIO/Memcard/MemoryCardFile.h"
+ #include "pcsx2/GameList.h"
+ #include "pcsx2/Host.h"
+ #include "pcsx2/IopThread/OwnerAsserts.h"
+@@ -442,6 +444,12 @@ void Host::OnGameChanged(const std::string& title, const std::string& elf_overri
+ 
+ void Host::OnPerformanceMetricsUpdated()
+ {
++	// Forward the donor's own completed metric sample on its owning thread.
++	// The psx host copies this bounded payload; it never reads native globals.
++	float metrics[] = { PerformanceMetrics::GetFPS(), PerformanceMetrics::GetSpeed(),
++		PerformanceMetrics::GetAverageFrameTime(), PerformanceMetrics::GetMinimumFrameTime(),
++		PerformanceMetrics::GetMaximumFrameTime() };
++	environ_cb(0x20000, metrics);
+ }
+ 
+ void Host::OnSaveStateLoading(const std::string_view filename)
+@@ -2357,6 +2365,64 @@ RETRO_API size_t retro_serialize_size(void)
+ 	return VMManager::HasValidVM() ? kSerializeSize : 0;
+ }
+ 
++// psx adapter: expose the existing CPU-owner pause and file-card flush. Host
++// policy remains in Rust. Stop the GS handoff before a blocking CPU callback.
++RETRO_API bool retro_psx_set_paused(bool paused)
++{
++	if (!LibretroCore::s_vm_thread_running.load(std::memory_order_acquire) || !VMManager::HasValidVM())
++		return false;
++#ifdef ENABLE_VULKAN
++	VKLibretro::SetPacing(false);
++#endif
++#ifdef ENABLE_OPENGL
++	GLLibretro::SetPacing(false);
++#endif
++	bool ok = false;
++	Host::RunOnCPUThread([paused, &ok]() {
++		if (!VMManager::HasValidVM())
++			return;
++		VMManager::SetState(paused ? VMState::Paused : VMState::Running);
++		ok = true;
++	}, true);
++#ifdef ENABLE_VULKAN
++	if (!paused && LibretroCore::s_context_ready.load(std::memory_order_acquire))
++		VKLibretro::SetPacing(true);
++#endif
++#ifdef ENABLE_OPENGL
++	if (!paused && GLLibretro::Active && LibretroCore::s_context_ready.load(std::memory_order_acquire))
++		GLLibretro::SetPacing(true);
++#endif
++	return ok;
++}
++
++RETRO_API bool retro_psx_flush_cards(void)
++{
++	if (!LibretroCore::s_vm_thread_running.load(std::memory_order_acquire) || !VMManager::HasValidVM())
++		return false;
++	bool ok = false;
++	Host::RunOnCPUThread([&ok]() { ok = VMManager::HasValidVM() && FileMcd_Flush(); }, true);
++	return ok;
++}
++
++RETRO_API bool retro_psx_ready(void)
++{
++	return LibretroCore::s_vm_thread_running.load(std::memory_order_acquire) && VMManager::HasValidVM();
++}
++
++RETRO_API bool retro_psx_set_speed(float multiplier)
++{
++	if (!retro_psx_ready())
++		return false;
++	Host::RunOnCPUThread([multiplier]() {
++		{
++			auto lock = Host::GetSettingsLock();
++			s_base_settings->SetFloatValue("Framerate", "NominalScalar", multiplier);
++		}
++		VMManager::ApplySettings();
++	}, true);
++	return true;
++}
++
+ RETRO_API bool retro_serialize(void* data, size_t size)
+ {
+ 	if (!VMManager::HasValidVM())
+diff --git a/pcsx2/SIO/Memcard/MemoryCardFile.cpp b/pcsx2/SIO/Memcard/MemoryCardFile.cpp
+index 3dc480eb0..e234d5212 100644
+--- a/pcsx2/SIO/Memcard/MemoryCardFile.cpp
++++ b/pcsx2/SIO/Memcard/MemoryCardFile.cpp
+@@ -194,7 +194,7 @@ public:
+ 
+ 	void Open();
+ 	void Close();
+-	void Flush();
++	bool Flush();
+ 
+ 	s32 IsPresent(uint slot);
+ 	void GetSizeInfo(uint slot, McdSizeInfo& outways);
+@@ -368,8 +368,9 @@ void FileMemoryCard::Open()
+ // closing anything. The console keeps playing afterwards; this exists so a host that is about to
+ // lose the process -- Android backgrounding the app, which can then be reclaimed with no further
+ // callback -- can bank what has been written so far.
+-void FileMemoryCard::Flush()
++bool FileMemoryCard::Flush()
+ {
++	bool ok = true;
+ 	for (int slot = 0; slot < 8; ++slot)
+ 	{
+ 		if (!m_file[slot])
+@@ -381,8 +382,10 @@ void FileMemoryCard::Flush()
+ 		// m_chkaddr, which is card data rather than a header field we own, on a path
+ 		// upstream never writes on -- and it would buy nothing, because a stale value only
+ 		// costs one auto-eject on the next savestate load, which is the safe direction.
+-		std::fflush(m_file[slot]);
++		if (std::fflush(m_file[slot]) != 0)
++			ok = false;
+ 	}
++	return ok;
+ }
+ 
+ void FileMemoryCard::Close()
+@@ -686,12 +689,12 @@ void FileMcd_EmuClose()
+ 	Mcd::impl.Close();
+ }
+ 
+-void FileMcd_Flush()
++bool FileMcd_Flush()
+ {
+ 	if (!FileMcd_Open)
+-		return;
++		return true;
+ 	Mcd::implFolder.Flush();
+-	Mcd::impl.Flush();
++	return Mcd::impl.Flush();
+ }
+ 
+ void FileMcd_CancelEject()
+diff --git a/pcsx2/SIO/Memcard/MemoryCardFile.h b/pcsx2/SIO/Memcard/MemoryCardFile.h
+index bafc4ca74..d65039cbb 100644
+--- a/pcsx2/SIO/Memcard/MemoryCardFile.h
++++ b/pcsx2/SIO/Memcard/MemoryCardFile.h
+@@ -42,7 +42,7 @@ void FileMcd_EmuOpen();
+ void FileMcd_EmuClose();
+ // Write out everything buffered for the open cards without closing them, so a host that is about
+ // to lose the process does not lose the writes that have not reached the file system yet.
+-void FileMcd_Flush();
++bool FileMcd_Flush();
+ void FileMcd_CancelEject();
+ void FileMcd_Reopen(std::string new_serial);
+ void FileMcd_Swap();
+@@ -63,4 +63,4 @@ bool FileMcd_IsMemoryCardFormatted(const std::string& path);
+ bool FileMcd_IsMemoryCardFormatted(std::FILE* fp);
+ bool FileMcd_CreateNewCard(const std::string_view name, MemoryCardType type, MemoryCardFileType file_type);
+ bool FileMcd_RenameCard(const std::string_view name, const std::string_view new_name);
+-bool FileMcd_DeleteCard(const std::string_view name);
+\ No newline at end of file
++bool FileMcd_DeleteCard(const std::string_view name);

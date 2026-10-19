@@ -2,7 +2,7 @@
 
 Clone with `git clone --recurse-submodules https://github.com/WigglyDon/psx`.
 For an existing checkout, run `git submodule update --init --recursive`.
-The submodule must be the exact revision in `upstream.lock.json`; the build
+The submodules must be the exact revisions in `upstream.lock.json`; the build
 rejects a different revision, modified tracked core source or license hash.
 
 The development build uses Rust 1.96.1 (pinned in `rust-toolchain.toml`), the
@@ -35,7 +35,7 @@ Raw build logs and APKs stay outside Git. Development signing material stays
 under ignored `.local/signing/`; retain that key to update an installation
 without losing its data. The development key is not a store signing key.
 
-`xtask` is Rust. It builds the unmodified upstream CMake target, statically
+`xtask` is Rust. It builds the unmodified PS1 upstream CMake target, statically
 links its C++ runtime, builds the Rust NativeActivity library, generates the
 callback forwarding class described below, compiles it with Android's D8,
 packages licenses, aligns the APK and signs it. No Gradle application layer,
@@ -44,7 +44,7 @@ managed UI renderer or native-core downloader is involved.
 The native libraries use ELF LOAD alignment of at least 16 KB; the APK is
 checked with `zipalign -c -P 16`. These checks establish alignment, not
 16 KB runtime qualification. The donor's JIT guard and host-page constants
-assume 4 KB. The Rust host selects its existing cached interpreter on other
+assume 4 KB. The PS1 host selects its existing cached interpreter on other
 page sizes, preserving a path to testing without changing core internals.
 Actual speed and complete memory mapping behavior on 16 KB Android remain
 unverified until that environment runs the application.
@@ -139,3 +139,34 @@ Pair any distributed APK with the source bundle for its exact project
 revision, required notices and build instructions. Source packaging is one
 part of release preparation; it does not settle the store/distribution
 questions in [distribution.md](distribution.md).
+
+## PLAYER-2 engine build
+
+`cargo xtask ps2` builds the pinned ARMSX2 libretro ARM64 candidate and its
+locked source dependencies. `cargo xtask apk` includes that step and packages
+both engines. Install host Flex, Bison and M4 as build tools. The first run
+fetches the exact commits in `vendor/armsx2-dependencies/revisions.tsv`, including
+nested repositories. Later runs verify those sources rather than updating
+floating tags. `PSX_BUILD_JOBS` defaults to 2. Core sources stage under
+`build/armsx2-source`; the original submodule remains unchanged.
+
+The recipe disables Qt, standalone SDL UI, tests, unpinned patch downloads and
+unrelated display backends. It uses GLES, native resolution, static/PIC
+libraries, Android API 28 and the recorded 4 KiB host-page path. The PS2 host
+checks actual GLES capability and refuses other page sizes with saved data
+intact. The existing PS1 interpreter fallback remains separate; ELF alignment
+alone does not qualify the PS2 JIT for a 16 KiB host.
+
+`PSX_PS2_DEPENDENCY_SOURCES` can name an existing exact locked source cache.
+`PSX_PS2_CORE_SOURCE` can name a qualification checkout only when its revision
+and complete tracked diff equal the recorded core and patch. These are build
+inputs, never runtime core-download or user-facing core-selection options.
+A corresponding-source bundle includes dependency trees and source manifests
+for offline builds without their Git metadata. Standard Android and Rust
+build tools are still external requirements.
+
+The Activity shim also forwards `onNewIntent`. A generated, non-exported
+`ShortcutReceiver` forwards Android's confirmed-pin broadcast. Rust constructs
+the intents, validates game IDs, requests native confirmation, updates local
+icons and owns every launch decision. Neither shim implements application
+logic. Missing confirmation is not reported as a successful pin.

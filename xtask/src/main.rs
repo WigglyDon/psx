@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+mod ps2;
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -35,6 +36,7 @@ fn run() -> Result<()> {
         Some("notices") => notices(),
         Some("source") => source_bundle(),
         Some("firmware") => firmware(),
+        Some("ps2") => ps2::build(),
         _ => {
             eprintln!("Usage: cargo xtask apk | verify | notices | source | firmware\nSet ANDROID_SDK_ROOT, ANDROID_NDK_HOME, ANDROID_BUILD_TOOLS (default 37.0.0), ANDROID_PLATFORM (default android-37.0). Compile SDK may exceed target API 36. Requires Java with javac module, cmake, ninja, zip, unzip, Rust Android target. Source bundles also use tar, gzip and cargo vendor. Firmware reproduction uses Podman and the pinned Linux amd64 compiler image.");
             Ok(())
@@ -155,6 +157,7 @@ fn source_bundle() -> Result<()> {
         CORE_REV,
         &staging.join("vendor/swanstation"),
     )?;
+    ps2::archive(&staging)?;
     fs::write(
         staging.join("SOURCE-CHECK.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
@@ -380,6 +383,7 @@ fn core_epoch() -> Result<String> {
 
 fn apk() -> Result<()> {
     verify_core()?;
+    ps2::build()?;
     let (sdk, ndk, build) = tools()?;
     let platform = env::var("ANDROID_PLATFORM").unwrap_or("android-37.0".into());
     let jar = sdk.join("platforms").join(platform).join("android.jar");
@@ -472,6 +476,10 @@ public final class PsxActivity extends android.app.NativeActivity implements
  static { System.loadLibrary("psx"); }
  private native void documentResult(int request, int result, android.content.Intent data);
  private native void audioFocusChanged(int focus);
+ private native void gameIntent(android.content.Intent intent);
+ @Override protected void onNewIntent(android.content.Intent intent) {
+  super.onNewIntent(intent); gameIntent(intent);
+ }
  @Override protected void onActivityResult(int request, int result, android.content.Intent data) {
   super.onActivityResult(request, result, data); documentResult(request, result, data);
  }
@@ -480,6 +488,19 @@ public final class PsxActivity extends android.app.NativeActivity implements
 "#,
     )?;
     let service_java = Path::new("build/apk/PlaybackService.java");
+    let shortcut_java = Path::new("build/apk/ShortcutReceiver.java");
+    // BroadcastReceiver lifecycle cannot be registered through the NDK.
+    // Only the callback is forwarded; pin and launch policy lives in Rust.
+    fs::write(
+        shortcut_java,
+        r#"package com.machinerhythm.psx;
+public final class ShortcutReceiver extends android.content.BroadcastReceiver {
+ static { System.loadLibrary("psx"); }
+ private native void confirmed(android.content.Context context, android.content.Intent intent);
+ @Override public void onReceive(android.content.Context context, android.content.Intent intent) { confirmed(context, intent); }
+}
+"#,
+    )?;
     // Service callbacks, like NativeActivity callbacks, cannot be registered
     // directly through the NDK. Lifecycle/notification policy remains Rust.
     fs::write(
@@ -509,6 +530,7 @@ public final class PlaybackService extends android.app.Service {
             "build/apk/classes".into(),
             java.as_os_str().into(),
             service_java.as_os_str().into(),
+            shortcut_java.as_os_str().into(),
         ],
     ))?;
     execute(&mut command(
@@ -522,9 +544,11 @@ public final class PlaybackService extends android.app.Service {
             "build/apk/dex".into(),
             "build/apk/classes/com/machinerhythm/psx/PsxActivity.class".into(),
             "build/apk/classes/com/machinerhythm/psx/PlaybackService.class".into(),
+            "build/apk/classes/com/machinerhythm/psx/ShortcutReceiver.class".into(),
         ],
     ))?;
     notices()?;
+    ps2::resources()?;
     execute(&mut command(
         build.join("aapt2"),
         [
@@ -560,6 +584,10 @@ public final class PlaybackService extends android.app.Service {
         "build/core-android/swanstation_libretro_android.so",
         "build/apk/package/lib/arm64-v8a/libswanstation.so",
     )?;
+    fs::copy(
+        "build/armsx2-android/bin/armsx2_libretro.so",
+        "build/apk/package/lib/arm64-v8a/libarmsx2.so",
+    )?;
     fs::copy("build/apk/dex/classes.dex", "build/apk/package/classes.dex")?;
     execute(&mut command(
         bin.join("llvm-strip"),
@@ -567,6 +595,7 @@ public final class PlaybackService extends android.app.Service {
             "--strip-unneeded",
             "build/apk/package/lib/arm64-v8a/libpsx.so",
             "build/apk/package/lib/arm64-v8a/libswanstation.so",
+            "build/apk/package/lib/arm64-v8a/libarmsx2.so",
         ],
     ))?;
     let destination = env::current_dir()?.join("build/apk/unsigned.apk");
@@ -580,6 +609,7 @@ public final class PlaybackService extends android.app.Service {
                 "classes.dex".into(),
                 "lib/arm64-v8a/libpsx.so".into(),
                 "lib/arm64-v8a/libswanstation.so".into(),
+                "lib/arm64-v8a/libarmsx2.so".into(),
             ],
         )
         .current_dir("build/apk/package"),
@@ -659,7 +689,7 @@ fn verify_apk() -> Result<()> {
         ["-c", "-P", "16", "4", "build/psx-development.apk"],
     ))?;
     let readelf = ndk.join("toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf");
-    for name in ["libpsx.so", "libswanstation.so"] {
+    for name in ["libpsx.so", "libswanstation.so", "libarmsx2.so"] {
         let path = format!("build/apk/package/lib/arm64-v8a/{name}");
         let headers = output(&mut command(&readelf, ["-h", "-lW", "-d", &path]))?;
         if !headers.contains("AArch64") {
@@ -691,6 +721,8 @@ fn verify_apk() -> Result<()> {
         "res/mipmap-anydpi-v26/ic_launcher.xml",
         "lib/arm64-v8a/libpsx.so",
         "lib/arm64-v8a/libswanstation.so",
+        "lib/arm64-v8a/libarmsx2.so",
+        "assets/notices/armsx2/COPYING.GPLv3",
         "assets/notices/host/LICENSE",
         "assets/notices/swanstation/LICENSE",
         "assets/notices/swanstation/dep/openbios/LICENSE.txt",
@@ -723,16 +755,18 @@ fn is_notice(path: &Path) -> bool {
         .unwrap_or_default()
         .to_string_lossy()
         .to_uppercase();
-    [
-        "LICENSE",
-        "LICENCE",
-        "COPYING",
-        "NOTICE",
-        "AUTHORS",
-        "COPYRIGHT",
-    ]
-    .iter()
-    .any(|p| name.starts_with(p))
+    name.contains("-LICENSE")
+        || name.contains("-COPYRIGHT")
+        || [
+            "LICENSE",
+            "LICENCE",
+            "COPYING",
+            "NOTICE",
+            "AUTHORS",
+            "COPYRIGHT",
+        ]
+        .iter()
+        .any(|p| name.starts_with(p))
 }
 fn embedded_notice(path: &Path) -> bool {
     if !matches!(
@@ -768,8 +802,33 @@ fn copy_notices(source: &Path, destination: &Path) -> Result<usize> {
     }
     Ok(count)
 }
+fn copy_dependency_notices(source: &Path, destination: &Path) -> Result<()> {
+    let names = if source.join(".git").exists() {
+        output(command("git", ["ls-tree", "-rz", "--name-only", "HEAD"]).current_dir(source))?
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    } else {
+        fs::read_to_string(source.join(".psx-source-manifest"))?
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split_once('\t').map(|(_, name)| name.to_owned()))
+            .collect()
+    };
+    for name in names {
+        let file = source.join(&name);
+        if is_notice(&file) || embedded_notice(&file) {
+            let target = destination.join(&name);
+            fs::create_dir_all(target.parent().unwrap())?;
+            fs::copy(file, target)?;
+        }
+    }
+    Ok(())
+}
 fn notices() -> Result<()> {
     verify_core()?;
+    ps2::verify()?;
     let destination = Path::new("build/apk/assets/notices");
     fs::create_dir_all(destination.join("host"))?;
     fs::copy("LICENSE", destination.join("host/LICENSE"))?;
@@ -799,6 +858,20 @@ fn notices() -> Result<()> {
     let count = copy_notices(
         Path::new("vendor/swanstation"),
         &destination.join("swanstation"),
+    )?;
+    copy_notices(Path::new("vendor/armsx2"), &destination.join("armsx2"))?;
+    let dependency_root = ps2::dependency_root();
+    for line in fs::read_to_string("vendor/armsx2-dependencies/revisions.tsv")?.lines() {
+        let name = line.split('\t').next().ok_or("Invalid dependency lock")?;
+        copy_dependency_notices(
+            &dependency_root.join(name),
+            &destination.join("armsx2-dependencies").join(name),
+        )?;
+    }
+    fs::create_dir_all(destination.join("armsx2-dependencies"))?;
+    fs::copy(
+        "vendor/armsx2-dependencies/revisions.tsv",
+        destination.join("armsx2-dependencies/revisions.tsv"),
     )?;
     let metadata: serde_json::Value = serde_json::from_str(&output(&mut command(
         "cargo",

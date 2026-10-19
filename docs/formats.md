@@ -7,10 +7,11 @@ protected app data and system areas are not scanned. Results count unreadable
 folders, rejected images and archives; a safety limit is reported if reached.
 No filenames or file contents are uploaded.
 
-CUE tracks must exist alongside the CUE. ISO/raw BIN candidates need a PS1
-volume descriptor. PS-EXE and PS1 PBP signatures are checked. CHD headers are
-recognized as containers; their console/game compatibility is checked only
-when opened. These checks do not prove a disc is undamaged or compatible with
+CUE tracks must exist alongside the CUE. ISO/raw BIN candidates need a valid
+optical volume descriptor; bounded boot metadata identifies PS1 or PS2.
+PS-EXE and PS1 PBP signatures are checked. CHD headers identify containers,
+with a console choice when ambiguous. These checks do not prove a disc is
+undamaged or compatible with
 the donor. Track BINs named by a CUE are not shown as duplicate games.
 ZIP/7z archives require extraction before scanning or import.
 
@@ -60,7 +61,7 @@ original firmware. Select PS1 firmware from Settings when a game needs a
 compatible dump; it stays private. The donor checks known hashes and region.
 No proprietary firmware is bundled or downloaded.
 
-Slot 1 uses the core's Libretro interface: a 128 KB card, already inserted.
+PS1 slot 1 uses the core's Libretro interface: a 128 KB card, already inserted.
 Use the game's own save menu or save points for ordinary completed saves.
 Automatic emulator resume is separate from these memory-card saves.
 
@@ -68,7 +69,7 @@ Rust restores the card before the first frame, compares it each second and
 flushes on pause, focus loss, background, surface destruction and normal
 closure. Updates use a same-directory temporary file, file sync, rename and
 directory sync. An unexpected card length is preserved and reported, never
-silently replaced. Slot 2 is disabled for this milestone.
+silently replaced. PS1 slot 2 is disabled for this milestone.
 
 Initial identity uses the primary file and companion names/content hashes,
 independent of document URI. A new dump or renamed files can create another
@@ -86,7 +87,7 @@ the disc again while retaining its memory card. A sudden kill can lose the
 time since the last completed checkpoint.
 
 Resume files are bounded, private and atomically replaced. Their header pins
-the core revision and disc identities/paths and records hashes of the machine
+the core revision and disc identities and records hashes of the machine
 payload and contemporaneous card. A changed card or incompatible/damaged
 checkpoint is reported before restoration; Restart game remains available.
 The durable card is restored after the machine state, so an old checkpoint
@@ -99,3 +100,39 @@ requests shared-storage scan access. A scoped build omits that permission
 and retains document import; see [build.md](build.md) and the unresolved
 Play permission gate in [distribution.md](distribution.md). Uninstalling the
 app deletes its private data; development updates must preserve it.
+
+## PLAYER-2 additions under validation
+
+ISO/raw-sector images and CUE data tracks now inspect bounded ISO9660
+`SYSTEM.CNF` metadata: `BOOT` identifies PS1 and `BOOT2` PS2. A shared
+`PLAYSTATION` volume marker or filename does not identify the console. CHD
+header versions 3–5 identify a container only; an ambiguous new entry offers
+a compact PS1/PS2 choice. This does not establish image integrity or title
+compatibility. The first PS2 acceptance input is an owner-selected ISO.
+Other donor-advertised compressed/executable formats are not claimed.
+
+A missing selected disc offers **Locate original disc** for that same entry.
+The document worker verifies all contents against its original stored disc
+identity before relinking, including when the primary filename changes.
+Companion renaming that changes CUE contents is not silently accepted.
+The entry ID, cards, checkpoint and remembered disc stay attached. An unknown
+restored shortcut never resolves by a similar title. Collection taps and
+shortcuts open the remembered disc directly; runtime PS1 disc replacement
+remains available. PS2 runtime disc replacement is not yet supported.
+
+PS2 requires a compatible user-supplied 4 MiB firmware dump; its separate
+Settings import remains private. Each entry has its own donor-owned regular
+card files under `ps2/<GameId>/pcsx2/memcards`, with shared pinned resources
+and private firmware. The donor creates its own card format. Rust pauses its
+native owner, requests a checked flush, syncs files and binds checkpoint
+metadata to their current digest. It never replaces cards during native
+ownership. Folder-card storage is unsupported by this host.
+
+PS2 checkpoints allow the donor's 68 MiB bound and pin both its exact source
+revision and adapter-patch hash. Orderly shutdown seals against the final
+card files while retaining the writer lock. A changed card, failed seal or
+incompatible state retains current card data and the old checkpoint, with an
+explicit restart route. PS1 retains its existing 64 MiB state bound and card
+restore behavior. Verified relinking compares stable disc identities rather
+than old filesystem paths. Ordinary PS2 saves and automatic resume still
+require separate device acceptance observations.

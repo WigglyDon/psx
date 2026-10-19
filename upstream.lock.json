@@ -14,6 +14,22 @@
     "licenseSizeBytes": 35147,
     "retainedLicense": "LICENSES/SwanStation-GPL-3.0.txt"
   },
+  "ps2": {
+    "name": "ARMSX2",
+    "repository": "https://github.com/ARMSX2/ARMSX2.git",
+    "revision": "83fe4e293f71ab5587ef81b06143725bf8c6a30b",
+    "path": "vendor/armsx2",
+    "interface": "libretro C ABI plus recorded pause/card-flush/ready adapter",
+    "patch": "patches/armsx2/0001-host-pause-and-card-flush.patch",
+    "dependencies": "vendor/armsx2-dependencies/revisions.tsv",
+    "upstreamLicense": "GPL-3.0 and exact original per-file/dependency terms",
+    "licensePath": "COPYING.GPLv3",
+    "licenseSha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "selectionStatus": "Android qualification candidate; PS2 gameplay, iOS non-JIT and store distribution unverified",
+    "build": "cargo xtask ps2",
+    "embeddedPatchDownloads": false,
+    "androidHostPageSize": 4096
+  },
   "firmware": {
     "name": "PCSX-Redux OpenBIOS",
     "repository": "https://github.com/pcsx-redux/nugget.git",

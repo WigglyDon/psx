@@ -9,6 +9,7 @@ pub struct AudioQueue {
     volume: AtomicU32,
     speed: AtomicUsize,
     target: AtomicUsize,
+    sample_rate: AtomicUsize,
     consumer_limit: AtomicUsize,
     paused: AtomicBool,
     discard_before: AtomicUsize,
@@ -27,6 +28,7 @@ impl AudioQueue {
             volume: AtomicU32::new(65536),
             speed: AtomicUsize::new(1),
             target: AtomicUsize::new(1100),
+            sample_rate: AtomicUsize::new(44100),
             consumer_limit: AtomicUsize::new(1100),
             paused: AtomicBool::new(false),
             discard_before: AtomicUsize::new(0),
@@ -63,8 +65,18 @@ impl AudioQueue {
     /// Background scheduling needs more headroom than interactive play. The
     /// queue stays bounded, and return discards the extra latency immediately.
     pub fn set_background(&self, background: bool) {
-        self.target
-            .store(if background { 2205 } else { 1100 }, Ordering::Relaxed);
+        let target = match (self.sample_rate.load(Ordering::Relaxed), background) {
+            (48000, false) => 1200,
+            (48000, true) => 2400,
+            (_, true) => 2205,
+            _ => 1100,
+        };
+        self.target.store(target, Ordering::Relaxed);
+    }
+    pub fn set_sample_rate(&self, sample_rate: usize) {
+        assert!(matches!(sample_rate, 44100 | 48000));
+        self.sample_rate.store(sample_rate, Ordering::Relaxed);
+        self.set_background(false);
     }
     pub fn target_frames(&self) -> usize {
         self.target.load(Ordering::Relaxed) * self.speed.load(Ordering::Relaxed)
@@ -211,6 +223,22 @@ mod tests {
         assert_eq!(output, [1000; 2]);
         assert_eq!(queue.underruns.load(Ordering::Relaxed), 0);
         assert_eq!(queue.dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn engine_rate_changes_use_matching_bounded_headroom() {
+        let queue = AudioQueue::new(16384);
+        assert_eq!(queue.target_frames(), 1100);
+        queue.set_sample_rate(48000);
+        assert_eq!(queue.target_frames(), 1200);
+        queue.set_background(true);
+        assert_eq!(queue.target_frames(), 2400);
+        queue.set_speed(5);
+        assert_eq!(queue.target_frames(), 12000);
+        queue.set_sample_rate(44100);
+        assert_eq!(queue.target_frames(), 5500);
+        queue.set_background(true);
+        assert_eq!(queue.target_frames(), 11025);
     }
     #[test]
     fn live_speed_change_trims_backlog_without_stopping_or_resetting_the_fifo() {

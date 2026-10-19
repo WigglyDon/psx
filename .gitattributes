@@ -1,0 +1,2 @@
+# Preserve upstream whitespace in unified patch context.
+patches/armsx2/*.patch -whitespace

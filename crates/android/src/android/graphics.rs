@@ -191,6 +191,14 @@ impl Graphics {
     pub fn framebuffer(&self) -> usize {
         self.fbo.0.get() as usize
     }
+    pub fn gles_version(&self) -> [u32; 2] {
+        unsafe {
+            [
+                self.gl.get_parameter_i32(glow::MAJOR_VERSION) as u32,
+                self.gl.get_parameter_i32(glow::MINOR_VERSION) as u32,
+            ]
+        }
+    }
     pub unsafe fn attach(
         &mut self,
         window: &ndk::native_window::NativeWindow,
@@ -382,6 +390,12 @@ impl Graphics {
                 1. - visuals.overlay
             };
             canvas.dpad(layout.dpad, &visuals.presses, &visuals.dpad);
+            for (index, rect) in layout.sticks.iter().enumerate() {
+                canvas.stick(
+                    *rect,
+                    [visuals.axes[index * 2], visuals.axes[index * 2 + 1]],
+                );
+            }
             for c in &layout.controls {
                 canvas.button(
                     c.bounds,
@@ -621,6 +635,9 @@ impl Canvas<'_> {
         for c in &editor.layout.controls {
             self.button(editor.map(c.bounds), c.label, 0.);
         }
+        for rect in &editor.layout.sticks {
+            self.stick(editor.map(*rect), [0; 2]);
+        }
         self.button(editor.map(editor.layout.pause), "MENU", 0.);
         self.button(editor.map(editor.layout.playback), "PAUSE", 0.);
         self.button(editor.map(editor.layout.speed), "1×", 0.);
@@ -767,6 +784,8 @@ impl Canvas<'_> {
                     let right = column.x + column.w - 16.;
                     let accessory = if row.slider.is_some() {
                         72.
+                    } else if row.secondary {
+                        48.
                     } else if row.toggle.is_some() {
                         56.
                     } else if row.checked.is_none() {
@@ -793,7 +812,15 @@ impl Canvas<'_> {
                         14.,
                         [0.61, 0.69, 0.78, 1.],
                     );
-                    if let Some(value) = row.slider {
+                    if row.secondary {
+                        self.text(
+                            right - 24.,
+                            y + row.height / 2. - 10.,
+                            "···",
+                            20.,
+                            [0.75, 0.87, 0.9, 1.],
+                        );
+                    } else if let Some(value) = row.slider {
                         let label = format!("{value}%");
                         self.text(
                             right - self.font.measure(&label, 18.),
@@ -1040,6 +1067,23 @@ impl Canvas<'_> {
                 (a.0 - dx, a.1 - dy),
             ],
             c,
+        );
+    }
+    fn stick(&mut self, r: Rect, axes: [i16; 2]) {
+        self.rounded_radius(r, [0.025, 0.035, 0.05, 0.96], r.w.min(r.h) / 2.);
+        let travel = r.w.min(r.h) * 0.22;
+        let size = r.w.min(r.h) * 0.56;
+        let knob = Rect::new(
+            r.x + (r.w - size) / 2. + axes[0] as f32 / 32767. * travel,
+            r.y + (r.h - size) / 2. + axes[1] as f32 / 32767. * travel,
+            size,
+            size,
+        );
+        self.rounded_radius(knob, [0.17, 0.21, 0.25, 1.], size / 2.);
+        self.rounded_radius(
+            Rect::new(knob.x + 5., knob.y + 5., knob.w - 10., knob.h - 10.),
+            [0.23, 0.28, 0.31, 1.],
+            (size - 10.) / 2.,
         );
     }
     fn rounded(&mut self, r: Rect, c: [f32; 4]) {

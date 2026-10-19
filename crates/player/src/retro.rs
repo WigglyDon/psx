@@ -24,7 +24,15 @@ pub type Environment = unsafe extern "C" fn(u32, *mut c_void) -> bool;
 pub type ProcAddress = unsafe extern "C" fn(*const c_char) -> Option<unsafe extern "C" fn()>;
 
 static CORE_ACTIVE: AtomicBool = AtomicBool::new(false);
-struct CoreLease;
+pub(crate) struct CoreLease;
+impl CoreLease {
+    pub(crate) fn acquire() -> Result<Self> {
+        CORE_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self)
+            .map_err(|_| "A game session already owns the core.".into())
+    }
+}
 impl Drop for CoreLease {
     fn drop(&mut self) {
         CORE_ACTIVE.store(false, Ordering::Release);
@@ -383,13 +391,7 @@ impl Core {
         if ACTIVE.with(|a| !a.get().is_null()) {
             return Err("A game is already running.".into());
         }
-        if CORE_ACTIVE
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err("A game session already owns the core.".into());
-        }
-        let lease = CoreLease;
+        let lease = CoreLease::acquire()?;
         crate::firmware::prepare(system)
             .map_err(|e| format!("The free startup firmware could not be prepared: {e}"))?;
         let library = Library::new(library_path)

@@ -92,6 +92,7 @@ pub struct Layout {
     pub playback: Rect,
     pub speed: Rect,
     pub mute: Rect,
+    pub sticks: Vec<Rect>,
     cutouts: Vec<Rect>,
 }
 
@@ -213,6 +214,7 @@ impl Layout {
             playback,
             speed,
             mute,
+            sticks: Vec::new(),
             cutouts: Vec::new(),
         };
         layout.place_game(w, h, false, 1., [0.5, 0.5]);
@@ -290,7 +292,54 @@ impl Layout {
     }
 
     pub fn element_count(&self) -> usize {
-        self.controls.len() + 5
+        self.controls.len() + 5 + self.sticks.len()
+    }
+    fn ps2(w: f32, h: f32) -> Self {
+        let mut layout = Self::arranged(w, h, false);
+        let side = (w / 2. - 12.).min(176.);
+        let base = if w > h * 1.35 {
+            58.
+        } else {
+            (h - 300.).max(58.)
+        };
+        let cluster = (side - 40.).clamp(100., 136.);
+        let size = (cluster * 0.4).max(48.);
+        let cx = w - 16. - cluster / 2.;
+        let cy = base + 48. + cluster / 2.;
+        let offset = (cluster - size) / 2.;
+        layout.dpad = Rect::new(16., base + 48., 72., 72.);
+        for control in &mut layout.controls {
+            control.bounds = match control.label {
+                "TRI" => Rect::new(cx - size / 2., cy - offset - size / 2., size, size),
+                "X" => Rect::new(cx - size / 2., cy + offset - size / 2., size, size),
+                "SQ" => Rect::new(cx - offset - size / 2., cy - size / 2., size, size),
+                "O" => Rect::new(cx + offset - size / 2., cy - size / 2., size, size),
+                "L1" => Rect::new(16., base, 64., 40.),
+                "L2" => Rect::new(88., base, 64., 40.),
+                "R1" => Rect::new(w - 80., base, 64., 40.),
+                "R2" => Rect::new(w - 152., base, 64., 40.),
+                "SELECT" => Rect::new(96., base + 48., 64., 48.),
+                "START" => Rect::new(w - side, h - 64., 48., 48.),
+                _ => control.bounds,
+            };
+        }
+        layout.controls.push(Control {
+            bounds: Rect::new(96., base + 102., 48., 48.),
+            label: "L3",
+            mask: 1 << 14,
+        });
+        layout.controls.push(Control {
+            bounds: Rect::new(w - side, base + 174., 48., 48.),
+            label: "R3",
+            mask: 1 << 15,
+        });
+        let left = (side - 32.).min(128.);
+        layout.sticks = vec![
+            Rect::new(16., h - left - 16., left, left),
+            Rect::new(w - 112., h - 112., 96., 96.),
+        ];
+        layout.place_game(w, h, false, 1., [0.5, 0.5]);
+        layout
     }
     pub fn action_elements(&self) -> impl Iterator<Item = usize> + '_ {
         self.controls
@@ -351,8 +400,10 @@ impl Layout {
             self.playback
         } else if index == self.controls.len() + 3 {
             self.speed
-        } else {
+        } else if index == self.controls.len() + 4 {
             self.mute
+        } else {
+            self.sticks[index - self.controls.len() - 5]
         }
     }
     pub fn element_name(&self, index: usize) -> &str {
@@ -374,8 +425,12 @@ impl Layout {
             "Pause / play"
         } else if index == self.controls.len() + 3 {
             "Emulation speed"
-        } else {
+        } else if index == self.controls.len() + 4 {
             "Mute"
+        } else if index == self.controls.len() + 5 {
+            "Left stick"
+        } else {
+            "Right stick"
         }
     }
     pub fn set_element(&mut self, index: usize, rect: Rect) {
@@ -389,8 +444,10 @@ impl Layout {
             self.playback = rect;
         } else if index == self.controls.len() + 3 {
             self.speed = rect;
-        } else {
+        } else if index == self.controls.len() + 4 {
             self.mute = rect;
+        } else {
+            self.sticks[index - self.controls.len() - 5] = rect;
         }
     }
     pub fn place_game(&mut self, w: f32, h: f32, overlap: bool, scale: f32, offset: [f32; 2]) {
@@ -575,6 +632,8 @@ fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Preset {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub analog: bool,
     pub allow_overlap: bool,
     #[serde(default = "enabled")]
     pub follow_thumb: bool,
@@ -585,6 +644,7 @@ pub struct Preset {
 impl Default for Preset {
     fn default() -> Self {
         Self {
+            analog: false,
             allow_overlap: false,
             follow_thumb: true,
             elements: Vec::new(),
@@ -599,7 +659,11 @@ impl Preset {
     }
     pub fn is_default_with_cutouts(&self, w: f32, h: f32, cutouts: &[Rect]) -> bool {
         let layout = self.layout_with_cutouts(w, h, cutouts);
-        let defaults = Self::default().layout_with_cutouts(w, h, cutouts);
+        let defaults = Self {
+            analog: self.analog,
+            ..Self::default()
+        }
+        .layout_with_cutouts(w, h, cutouts);
         !self.allow_overlap
             && self.follow_thumb
             && layout.game.same_bounds(defaults.game)
@@ -610,7 +674,11 @@ impl Preset {
         self.layout_with_cutouts(w, h, &[])
     }
     pub fn layout_with_cutouts(&self, w: f32, h: f32, cutouts: &[Rect]) -> Layout {
-        let mut layout = Layout::default_with_cutouts(w, h, cutouts);
+        let mut layout = if self.analog {
+            Layout::ps2(w, h)
+        } else {
+            Layout::default_with_cutouts(w, h, cutouts)
+        };
         for (i, r) in self
             .elements
             .iter()
@@ -648,10 +716,15 @@ impl Preset {
 fn enabled() -> bool {
     true
 }
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct ControllerSettings {
     presets: BTreeMap<String, Preset>,
+    #[serde(skip)]
+    analog: bool,
 }
 impl ControllerSettings {
     pub fn profile(w: f32, h: f32) -> &'static str {
@@ -674,10 +747,22 @@ impl ControllerSettings {
         self.presets
             .get(Self::profile(w, h))
             .cloned()
-            .unwrap_or_default()
+            .unwrap_or_else(|| Preset {
+                analog: self.analog,
+                ..Preset::default()
+            })
     }
-    pub fn set(&mut self, w: f32, h: f32, preset: Preset) {
+    pub fn set(&mut self, w: f32, h: f32, mut preset: Preset) {
+        preset.analog = self.analog;
         self.presets.insert(Self::profile(w, h).into(), preset);
+    }
+    pub fn load_ps2(root: &Path) -> io::Result<Self> {
+        let mut settings = Self::load(root)?;
+        settings.analog = true;
+        Ok(settings)
+    }
+    pub fn analog(&self) -> bool {
+        self.analog
     }
     pub fn save(&self, root: &Path) -> io::Result<()> {
         atomic_write(&root.join("controls.json"), &serde_json::to_vec(self)?)
@@ -689,6 +774,36 @@ pub struct Touches {
     held: BTreeMap<i32, u16>,
     pending: u16,
     dpad: Option<DpadGesture>,
+    sticks: [Option<StickGesture>; 2],
+}
+
+struct StickGesture {
+    pointer: i32,
+    origin: [f32; 2],
+    radius: f32,
+    axes: [i16; 2],
+    follow: bool,
+}
+impl StickGesture {
+    fn track(&mut self, x: f32, y: f32) {
+        let mut delta = [x - self.origin[0], y - self.origin[1]];
+        let distance = delta[0].hypot(delta[1]);
+        if distance > self.radius {
+            let scale = self.radius / distance;
+            delta = delta.map(|d| d * scale);
+            if self.follow {
+                self.origin = [x - delta[0], y - delta[1]];
+            }
+        }
+        let normalized = delta.map(|d| d / self.radius);
+        let magnitude = normalized[0].hypot(normalized[1]);
+        self.axes = if magnitude < 0.12 {
+            [0; 2]
+        } else {
+            let scale = ((magnitude - 0.12) / 0.88).min(1.) / magnitude;
+            normalized.map(|d| (d * scale * 32767.).round() as i16)
+        };
+    }
 }
 
 const DIRECTIONS: u16 = (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7);
@@ -769,6 +884,20 @@ impl DpadGesture {
 
 impl Touches {
     pub fn down(&mut self, id: i32, x: f32, y: f32, layout: &Layout, follow: bool) -> u16 {
+        for (i, bounds) in layout.sticks.iter().enumerate() {
+            if bounds.contains(x, y) && self.sticks[i].is_none() {
+                let mut gesture = StickGesture {
+                    pointer: id,
+                    origin: [bounds.x + bounds.w / 2., bounds.y + bounds.h / 2.],
+                    radius: bounds.w.min(bounds.h) * 0.32,
+                    axes: [0; 2],
+                    follow,
+                };
+                gesture.track(x, y);
+                self.sticks[i] = Some(gesture);
+                return 1 << (14 + i);
+            }
+        }
         if self.dpad.is_none() && layout.dpad.contains(x, y) {
             let bounds = layout.dpad;
             let mut gesture = DpadGesture {
@@ -789,6 +918,10 @@ impl Touches {
     }
 
     pub fn motion(&mut self, id: i32, x: f32, y: f32, layout: &Layout) -> u16 {
+        if let Some(gesture) = self.sticks.iter_mut().flatten().find(|g| g.pointer == id) {
+            gesture.track(x, y);
+            return 0;
+        }
         let mask = if let Some(gesture) = self.dpad.as_mut().filter(|g| g.pointer == id) {
             // Direction is a current vector. Keep fast face-button taps, but
             // never latch opposing directions from two moves in one frame.
@@ -816,6 +949,11 @@ impl Touches {
         pressed
     }
     pub fn release(&mut self, id: i32) {
+        for stick in &mut self.sticks {
+            if stick.as_ref().is_some_and(|g| g.pointer == id) {
+                *stick = None;
+            }
+        }
         self.held.remove(&id);
         if self.dpad.as_ref().is_some_and(|g| g.pointer == id) {
             self.dpad = None;
@@ -825,9 +963,15 @@ impl Touches {
         self.held.clear();
         self.pending = 0;
         self.dpad = None;
+        self.sticks = [None, None];
     }
     pub fn mask(&self) -> u16 {
         self.held.values().fold(0, |a, b| a | b)
+    }
+    pub fn axes(&self) -> [i16; 4] {
+        let left = self.sticks[0].as_ref().map_or([0; 2], |g| g.axes);
+        let right = self.sticks[1].as_ref().map_or([0; 2], |g| g.axes);
+        [left[0], left[1], right[0], right[1]]
     }
     /// A press/release delivered between emulation ticks still lasts one
     /// guest input sample. Interruptions cancel the pending press as well.
@@ -839,6 +983,79 @@ impl Touches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dual_analog_digital_and_actions_remain_independent_and_cancel_on_interruption() {
+        let preset = Preset {
+            analog: true,
+            ..Preset::default()
+        };
+        let layout = preset.layout(960., 420.);
+        assert_eq!(layout.sticks.len(), 2);
+        assert!((0..layout.element_count()).all(|i| !layout.game.overlaps(layout.element(i))));
+        let mut touches = Touches::default();
+        for (i, rect) in layout.sticks.iter().enumerate() {
+            touches.down(
+                i as i32,
+                rect.x + rect.w / 2.,
+                rect.y + rect.h / 2.,
+                &layout,
+                true,
+            );
+        }
+        let left = layout.sticks[0];
+        let right = layout.sticks[1];
+        touches.motion(0, left.x + left.w * 2., left.y + left.h / 2., &layout);
+        touches.motion(1, right.x + right.w / 2., right.y - right.h, &layout);
+        assert_eq!(touches.axes(), [32767, 0, 0, -32767]);
+        let cross = layout
+            .controls
+            .iter()
+            .find(|c| c.label == "X")
+            .unwrap()
+            .bounds;
+        touches.down(
+            2,
+            cross.x + cross.w / 2.,
+            cross.y + cross.h / 2.,
+            &layout,
+            true,
+        );
+        let dpad = layout.dpad;
+        touches.down(3, dpad.x + 2., dpad.y + dpad.h / 2., &layout, true);
+        assert_eq!(touches.mask() & ((1 << 6) | 1), (1 << 6) | 1);
+        touches.release(0);
+        assert_eq!(touches.axes(), [0, 0, 0, -32767]);
+        assert_eq!(touches.mask() & 1, 1);
+        touches.cancel();
+        assert_eq!(touches.axes(), [0; 4]);
+        assert_eq!(touches.frame_mask(), 0);
+        let mut captured = preset.clone();
+        captured.capture(&layout, 960., 420.);
+        let restored = captured.layout(960., 420.);
+        assert!(
+            (0..layout.element_count()).all(|i| layout.element(i).same_bounds(restored.element(i)))
+        );
+    }
+    #[test]
+    fn ps2_control_profiles_do_not_modify_legacy_ps1_profiles() {
+        let root =
+            std::env::temp_dir().join(format!("psx-console-controls-{}", std::process::id()));
+        let mut ps1 = ControllerSettings::default();
+        let custom = Preset {
+            game_scale: 0.9,
+            ..Preset::default()
+        };
+        ps1.set(960., 420., custom);
+        ps1.save(&root).unwrap();
+        let before = fs::read(root.join("controls.json")).unwrap();
+        assert!(!String::from_utf8_lossy(&before).contains("analog"));
+        let mut ps2 = ControllerSettings::load_ps2(&root.join("ps2-controls")).unwrap();
+        ps2.set(960., 420., Preset::default());
+        ps2.save(&root.join("ps2-controls")).unwrap();
+        assert!(ps2.preset(960., 420.).analog);
+        assert_eq!(fs::read(root.join("controls.json")).unwrap(), before);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn fullscreen_keeps_recorded_fold_landscape_height_while_bars_are_revealed() {
         let size = [2342, 1080];

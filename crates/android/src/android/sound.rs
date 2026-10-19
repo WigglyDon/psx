@@ -13,14 +13,14 @@ pub struct Sound {
     pub failed: Arc<AtomicBool>,
 }
 impl Sound {
-    pub fn start(queue: Arc<AudioQueue>) -> Result<Self, String> {
+    pub fn start(queue: Arc<AudioQueue>, sample_rate: i32) -> Result<Self, String> {
         let failed = Arc::new(AtomicBool::new(false));
         let error = failed.clone();
         let stream = AudioStreamBuilder::new()
             .map_err(|e| e.to_string())?
             .direction(AudioDirection::Output)
             .channel_count(2)
-            .sample_rate(44100)
+            .sample_rate(sample_rate)
             .format(AudioFormat::PCM_I16)
             .usage(AudioUsage::Game)
             .content_type(AudioContentType::Music)
@@ -40,7 +40,7 @@ impl Sound {
             }))
             .open_stream()
             .map_err(|e| format!("Sound could not start: {e}"))?;
-        if stream.sample_rate() != 44100
+        if stream.sample_rate() != sample_rate
             || stream.channel_count() != 2
             || stream.format() != AudioFormat::PCM_I16
         {
