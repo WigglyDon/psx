@@ -2,7 +2,8 @@
 
 # psx
 
-A native PlayStation 1 player. Choose your games, make yourself comfortable,
+A native PlayStation player, with working PS1 playback and PS2 integration
+under development. Choose your games, make yourself comfortable,
 and play. Built by Machine Rhythm, starting with Android foldables.
 
 - A local game library with explicit storage scanning and multi-disc support.
@@ -38,8 +39,10 @@ cd psx
 ```
 
 [Build instructions](docs/build.md) cover the Rust/Android tools, APK and
-corresponding-source archive. [FIRST-PLAYABLE-1](https://github.com/WigglyDon/psx/issues/1)
-tracks implementation and acceptance.
+corresponding-source archive. [PLAYER-2](https://github.com/WigglyDon/psx/issues/2)
+tracks active PS2, direct-game shortcut and independent-session work. The
+working PS1 baseline and its remaining qualifications stay recorded in
+[FIRST-PLAYABLE-1](https://github.com/WigglyDon/psx/issues/1).
 
 | Document | Purpose |
 | --- | --- |

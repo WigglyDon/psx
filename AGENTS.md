@@ -8,11 +8,14 @@ small documents that own it.
 
 ## Product
 
-Build a minimal, efficient native PS1 player. The first target is Android
+Extend the working native PS1 player with PS2 and direct-game launch under
+PLAYER-2 (GitHub issue #2 and its active Master dispatch). The first target is Android
 ARM64 on a stock foldable; eventual Google Play and Apple App Store release
 are product requirements. All new product and host logic is Rust. Start with
 the pinned SwanStation C++ core candidate through a narrow libretro C ABI;
-do not translate or redesign its emulation internals.
+do not translate or redesign its emulation internals. Qualify the pinned
+ARMSX2 libretro ARM64 candidate for PS2 before expanding the host boundary.
+Retain its original C/C++ and exact dependency/license provenance.
 
 Use established Rust Android/NDK bindings. A minimal platform-generated or
 callback shim may be needed where Android cannot expose a required callback
@@ -26,20 +29,32 @@ setup. Verify the donor's distribution terms before treating it as the
 permanent core for both stores; attribution alone does not settle this.
 An iOS build or another app's store listing is not proof for this product.
 
-Keep one core execution owner, explicit input, bounded output, correct
+Keep durable game identity, saved sessions and ephemeral runtimes distinct.
+Use one live runtime for PLAYER-2, with exactly one core/graphics owner in its
+worker process; this is a milestone policy, not a permanent session limit.
+Do not implement a second process or general IPC framework in this milestone.
+Keep one card/checkpoint writer, explicit input, bounded output, correct
 graphics-context ownership and durable saves. Follow the borrowed core's
 actual interface contracts rather than importing another emulator's schedule.
 
 ## Work
 
-Advance the complete first playable milestone autonomously. Inspect current
+Advance the complete PLAYER-2 dispatch autonomously without waiting for #1's
+formal closure. Preserve the accepted PS1 build, signing/application identity,
+collection IDs, cards, checkpoints and controller profiles through migrations.
+Back up actual current device data before updating it; an older APK alone is
+not a data rollback plan. Inspect current
 source and local state, preserve unknown work and make routine implementation
 choices. Use focused validation for the actual changed behavior. Do not
 recreate an emulator conformance programme or optimize core internals without
 an observed blocker and an explicit product decision.
 
-Do not grow a framework, multi-core selector, account service, game database
-or settings catalog before first playable acceptance. The early iOS/store
+Route collection taps and pinned shortcuts through the same validated Rust
+OpenGame operation with an opaque durable ID and missing-content recovery.
+Handle PS2 threads, graphics, analog input, file-owned cards and revision-bound
+states through the donor's actual contracts; do not inherit PS1 assumptions.
+Do not grow a framework, user-facing core selector, account service, online game database
+or settings catalog. The early iOS/store
 feasibility check is in scope; a complete iOS port is a later milestone.
 Document supported formats and failures honestly. Keep navigation, file
 errors, touch targets and interruption behavior usable from the first build.

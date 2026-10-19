@@ -1,5 +1,10 @@
 # Architecture
 
+The active extension is [PLAYER-2](player-2.md): preserve the working PS1
+experience while qualifying a PS2 engine and shared direct-game launch.
+PS2 implementation and qualification are in progress; the existing PS1
+observations do not establish PS2 acceptance.
+
 ## Product boundary
 
 psx is a native PS1 player with a small user experience. Rust owns the app.
@@ -12,6 +17,14 @@ input state, file access, presentation, hardware graphics context, audio
 consumption, persistence and host pacing. A single session owns the core.
 FFI state must not outlive its session or cross thread/context boundaries
 without the interface's required synchronization.
+
+A stable game ID identifies the library entry and durable saved session;
+an ephemeral runtime token identifies a current assignment. Rust's session
+boundary holds one OS-backed writer lock per owned game until checkpoint
+completion and donor teardown. Runtime/process/task handles are not saved.
+The single live runtime is PLAYER-2 policy. Future worker slots may assign
+these same saved sessions without changing their permanent identities;
+no second process or IPC framework is implemented in this milestone.
 
 SwanStation is the pinned Android prototype candidate. Its suitability for
 the eventual two-store product remains conditional on the checks in

@@ -18,6 +18,7 @@ use psx_player::{
     resume,
     retro::{Core, HostConfig},
     saves::MemoryCard,
+    session::{GameId, Launch, Runtime, SavedSession, State as SessionState},
     settings::{PlaybackSettings, Speed},
     ui::{EditResult, Editor, HoldPress, Menu, PressAction, Row, Visuals},
     Activity,
@@ -93,6 +94,7 @@ struct Player {
     root: PathBuf,
     platform: Platform,
     core: Option<Core>,
+    session: Option<Runtime>,
     card: Option<MemoryCard>,
     game: Option<Game>,
     library: Library,
@@ -171,6 +173,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         platform,
         graphics,
         core: None,
+        session: None,
         card: None,
         game: None,
         queue,
@@ -296,10 +299,11 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             player.restore_pending = false;
             match resume::active(&player.root) {
                 Ok(Some(id)) => {
-                    if let Some(game) = player.library.games.iter().find(|g| g.id == id).cloned() {
-                        if let Err(error) = player.start(game) {
-                            player.fail(error);
-                        }
+                    let result = GameId::parse(&id)
+                        .map_err(String::from)
+                        .and_then(|id| player.open_game(Launch::OpenGame(id)));
+                    if let Err(error) = result {
+                        player.fail(error);
                     }
                 }
                 Ok(None) => {}
@@ -335,7 +339,13 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.activity.loading = false;
                 match result {
                     Ok(Some(game)) => {
-                        if let Err(e) = player.start(game) {
+                        let result = GameId::parse(&game.id)
+                            .map_err(String::from)
+                            .and_then(|id| {
+                                player.library.put(game);
+                                player.open_game(Launch::OpenGame(id))
+                            });
+                        if let Err(e) = result {
                             player.fail(e);
                         }
                     }
@@ -376,6 +386,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         }
         if player.destroyed {
             break;
+        }
+        if let Some(session) = &mut player.session {
+            session.update(player.activity.can_run());
         }
         if !player.activity.can_run() {
             if !(player.activity.user_paused
@@ -477,6 +490,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     player.cancel_work.store(true, Ordering::Relaxed);
     let result = player.checkpoint();
     player.core.take();
+    player.session.take();
     player.platform.focus(&app, false);
     player.platform.background(&app, false);
     result
@@ -1050,11 +1064,7 @@ impl Player {
                     .get(index)
                     .ok_or("The game is no longer in the library.")?
                     .clone();
-                if game.disc_list().len() > 1 {
-                    self.navigate(app, Screen::Discs(index));
-                } else {
-                    self.start(game)?;
-                }
+                self.open_game(Launch::OpenGame(GameId::parse(&game.id)?))?;
             }
             Action::ChooseDisc(index) => {
                 let Screen::Discs(game_index) = self.screen else {
@@ -1084,7 +1094,9 @@ impl Player {
                     self.navigate(app, Screen::Settings);
                 } else {
                     game.last_disc = index;
-                    self.start(game)?;
+                    let id = GameId::parse(&game.id)?;
+                    self.library.put(game);
+                    self.open_game(Launch::OpenGame(id))?;
                 }
             }
             Action::ToggleGame(index) => {
@@ -1279,7 +1291,7 @@ impl Player {
                 if let Some(game) = self.game.clone() {
                     self.close()?;
                     resume::discard(&self.root, &game).map_err(|e| e.to_string())?;
-                    self.start(game)?;
+                    self.open_game(Launch::OpenGame(GameId::parse(&game.id)?))?;
                 }
             }
             Action::ToggleBackground => {
@@ -1761,8 +1773,34 @@ impl Player {
         self.menu = Some(menu);
         self.dirty = true;
     }
+    fn open_game(&mut self, launch: Launch) -> Result<(), String> {
+        let Launch::OpenGame(id) = launch;
+        let game = self
+            .library
+            .games
+            .iter()
+            .find(|g| g.id == id.as_str())
+            .cloned()
+            .ok_or(
+                "This game is not in this device's library. Locate its files to recover the entry.",
+            )?;
+        self.start(game)
+    }
     fn start(&mut self, game: Game) -> Result<(), String> {
+        let id = GameId::parse(&game.id)?;
+        if self.core.is_some() && self.session.as_ref().is_some_and(|s| s.saved.game == id) {
+            self.closing_menu = self.menu.take();
+            self.dirty = true;
+            return Ok(());
+        }
+        // Resolve content before stopping another game's owned runtime. A
+        // missing launch target must not reset or replace its durable entry.
+        for disc in game.disc_list() {
+            fs::File::open(&disc.path).map_err(|_| "This game's files are unavailable. Locate the game to keep its existing progress.".to_string())?;
+        }
         self.close()?;
+        let session =
+            Runtime::restoring(&self.root, SavedSession { game: id }).map_err(|e| e.to_string())?;
         let launch_path = game.launch_path(&self.root).map_err(|e| e.to_string())?;
         let library = Path::new("libswanstation.so");
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -1799,6 +1837,7 @@ impl Player {
             jit
         );
         self.core = Some(core);
+        self.session = Some(session);
         self.card = Some(card);
         self.game = Some(game.clone());
         self.library.put(game.clone());
@@ -1979,6 +2018,10 @@ impl Player {
         self.interrupt()?;
         self.checkpoint()?;
         self.core.take();
+        if let Some(session) = &mut self.session {
+            session.state = SessionState::CheckpointedUnloaded;
+        }
+        self.session.take();
         self.card = None;
         self.game = None;
         self.queue.clear_stopped();

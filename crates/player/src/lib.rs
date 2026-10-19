@@ -7,6 +7,7 @@ pub mod library;
 pub mod resume;
 pub mod retro;
 pub mod saves;
+pub mod session;
 pub mod settings;
 pub mod ui;
 
