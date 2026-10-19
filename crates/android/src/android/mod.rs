@@ -254,6 +254,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 if let Err(error) = player.resize(&app) {
                     player.fail(error);
                 }
+                if player.activity.foreground && player.activity.focused {
+                    player.platform.fullscreen(&app);
+                }
                 player.dirty = true;
             }
             // Revealed bars may overlay the window without a resize callback.
@@ -506,16 +509,14 @@ impl Player {
             | MainEvent::ContentRectChanged { .. }
             | MainEvent::ConfigChanged { .. }
             | MainEvent::InsetsChanged { .. } => {
+                let surface_size = [self.graphics.width, self.graphics.height];
                 self.touches.cancel();
                 self.resize(app)?;
                 self.platform.insets(app);
-                // Rotation/folding can recreate per-window bar control while
-                // the activity retains focus. Visibility polling covers any
-                // later controller handoff without continuously forcing flags.
-                if matches!(
-                    event,
-                    MainEvent::ConfigChanged { .. } | MainEvent::WindowResized { .. }
-                ) && self.activity.foreground
+                // Bar reveals can send resize callbacks without changing the
+                // actual surface. Don't hide bars again during that gesture.
+                if surface_size != [self.graphics.width, self.graphics.height]
+                    && self.activity.foreground
                     && self.activity.focused
                 {
                     self.platform.fullscreen(app);

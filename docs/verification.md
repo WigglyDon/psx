@@ -271,10 +271,11 @@ maximized in folded landscape. Recorded content changed from 2342×1021 to
 On the inner screen, status visibility could also disable toolbar use of the
 camera margin and shrink the picture. The next source keeps stable fullscreen
 insets and toolbar placement through these brief reveals, preserving navigation,
-caption and camera clearance. Host tests and Android/host Clippy pass; this
+caption and camera clearance. Bar-only resize callbacks also no longer force an
+immediate hide request during a navigation gesture. Host tests and Android/host Clippy pass; this
 viewport-stability correction still requires its installed-device check.
 Its prepared signed APK SHA-256 is
-`f68dd8da75207aa49b67f8b51018c09ecf351a3fb6efea7102604b930f1b076f`;
+`532353c219f3f8797dd6762d1764d2d87ae9d8e7d95813ae14d98933ccb1f913`;
 signature, notice/resource, ABI and ZIP/ELF alignment checks pass.
 
 With the current default dock, the recorded inner-landscape geometry models a

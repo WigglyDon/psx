@@ -175,7 +175,9 @@ the same paused scene and process.
 That mode does not automatically hide revealed bars. While the app is focused
 and visible, Rust observes their visibility at most twice per second and
 reapplies per-window fullscreen after 1.2 seconds of revealed bars. It also
-reapplies after window/configuration changes. Focus loss and document picking
+reapplies after actual drawable-size changes. Resize callbacks caused only by
+bar visibility do not trigger an immediate hide request during a gesture.
+Focus loss and document picking
 cancel the timeout; a game without audio focus does not re-hide system UI.
 This keeps the gesture strip reserved and the first Home gesture available,
 without forcing device-wide settings or using a painted-over system handle.
@@ -190,9 +192,9 @@ The less-used system buttons keep their own separate row. Wide phone layouts use
 including their system buttons, so a bottom row does not constrain picture
 height. The small pause/play, speed, volume and settings toolbar uses a clear
 part of an already excluded top margin when available, avoiding the actual
-camera cutout rectangles. This margin is used only when Android reports no
-system decoration occupying its top edge; a visible status bar keeps the
-toolbar inside safe content. This recovers picture space without placing touch
+camera cutout rectangles. Active fullscreen retains that placement through
+temporary status-bar reveals; outside fullscreen, visible decoration keeps
+the toolbar inside safe content. This recovers picture space without placing touch
 targets over the game. Devices without that space reserve it in the controller
 rails or above the picture. Custom toolbar placement is retained. Android requests `fullUser`
 orientation: all four rotations when
