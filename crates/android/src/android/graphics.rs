@@ -690,21 +690,29 @@ impl Canvas<'_> {
                 [0.7, 0.89, 0.91, 1.],
             );
         }
-        self.dpad(
-            editor.map(editor.layout.dpad),
-            &[0.; 16],
-            &DpadVisual::default(),
-        );
+        // Render the miniature in the layout's own coordinate system. Mapping
+        // only button bounds leaves fixed-size symbols and lettering enormous
+        // in the preview; scaling all drawing also preserves edge coverage.
+        let scale = (preview.w / editor.width.max(1.)).max(0.001);
+        let saved = (self.offset, self.screen, self.pixel);
+        self.offset = [
+            (saved.0[0] + preview.x) / scale,
+            (saved.0[1] + preview.y) / scale,
+        ];
+        self.screen = [saved.1[0] / scale, saved.1[1] / scale];
+        self.pixel /= scale;
+        self.dpad(editor.layout.dpad, &[0.; 16], &DpadVisual::default());
         for c in &editor.layout.controls {
-            self.button(editor.map(c.bounds), c.label, 0.);
+            self.button(c.bounds, c.label, 0.);
         }
         for rect in &editor.layout.sticks {
-            self.stick(editor.map(*rect), [0; 2]);
+            self.stick(*rect, [0; 2]);
         }
-        self.button(editor.map(editor.layout.pause), "MENU", 0.);
-        self.button(editor.map(editor.layout.playback), "PAUSE", 0.);
-        self.button(editor.map(editor.layout.speed), "TIME", 0.);
-        self.button(editor.map(editor.layout.mute), "SOUND", 0.);
+        self.button(editor.layout.pause, "MENU", 0.);
+        self.button(editor.layout.playback, "PAUSE", 0.);
+        self.button(editor.layout.speed, "TIME", 0.);
+        self.button(editor.layout.mute, "SOUND", 0.);
+        (self.offset, self.screen, self.pixel) = saved;
         let scale = preview.w / editor.width;
         if let Some(x) = editor.guides[0] {
             let x = preview.x + x * scale;
