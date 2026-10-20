@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const TOOLBAR_HEIGHT: f32 = 20.;
+const TOOLBAR_HEIGHT: f32 = 16.;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
@@ -467,72 +467,105 @@ impl Layout {
         }
         layout
     }
-    /// Fit adjacent thumb wells around the maximum picture. Spare height puts
-    /// shoulders above each pair; tighter displays use the clear middle.
-    /// The same measurements apply to digital and dual-stick controllers.
+    /// Budget controls after a full-width picture, using the same thumb-well
+    /// size and mirrored geometry for either controller capability. Additional
+    /// inputs use spare center space instead of taking a row from the wells.
     fn controller_band(w: f32, h: f32, analog: bool, picture: Rect) -> Option<Self> {
         if w < 800. || h < 600. || w > h * 1.35 {
             return None;
         }
-        let outer = 8.;
-        let bottom = 12.;
-        let width_limit = (w - 2. * outer - 16. - 204.) / 4.;
-        if width_limit < 122. {
+        let outer = 28.;
+        let bottom = 4.;
+        let available = h - bottom - (picture.y + TOOLBAR_HEIGHT + w * 0.75);
+        // A deeper center dock keeps the main controls large in a taller
+        // window. A shallower one fits rotations with less vertical headroom.
+        // Rectangles can share an edge; molded caps leave their own visual gap.
+        let deep = analog && available >= 192.;
+        let auxiliary_width = if deep { 104. } else { 204. };
+        let width_limit = if analog {
+            (w - 2. * outer - 16. - auxiliary_width) / 4.
+        } else {
+            (w - 2. * outer - 288.) / 2.
+        };
+        let face = available.min(width_limit).min(184.);
+        if face < 122. {
             return None;
         }
-        let available = h - bottom - (picture.y + TOOLBAR_HEIGHT + w * 0.75);
-        // A bridge needs a full 48-point shoulder and four-point clearance
-        // above a 128-point well. Otherwise keep auxiliaries in the middle;
-        // never quietly overlap the thumb areas to imitate a physical pad.
-        let bridge = available >= 128. + 52.;
-        let stick = (available - if bridge { 52. } else { 0. })
-            .clamp(122., 160.)
-            .min(width_limit);
-        let face = stick;
-        let main_y = h - bottom - stick;
-        let face_y = main_y + (stick - face) / 2.;
-        let digital_x = if analog { outer + stick + 8. } else { outer };
-        let click_y = h - bottom - 48.;
-        let auxiliary_x = w / 2. - 102.;
-        let inner_keys = (digital_x + face + 8.).min(auxiliary_x);
-        let shoulder_x = if bridge {
-            outer + stick + 4. - 50.
-        } else {
-            inner_keys
-        };
-        let shoulder_y = main_y - if bridge { 52. } else { 0. };
+        let main_y = h - bottom - face;
+        let digital_x = if analog { outer + face + 8. } else { outer };
         let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
         let fx = w - digital_x - face / 2.;
-        let fy = face_y + face / 2.;
+        let fy = main_y + face / 2.;
+        let auxiliary_x = (w - auxiliary_width) / 2.;
+        let auxiliary_y = h - bottom - if deep { 192. } else { 100. };
+        let key = |label| {
+            if !analog {
+                let shoulder_x = outer + face + 8.;
+                return match label {
+                    "L1" => Rect::new(shoulder_x, main_y, 64., 64.),
+                    "L2" => Rect::new(shoulder_x + 72., main_y, 64., 64.),
+                    "R1" => Rect::new(w - shoulder_x - 64., main_y, 64., 64.),
+                    "R2" => Rect::new(w - shoulder_x - 136., main_y, 64., 64.),
+                    "SELECT" => Rect::new(w / 2. - 104., h - bottom - 80., 80., 80.),
+                    "START" => Rect::new(w / 2. + 24., h - bottom - 80., 80., 80.),
+                    _ => Rect::default(),
+                };
+            }
+            let (column, row) = if deep {
+                match label {
+                    "L2" => (0, 0),
+                    "R2" => (1, 0),
+                    "L1" => (0, 1),
+                    "R1" => (1, 1),
+                    "SELECT" => (0, 2),
+                    "START" => (1, 2),
+                    "L3" => (0, 3),
+                    "R3" => (1, 3),
+                    _ => unreachable!(),
+                }
+            } else {
+                match label {
+                    "L1" => (0, 0),
+                    "L2" => (1, 0),
+                    "R2" => (2, 0),
+                    "R1" => (3, 0),
+                    "L3" => (0, 1),
+                    "SELECT" => (1, 1),
+                    "START" => (2, 1),
+                    "R3" => (3, 1),
+                    _ => unreachable!(),
+                }
+            };
+            Rect::new(
+                auxiliary_x + column as f32 * if deep { 56. } else { 52. },
+                auxiliary_y + row as f32 * if deep { 48. } else { 52. },
+                48.,
+                48.,
+            )
+        };
         let mut layout = Self::arranged(w, h, false);
-        layout.dpad = Rect::new(digital_x, face_y, face, face);
+        layout.dpad = Rect::new(digital_x, main_y, face, face);
         for c in &mut layout.controls {
             c.bounds = match c.label {
                 "TRI" => Rect::new(fx - cap / 2., fy - step - cap / 2., cap, cap),
                 "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
                 "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
                 "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
-                "L1" => Rect::new(shoulder_x, shoulder_y, 48., 48.),
-                "L2" => Rect::new(shoulder_x + 52., shoulder_y, 48., 48.),
-                "R1" => Rect::new(w - shoulder_x - 48., shoulder_y, 48., 48.),
-                "R2" => Rect::new(w - shoulder_x - 100., shoulder_y, 48., 48.),
-                "SELECT" => Rect::new(auxiliary_x + 52., click_y, 48., 48.),
-                "START" => Rect::new(auxiliary_x + 104., click_y, 48., 48.),
-                _ => continue,
+                label => key(label),
             };
         }
         if analog {
-            for (x, label, id) in [(inner_keys, "L3", 14), (w - inner_keys - 48., "R3", 15)] {
+            for (label, id) in [("L3", 14), ("R3", 15)] {
                 layout.controls.push(Control {
-                    bounds: Rect::new(x, click_y, 48., 48.),
+                    bounds: key(label),
                     label,
                     mask: 1 << id,
                 });
             }
             layout.sticks = vec![
-                Rect::new(outer, main_y, stick, stick),
-                Rect::new(w - outer - stick, main_y, stick, stick),
+                Rect::new(outer, main_y, face, face),
+                Rect::new(w - outer - face, main_y, face, face),
             ];
         }
         layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., &[]);
@@ -1516,9 +1549,9 @@ mod tests {
             .layout(&preset, &[camera]);
             assert!((layout.game.w * density - 2076.).abs() < 0.02);
             assert!(layout.game.x.abs() < 0.01);
-            assert!((layout.game.y + top - 20.).abs() < 0.01);
+            assert!((layout.game.y + top - 16.).abs() < 0.01);
             let digital = [layout.dpad, layout.action_bounds()];
-            assert!(layout.sticks.iter().all(|s| s.w >= 128.));
+            assert!(layout.sticks.iter().all(|s| s.w >= 168.));
             for c in layout.controls.iter().filter(|c| !c.is_face()) {
                 assert!(!c.bounds.overlaps(layout.game));
                 assert!(layout.sticks.iter().all(|s| !c.bounds.overlaps(*s)));
@@ -1551,17 +1584,16 @@ mod tests {
                 let r = key(name);
                 assert!(!r.overlaps(gap));
             }
-            let bridge_center = (key("L1").x + key("L2").x + key("L2").w) / 2.;
-            let thumb_joint = layout.sticks[0].x + layout.sticks[0].w + 4.;
-            assert!((bridge_center - thumb_joint).abs() < 0.01);
-            assert!(key("L1").y + key("L1").h < layout.sticks[0].y);
-            for name in ["L3", "SELECT", "START", "R3"] {
+            // The extra keys fit into center space. Do not shrink the four
+            // thumb wells to reserve an additional full-width shoulder row.
+            assert!(key("L1").y > key("L2").y);
+            for name in ["L1", "L2", "L3", "SELECT", "START", "R1", "R2", "R3"] {
                 assert!(key(name).x >= digital[0].x + digital[0].w);
-                assert!(key(name).x + key(name).w <= digital[1].x);
+                assert!(key(name).x + key(name).w <= digital[1].x + 0.01);
             }
             for bar in [layout.playback, layout.speed, layout.pause, layout.mute] {
                 assert!(bar.x >= 28. && bar.x + bar.w <= w - 28.);
-                assert_eq!(bar.h, 20.);
+                assert_eq!(bar.h, 16.);
             }
         }
     }
@@ -1609,9 +1641,59 @@ mod tests {
             ] {
                 assert!(a.same_bounds(b));
             }
+            if width == 2076. {
+                assert!((ps1.dpad.w - 184.).abs() < 0.01);
+                assert!(ps1
+                    .controls
+                    .iter()
+                    .filter(|c| c.is_face())
+                    .all(|c| c.bounds.w >= 72.));
+                assert!(ps2.sticks.iter().all(|s| s.w >= 168.));
+                assert!(ps2
+                    .controls
+                    .iter()
+                    .filter(|c| c.is_face())
+                    .all(|c| c.bounds.w >= 67.));
+            }
+            for layout in [&ps1, &ps2] {
+                let reflected = |a: Rect, b: Rect| {
+                    assert!((a.x + a.w + b.x - w).abs() < 0.02);
+                    assert!((a.y - b.y).abs() < 0.02);
+                    assert!((a.w - b.w).abs() < 0.02 && (a.h - b.h).abs() < 0.02);
+                };
+                // Side cameras may constrain each digital well vertically;
+                // the inner band has room to preserve exact mirrored geometry.
+                if width == 2076. || width == 2152. {
+                    reflected(layout.dpad, layout.action_bounds());
+                }
+                for (left, right) in [("L1", "R1"), ("L2", "R2"), ("SELECT", "START")] {
+                    let key = |label| {
+                        layout
+                            .controls
+                            .iter()
+                            .find(|c| c.label == label)
+                            .unwrap()
+                            .bounds
+                    };
+                    reflected(key(left), key(right));
+                }
+                for i in layout.controller_elements() {
+                    for j in layout.controller_elements().filter(|j| *j > i) {
+                        let face = |index| layout.action_elements().any(|k| k == index);
+                        if !(face(i) && face(j)) {
+                            assert!(
+                                !layout.element(i).overlaps(layout.element(j)),
+                                "{width}x{height}: {} / {}",
+                                layout.element_name(i),
+                                layout.element_name(j)
+                            );
+                        }
+                    }
+                }
+            }
             if width != 2342. {
                 assert!((ps1.game.w * density - width).abs() < 0.02);
-                assert!((ps1.game.y * density + top - 20. * density).abs() < 0.02);
+                assert!((ps1.game.y * density + top - 16. * density).abs() < 0.02);
                 // Owner explicitly permits the camera to occlude the corner
                 // of the picture. It must not reserve a broad top/side band.
                 assert!(ps1.game.overlaps(camera));
@@ -2548,9 +2630,9 @@ mod tests {
             let mut layout = Layout::new(w, h);
             layout.anchor_toolbar(w, h, 66., 0., &[]);
             layout.place_game(w, h, false, 1., [0.5, 0.5]);
-            assert!(layout.dpad.y + layout.dpad.h <= h - 12. + 0.01);
+            assert!(layout.dpad.y + layout.dpad.h <= h - 4. + 0.01);
             for face in layout.controls.iter().filter(|c| c.is_face()) {
-                assert!(face.bounds.y + face.bounds.h <= h - 12. + 0.01);
+                assert!(face.bounds.y + face.bounds.h <= h - 4. + 0.01);
             }
             let triangle = layout
                 .controls
@@ -2718,7 +2800,7 @@ mod tests {
                 assert!(bounds.x >= 0. && bounds.y >= 0.);
                 assert!(bounds.x + bounds.w <= w && bounds.y + bounds.h <= h);
             }
-            assert!(layout.pause.w >= 40. && layout.pause.h == 20.);
+            assert!(layout.pause.w >= 40. && layout.pause.h == 16.);
             assert!(!layout.game.overlaps(layout.pause));
             for control in &layout.controls {
                 let x = control.bounds.x + control.bounds.w / 2.;

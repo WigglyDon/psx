@@ -108,7 +108,7 @@ saved profiles. Controls, toolbar and popovers still avoid actual holes.
 Default controls remain separate from the picture; overlap is explicit.
 
 Pause/time stay upper-left and sound/settings upper-right in every orientation.
-The normal toolbar is a 20-point strip without an extra gap below it, with
+The normal toolbar is a 16-point strip without an extra gap below it, with
 40-point-wide ordinary targets. Non-normal time uses a horizontal readable
 caption beside its hourglass. Visible OS status pushes toolbar controls down
 over the stable picture; it does not resize the game or controller geometry.
@@ -117,14 +117,17 @@ together to avoid density-truncation strips. Play and editing use the same
 actual canvas, cutouts and status state.
 
 Inner defaults budget after a maximum picture, with mirrored adjacent thumb
-wells and separated circular caps of at least 48 points. Spare height places
-level shoulders above each thumb pair, first shoulders outside second. Tighter
-windows put auxiliary keys in the clear middle without occupying the route
-between primary and secondary thumb areas. Separate stick-click and system
-keys remain available. The shallow band leaves 12 points plus the OS gesture
-strip beneath it. Other surfaces use clear docks/side rails. Owner mock layouts
-supply relative order and balance, not accidental dimensions or asymmetry.
-Saved manual rectangles retain precedence; applying new defaults is explicit.
+wells and separated circular caps of at least 48 points. The digital controller
+targets 184-point thumb areas, 64-point shoulders and 80-point system keys.
+The analog controller uses the same thumb-area ceiling for four wells, limited
+by actual headroom and width. Auxiliary keys occupy clear center space in two
+columns or two rows as space permits; they do not occupy the route between
+primary and secondary thumb areas. First shoulders are outside or below second.
+Separate stick-click and system keys remain available. This band leaves four
+points plus the OS gesture strip beneath it. Other surfaces use clear docks/side
+rails. Owner references guide size and balance; opposite sides use exact mirrored
+geometry. Saved manual rectangles retain precedence; applying new defaults is
+explicit. Generated sizing uses each orientation's actual dimensions.
 
 Do not infer that all black regions are host margins. Read-only decoding of
 the actual FF7 checkpoint found a 320×240 guest display with eight all-black
@@ -138,7 +141,8 @@ touches from entering the game. Tap selection has forgiving targets; separate
 Move/Resize modes and 48-point corner grips keep the opposite corner anchored.
 Floating tools dock above/below and hide during a gesture. Optional grid/peer/
 center guides, explicit Mirror and bounded gesture Undo support accurate
-placement without silently linking subsequent drags.
+placement without silently linking subsequent drags. Camera input exclusions
+are outlined, preserving the same visible picture as play.
 
 Action buttons and each shoulder pair select as groups for translation,
 proportional resize, Mirror, contextual Reset and Undo. Single editing remains.

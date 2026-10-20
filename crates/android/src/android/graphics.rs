@@ -710,7 +710,16 @@ impl Canvas<'_> {
             );
         }
         for cutout in editor.cutouts() {
-            self.rounded(editor.map(*cutout), [0.015, 0.02, 0.025, 1.]);
+            // Show the input exclusion without painting an opaque rectangle
+            // over picture pixels that remain usable during normal play.
+            self.shape(
+                editor.map(*cutout),
+                3.,
+                1.,
+                [0.60, 0.70, 0.75, 0.45],
+                0.,
+                0.,
+            );
         }
         if !has_frame && game.w > 100. {
             self.text(

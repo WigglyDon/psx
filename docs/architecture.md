@@ -187,15 +187,21 @@ center column, retain a usable clear side region instead of an empty picture.
 Generated controllers share the actual player canvas and input-capability
 metrics. On inner displays, adjacent thumb wells use available headroom after
 the maximum 4:3 picture; circular action caps retain clear separation and at
-least 48-point targets. Spare height puts level shoulders above each thumb
-pair, with L1/R1 outside L2/R2. Tighter windows use the clear middle for
-auxiliary keys, keeping the route between thumb areas empty. Stick-click and
-system keys retain separate reachable targets; double-tap-and-hold remains
-available for stick clicks. The shallow band leaves 12 points plus the system
-gesture strip below it. Other display shapes compare clear docks/side rails.
+least 48-point targets. The digital controller targets 184-point thumb areas,
+64-point shoulders and 80-point system keys, reflected exactly about the display
+center. The analog controller uses the same 184-point thumb-area ceiling for
+its four wells, bounded by actual width and headroom. Extra keys use the clear
+center: taller bands use two columns, shorter bands use two rows, without
+occupying the route between each stick and its adjacent digital well. First
+shoulders are outside second shoulders, or below them when stacked. Stick-click
+and system keys retain separate reachable targets; double-tap-and-hold remains
+available for stick clicks. This band leaves four points plus the system gesture
+strip below it. Other display shapes compare clear docks/side rails.
 No input is overlapped merely to imitate a physical controller. Owner-created
-arrangements guide balance/order, not accidental sizing or asymmetry. Saved
-custom rectangles still take precedence.
+arrangements guide size and balance; defaults correct accidental asymmetry.
+Saved custom rectangles still take precedence, so changing defaults does not
+silently alter a saved layout. Each orientation is budgeted from its actual
+dimensions instead of reusing a generated layout stretched along two axes.
 
 The owner explicitly chose game-picture use of the complete display, including
 camera pixels. A physical camera can occlude a corner of the image; it must not
@@ -204,6 +210,8 @@ cropping the guest frame or stretching its aspect ratio. Controller targets,
 chrome and popovers still avoid actual holes locally, without changing stored
 input coordinates. A whole face-button cluster moves together when needed.
 The live editor and play use the same placement and canvas.
+Its camera guide is an outline of the input exclusion, leaving the game visible
+inside the camera's bounding rectangle rather than painting that rectangle over it.
 
 On Android 12 and later, `BEHAVIOR_DEFAULT` requests hidden navigation with
 gesture navigation still available on the first swipe. Navigation's insets
@@ -238,7 +246,7 @@ The less-used system buttons keep their own separate row. Wide phone layouts use
 including their system buttons, so a bottom row does not constrain picture
 height. Pause/time are anchored upper-left; sound/settings upper-right in every
 orientation. Each pair can move inward around a camera while retaining its side.
-The toolbar uses a 20-point-high strip with no extra gap below it; ordinary
+The toolbar uses a 16-point-high strip with no extra gap below it; ordinary
 targets remain 40 points wide, and time has room for a horizontal readable rate.
 Its normal position uses the display's top edge, moving a corner pair inward
 around a camera. Visible status bars push chrome below their actual bounds,
