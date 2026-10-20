@@ -1,6 +1,6 @@
 //! Small native menu model. No platform handles or emulation ownership.
 use crate::artwork::Artwork;
-use crate::input::{DpadFeedback, Layout, Preset, Rect};
+use crate::input::{DpadFeedback, Layout, PlayerViewport, Preset, Rect};
 use crate::settings::Speed;
 use std::time::{Duration, Instant};
 
@@ -279,8 +279,8 @@ pub struct Editor {
     pub width: f32,
     pub height: f32,
     pub guides: [Option<f32>; 2],
-    group_actions: bool,
-    original_actions: Vec<(usize, Rect)>,
+    group_inputs: bool,
+    original_members: Vec<(usize, Rect)>,
     cutouts: Vec<Rect>,
     pointer: Option<EditorPointer>,
     undo: Vec<Preset>,
@@ -365,7 +365,80 @@ pub enum EditResult {
     Cancel,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InputGroup {
+    Actions,
+    LeftShoulders,
+    RightShoulders,
+}
+impl InputGroup {
+    const ALL: [Self; 3] = [Self::Actions, Self::LeftShoulders, Self::RightShoulders];
+    fn offset(self) -> usize {
+        match self {
+            Self::Actions => 1,
+            Self::LeftShoulders => 2,
+            Self::RightShoulders => 3,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::Actions => "Action buttons",
+            Self::LeftShoulders => "Left shoulders",
+            Self::RightShoulders => "Right shoulders",
+        }
+    }
+}
+
 impl Editor {
+    fn group(&self, index: usize) -> Option<InputGroup> {
+        InputGroup::ALL
+            .into_iter()
+            .find(|g| index == self.layout.element_count() + g.offset())
+    }
+    fn group_elements(&self, group: InputGroup) -> Vec<usize> {
+        self.layout
+            .controls
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                let matches = match group {
+                    InputGroup::Actions => matches!(c.label, "TRI" | "O" | "X" | "SQ"),
+                    InputGroup::LeftShoulders => matches!(c.label, "L1" | "L2"),
+                    InputGroup::RightShoulders => matches!(c.label, "R1" | "R2"),
+                };
+                matches.then_some(i + 1)
+            })
+            .collect()
+    }
+    fn group_bounds(&self, group: InputGroup, layout: &Layout) -> Rect {
+        self.group_elements(group)
+            .into_iter()
+            .map(|i| layout.element(i))
+            .reduce(|a, b| {
+                let x = a.x.min(b.x);
+                let y = a.y.min(b.y);
+                Rect::new(
+                    x,
+                    y,
+                    (a.x + a.w).max(b.x + b.w) - x,
+                    (a.y + a.h).max(b.y + b.h) - y,
+                )
+            })
+            .unwrap_or_default()
+    }
+    fn element_group(&self, index: usize) -> Option<InputGroup> {
+        InputGroup::ALL
+            .into_iter()
+            .find(|g| self.group_elements(*g).contains(&index))
+    }
+    fn select_element(&self, index: usize) -> usize {
+        if self.group_inputs {
+            if let Some(group) = self.element_group(index) {
+                return self.layout.element_count() + group.offset();
+            }
+        }
+        index
+    }
     pub fn new(preset: Preset, width: f32, height: f32) -> Self {
         Self::with_cutouts(preset, width, height, Vec::new())
     }
@@ -378,8 +451,8 @@ impl Editor {
             width,
             height,
             guides: [None; 2],
-            group_actions: true,
-            original_actions: Vec::new(),
+            group_inputs: true,
+            original_members: Vec::new(),
             cutouts,
             pointer: None,
             undo: Vec::new(),
@@ -414,22 +487,13 @@ impl Editor {
         }
     }
     fn layout_for(&self, preset: &Preset) -> Layout {
-        let mut layout =
-            preset.layout_in(self.width, self.height, &self.cutouts, self.picture_bounds);
-        layout.anchor_toolbar(
-            self.width,
-            self.height,
-            self.reusable_top,
-            self.covered_top,
-            &self.cutouts,
-        );
-        layout.place_game_in(
-            self.picture_bounds,
-            preset.allow_overlap,
-            preset.game_scale,
-            preset.game_offset,
-        );
-        layout
+        PlayerViewport {
+            controls: [self.width, self.height],
+            picture: self.picture_bounds,
+            reusable_top: self.reusable_top,
+            covered_top: self.covered_top,
+        }
+        .layout(preset, &self.cutouts)
     }
     pub fn preview(&self) -> Rect {
         Rect::new(0., 0., self.width, self.height)
@@ -458,13 +522,12 @@ impl Editor {
         let actions = [
             Some(EditorButton::Next),
             Some(EditorButton::Resize),
-            (self.action_group_selected() || self.action_selected(self.selected)).then_some(
-                if self.action_group_selected() {
+            (self.group(self.selected).is_some() || self.element_group(self.selected).is_some())
+                .then_some(if self.group(self.selected).is_some() {
                     EditorButton::Individual
                 } else {
                     EditorButton::Group
-                },
-            ),
+                }),
             self.mirror_target().map(|_| EditorButton::Mirror),
             Some(EditorButton::Dock),
             (!self.undo.is_empty()).then_some(EditorButton::Undo),
@@ -611,6 +674,17 @@ impl Editor {
         }
     }
     fn mirror_target(&self) -> Option<usize> {
+        if let Some(group) = self.group(self.selected) {
+            match group {
+                InputGroup::LeftShoulders => {
+                    return Some(self.layout.element_count() + InputGroup::RightShoulders.offset())
+                }
+                InputGroup::RightShoulders => {
+                    return Some(self.layout.element_count() + InputGroup::LeftShoulders.offset())
+                }
+                InputGroup::Actions => {}
+            }
+        }
         if self.selected == 0 {
             return Some(self.layout.element_count() + 1);
         }
@@ -648,7 +722,31 @@ impl Editor {
         if self.cutouts.iter().any(|c| reflected.overlaps(*c)) {
             return;
         }
-        if target == self.layout.element_count() + 1 {
+        if let Some(group @ (InputGroup::LeftShoulders | InputGroup::RightShoulders)) =
+            self.group(self.selected)
+        {
+            let source_members = self.group_elements(group);
+            for i in source_members {
+                let source = self.layout.controls[i - 1];
+                let second = source.label.ends_with('2');
+                let opposite = match (group, second) {
+                    (InputGroup::LeftShoulders, false) => "R1",
+                    (InputGroup::LeftShoulders, true) => "R2",
+                    (InputGroup::RightShoulders, false) => "L1",
+                    _ => "L2",
+                };
+                if let Some(j) = self
+                    .layout
+                    .controls
+                    .iter()
+                    .position(|c| c.label == opposite)
+                {
+                    let r = source.bounds;
+                    self.layout
+                        .set_element(j + 1, Rect::new(self.width - r.x - r.w, r.y, r.w, r.h));
+                }
+            }
+        } else if target == self.layout.element_count() + 1 {
             let original = self.layout.action_bounds();
             let members: Vec<_> = self
                 .layout
@@ -673,8 +771,8 @@ impl Editor {
         self.layout = self.layout_for(&self.preset);
     }
     pub fn selected_bounds(&self) -> Rect {
-        if self.action_group_selected() {
-            self.layout.action_bounds()
+        if let Some(group) = self.group(self.selected) {
+            self.group_bounds(group, &self.layout)
         } else if self.selected < self.layout.element_count() {
             self.layout.element(self.selected)
         } else {
@@ -682,11 +780,11 @@ impl Editor {
         }
     }
     pub fn selected_is_default(&self) -> bool {
-        if self.action_group_selected() {
+        if let Some(group) = self.group(self.selected) {
             let defaults = self.defaults();
             return self
-                .layout
-                .action_elements()
+                .group_elements(group)
+                .into_iter()
                 .all(|i| self.layout.element(i).same_bounds(defaults.element(i)));
         }
         let expected = if self.selected < self.layout.element_count() {
@@ -705,9 +803,6 @@ impl Editor {
             ..Preset::default()
         })
     }
-    fn action_selected(&self, index: usize) -> bool {
-        self.layout.action_elements().any(|i| i == index)
-    }
     fn action_group_selected(&self) -> bool {
         self.selected == self.layout.element_count() + 1
     }
@@ -719,8 +814,12 @@ impl Editor {
         // individual face button into the play-layout normalizer would move
         // the entire diamond, including controls the user did not select.
         let rect = self.camera_limited(original, rect);
-        if self.action_group_selected() {
-            for &(i, member) in &self.original_actions {
+        if let Some(group) = self.group(self.selected) {
+            let members = self.group_elements(group);
+            for &(i, member) in &self.original_members {
+                if !members.contains(&i) {
+                    continue;
+                }
                 self.layout.set_element(
                     i,
                     Rect::new(
@@ -785,8 +884,8 @@ impl Editor {
         })
     }
     pub fn selected_name(&self) -> &str {
-        if self.action_group_selected() {
-            "Action buttons"
+        if let Some(group) = self.group(self.selected) {
+            group.name()
         } else if self.picture_selected() {
             "Game picture"
         } else {
@@ -814,9 +913,9 @@ impl Editor {
         if self.tools().contains(x, y) {
             return;
         }
-        self.original_actions = self
+        self.original_members = self
             .layout
-            .action_elements()
+            .controller_elements()
             .map(|i| (i, self.layout.element(i)))
             .collect();
         if let Some(corner) = self
@@ -849,11 +948,7 @@ impl Editor {
             .rev()
             .find(|i| self.map(self.layout.element(*i)).contains(x, y))
         {
-            self.selected = if self.group_actions && self.action_selected(index) {
-                self.layout.element_count() + 1
-            } else {
-                index
-            };
+            self.selected = self.select_element(index);
         } else if let Some(index) = self
             .layout
             .controller_elements()
@@ -871,13 +966,11 @@ impl Editor {
                 distance(*a).total_cmp(&distance(*b))
             })
         {
-            self.selected = if self.group_actions && self.action_selected(index) {
-                self.layout.element_count() + 1
-            } else {
-                index
-            };
-        } else if self.group_actions && self.map(self.layout.action_bounds()).contains(x, y) {
-            self.selected = self.layout.element_count() + 1;
+            self.selected = self.select_element(index);
+        } else if let Some(group) = InputGroup::ALL.into_iter().find(|g| {
+            self.group_inputs && self.map(self.group_bounds(*g, &self.layout)).contains(x, y)
+        }) {
+            self.selected = self.layout.element_count() + group.offset();
         } else if self.map(self.layout.game).contains(x, y) {
             self.selected = self.layout.element_count();
         } else {
@@ -959,8 +1052,8 @@ impl Editor {
         }
         let threshold = 6. / (self.preview().w / self.width);
         let defaults = self.defaults();
-        let mut references = vec![if self.action_group_selected() {
-            defaults.action_bounds()
+        let mut references = vec![if let Some(group) = self.group(self.selected) {
+            self.group_bounds(group, &defaults)
         } else if self.selected < defaults.element_count() {
             defaults.element(self.selected)
         } else {
@@ -971,7 +1064,9 @@ impl Editor {
                 (0..self.layout.element_count())
                     .filter(|i| {
                         *i != self.selected
-                            && !(self.action_group_selected() && self.action_selected(*i))
+                            && !self
+                                .group(self.selected)
+                                .is_some_and(|g| self.group_elements(g).contains(i))
                     })
                     .map(|i| self.layout.element(i)),
             );
@@ -1064,9 +1159,11 @@ impl Editor {
         };
         let minimum = if game {
             area.w * 0.25 / original.w
-        } else if self.action_group_selected() {
-            self.original_actions
+        } else if let Some(group) = self.group(self.selected) {
+            let members = self.group_elements(group);
+            self.original_members
                 .iter()
+                .filter(|(i, _)| members.contains(i))
                 .map(|(_, r)| (24. / r.w).max(24. / r.h))
                 .fold(0_f32, f32::max)
         } else {
@@ -1128,10 +1225,12 @@ impl Editor {
                     .layout
                     .controller_elements()
                     .chain(std::iter::once(self.layout.element_count()))
-                    .filter(|i| !self.group_actions || !self.action_selected(*i))
+                    .filter(|i| !self.group_inputs || self.element_group(*i).is_none())
                     .collect();
-                if self.group_actions {
-                    selections.insert(1, self.layout.element_count() + 1);
+                if self.group_inputs {
+                    for group in InputGroup::ALL.into_iter().rev() {
+                        selections.insert(1, self.layout.element_count() + group.offset());
+                    }
                 }
                 let current = selections
                     .iter()
@@ -1140,18 +1239,21 @@ impl Editor {
                 self.selected = selections[(current + 1) % selections.len()];
             }
             EditorButton::Group => {
-                self.group_actions = true;
-                self.selected = self.layout.element_count() + 1;
+                self.group_inputs = true;
+                self.selected = self.select_element(self.selected);
             }
             EditorButton::Individual => {
-                self.group_actions = false;
-                self.selected = self.layout.action_elements().next().unwrap_or(0);
+                let group = self.group(self.selected);
+                self.group_inputs = false;
+                self.selected = group
+                    .and_then(|g| self.group_elements(g).first().copied())
+                    .unwrap_or(0);
             }
             EditorButton::Reset => {
                 let before = self.preset.clone();
-                if self.action_group_selected() {
+                if let Some(group) = self.group(self.selected) {
                     let defaults = self.defaults();
-                    let members: Vec<_> = self.layout.action_elements().collect();
+                    let members = self.group_elements(group);
                     for i in members {
                         self.layout.set_element(i, defaults.element(i));
                     }
@@ -1196,6 +1298,93 @@ impl Editor {
 #[cfg(test)]
 mod editor_tests {
     use super::*;
+
+    #[test]
+    fn shoulder_pairs_move_resize_mirror_reset_and_undo_independently() {
+        for analog in [false, true] {
+            for group in [InputGroup::LeftShoulders, InputGroup::RightShoulders] {
+                let mut editor = Editor::new(
+                    Preset {
+                        analog,
+                        ..Preset::default()
+                    },
+                    852.,
+                    817.,
+                );
+                editor.grid = false;
+                let members = editor.group_elements(group);
+                let initial: Vec<_> = (0..editor.layout.element_count())
+                    .map(|i| editor.layout.element(i))
+                    .collect();
+                let r = editor.layout.element(members[0]);
+                let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
+                editor.down(1, x, y);
+                assert_eq!(editor.group(editor.selected), Some(group));
+                editor.motion(2, x + 100., y - 80.);
+                assert!(editor.layout.element(members[0]).same_bounds(r));
+                editor.motion(1, x + 16., y - 48.);
+                editor.up(1, x + 16., y - 48.);
+                for &i in &members {
+                    let moved = editor.layout.element(i);
+                    assert!((moved.x - initial[i].x - 16.).abs() < 0.01);
+                    assert!((moved.y - initial[i].y + 48.).abs() < 0.01);
+                }
+                assert!((0..initial.len())
+                    .filter(|i| !members.contains(i))
+                    .all(|i| editor.layout.element(i).same_bounds(initial[i])));
+                assert!(editor.spacing_slider().is_none());
+                let saved: Preset =
+                    serde_json::from_slice(&serde_json::to_vec(&editor.preset).unwrap()).unwrap();
+                assert!(members.iter().all(|i| saved
+                    .layout(852., 817.)
+                    .element(*i)
+                    .same_bounds(editor.layout.element(*i))));
+                press(&mut editor, EditorButton::Undo);
+                assert!(members
+                    .iter()
+                    .all(|i| editor.layout.element(*i).same_bounds(initial[*i])));
+                press(&mut editor, EditorButton::Resize);
+                let old = editor.selected_bounds();
+                let (hx, hy) = editor.handles()[2];
+                editor.down(1, hx, hy);
+                editor.motion(1, hx + 24., hy + 24.);
+                editor.up(1, hx + 24., hy + 24.);
+                let resized = editor.selected_bounds();
+                assert!(resized.w > old.w && resized.h > old.h);
+                let ratios: Vec<_> = members
+                    .iter()
+                    .map(|i| editor.layout.element(*i).w / initial[*i].w)
+                    .collect();
+                assert!((ratios[0] - ratios[1]).abs() < 0.001);
+                let other = if group == InputGroup::LeftShoulders {
+                    InputGroup::RightShoulders
+                } else {
+                    InputGroup::LeftShoulders
+                };
+                press(&mut editor, EditorButton::Mirror);
+                for &i in &members {
+                    // Pair by label suffix rather than vector ordering.
+                    let label = editor.layout.controls[i - 1].label;
+                    let j = editor
+                        .group_elements(other)
+                        .into_iter()
+                        .find(|j| {
+                            editor.layout.controls[*j - 1]
+                                .label
+                                .ends_with(label.chars().last().unwrap())
+                        })
+                        .unwrap();
+                    let (a, b) = (editor.layout.element(i), editor.layout.element(j));
+                    assert!((a.x + a.w + b.x - 852.).abs() < 0.01 && (a.y - b.y).abs() < 0.01);
+                }
+                press(&mut editor, EditorButton::Reset);
+                assert!(editor.selected_is_default());
+                press(&mut editor, EditorButton::Individual);
+                assert!(editor.group(editor.selected).is_none());
+                assert!(members.contains(&editor.selected));
+            }
+        }
+    }
 
     fn press(editor: &mut Editor, button: EditorButton) {
         let (r, _) = editor
@@ -1366,7 +1555,7 @@ mod editor_tests {
         layout.set_element(1, triangle);
         preset.capture(&layout, 852., 817.);
         let mut editor = Editor::new(preset, 852., 817.);
-        editor.group_actions = false;
+        editor.group_inputs = false;
         editor.selected = 1;
         let r = editor.map(editor.layout.element(1));
         let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
@@ -1639,7 +1828,8 @@ mod editor_tests {
             );
             for (i, r) in bounds.iter().enumerate() {
                 if i != target
-                    && !(target == editor.layout.element_count() + 1 && editor.action_selected(i))
+                    && !(target == editor.layout.element_count() + 1
+                        && (editor.element_group(i) == Some(InputGroup::Actions)))
                 {
                     assert!(editor.layout.element(i).same_bounds(*r), "{name}: {i}");
                 }
@@ -1696,7 +1886,7 @@ mod editor_tests {
         for (i, b) in bounds.iter().enumerate() {
             let r = editor.layout.element(i);
             assert!((r.w - b.w).abs() < 0.01 && (r.h - b.h).abs() < 0.01);
-            if !editor.action_selected(i) {
+            if !(editor.element_group(i) == Some(InputGroup::Actions)) {
                 assert!(r.same_bounds(*b));
             }
         }
@@ -1723,6 +1913,7 @@ mod editor_tests {
         layout.set_element(selected, Rect::new(290., 260., 24., 24.));
         preset.capture(&layout, 852., 817.);
         let mut editor = Editor::new(preset, 852., 817.);
+        editor.group_inputs = false;
         let before: Vec<_> = (0..editor.layout.element_count())
             .map(|i| editor.layout.element(i))
             .collect();
@@ -1746,7 +1937,7 @@ mod editor_tests {
     fn dragging_one_face_toward_a_camera_does_not_push_its_siblings() {
         let camera = Rect::new(802., 200., 50., 100.);
         let mut editor = Editor::with_cutouts(Preset::default(), 852., 817., vec![camera]);
-        editor.group_actions = false;
+        editor.group_inputs = false;
         editor.selected = 1;
         let before: Vec<_> = (0..editor.layout.element_count())
             .map(|i| editor.layout.element(i))

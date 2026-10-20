@@ -455,3 +455,38 @@ The solver maximizes the centered, high clear picture. Game-drawn black regions
 remain separate from host geometry; no automatic crop/stretch is introduced.
 The new geometry and rendering checks require another installed-device pass;
 they do not settle Baldur's card failure or PS2 gameplay/audio/performance.
+
+## Shared presentation correction after actual PS1 inspection
+
+The October 20 20:13–20:28 UTC window installed `beacac396af4`; FF7 restored
+its existing scene and rendered. The owner correctly rejected the standard
+unfolded PS1 view: 1804×1353 at 136,68.2 in a 2076×1914 control surface.
+The old PS1 dock remained much deeper than the PS2 band. Several toolbar
+glyphs also used fixed drawing dimensions, so reducing their rectangles did
+not proportionally reduce what the owner saw. No actual new PS2 full-height
+or L3 pass follows from this window. Normal Close game preceded final backup;
+all eight PS1 cards, six PS2 cards, library and PS2 profiles remain unchanged.
+PS1 profiles gained a default Tall entry and explicit default-valued preference,
+with existing effective settings retained. USB disappeared after sleep;
+locking/screen-off remained unverified. Access was released before expiry.
+
+The next Rust revision composes play and editing through one console-independent
+`PlayerViewport`. Digital and dual-stick controllers use the same shallow inner
+band, common face-cap geometry, auxiliary-key metrics and picture policy. It
+corrects generated PS1 defaults without rewriting saved manual rectangles.
+Toolbar glyphs now scale with their available box; input bounds remain distinct.
+L1/L2 and R1/R2 select as groups, supporting translation, proportional corner
+resize, symmetry, contextual Reset and Undo. Single editing remains available;
+the shape-spacing slider stays specific to action buttons. Existing serialized
+element indices and save/session/native identities remain unchanged.
+
+Read-only decoding of the current FF7 checkpoint separates another observation:
+the guest display is 320×240, with eight all-black VRAM rows at both top and
+bottom. Those source bands are independent of the incorrect outer host margins.
+No automatic crop/stretch or speculative emulation change is introduced.
+Actual installed-device checks remain required for the new shared presentation.
+Presentation also rounds physical blit endpoints together, avoiding one-pixel
+strips from truncating fractional density-scaled widths/heights. Shared GLES
+probes check actual left/right inner-display and top/bottom folded-display
+pixels, separately from geometric rectangle assertions. These remain host
+rendering results until the candidate is installed and checked on the Fold.

@@ -40,6 +40,30 @@ impl Rect {
     }
 }
 
+/// Player presentation is independent of controller capabilities and engine.
+/// The controller surface can exclude gestures while the picture uses them.
+#[derive(Clone, Copy)]
+pub struct PlayerViewport {
+    pub controls: [f32; 2],
+    pub picture: Rect,
+    pub reusable_top: f32,
+    pub covered_top: f32,
+}
+impl PlayerViewport {
+    pub fn layout(self, preset: &Preset, cutouts: &[Rect]) -> Layout {
+        let [w, h] = self.controls;
+        let mut layout = preset.layout_in(w, h, cutouts, self.picture);
+        layout.anchor_toolbar(w, h, self.reusable_top, self.covered_top, cutouts);
+        layout.place_game_in(
+            self.picture,
+            preset.allow_overlap,
+            preset.game_scale,
+            preset.game_offset,
+        );
+        layout
+    }
+}
+
 /// Window-inset callbacks and drawable resizes arrive independently. Never
 /// apply another display's edges to the current drawable.
 pub fn safe_content(size: [i32; 2], inset_size: [i32; 2], edges: [i32; 4]) -> Rect {
@@ -131,6 +155,11 @@ impl Layout {
             side.place_game_in(picture, false, 1., [0.5; 2]);
             if side.game.w > rails.game.w + 0.01 {
                 rails = side;
+            }
+        }
+        if let Some(band) = Self::controller_band(w, h, false) {
+            if band.game.w > rails.game.w + 0.01 {
+                rails = band;
             }
         }
         rails
@@ -417,7 +446,7 @@ impl Layout {
         }
         layout.anchor_toolbar(requested[0], requested[1], 0., 0., &[]);
         layout.place_game(requested[0], requested[1], false, 1., [0.5, 0.5]);
-        if let Some(compact) = Self::ps2_shared_band(requested[0], requested[1]) {
+        if let Some(compact) = Self::controller_band(requested[0], requested[1], true) {
             if compact.game.w > layout.game.w + 0.01 {
                 return compact;
             }
@@ -426,7 +455,7 @@ impl Layout {
     }
     /// Adjacent thumb wells share a shallow band; auxiliary keys occupy its
     /// center, outside both thumb pairs. Never crop or overlap for extra width.
-    fn ps2_shared_band(w: f32, h: f32) -> Option<Self> {
+    fn controller_band(w: f32, h: f32, analog: bool) -> Option<Self> {
         if w < 800. || h < 600. || w > h * 1.35 {
             return None;
         }
@@ -444,14 +473,14 @@ impl Layout {
             .min(stick);
         let main_y = h - bottom - stick;
         let face_y = main_y + (stick - face) / 2.;
-        let digital_x = outer + stick + 8.;
+        let digital_x = if analog { outer + stick + 8. } else { outer };
         let auxiliary_x = w / 2. - 102.;
         let click_y = h - bottom - 48.;
         let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
         let fx = w - digital_x - face / 2.;
         let fy = face_y + face / 2.;
-        let mut layout = Self::new(w, h);
+        let mut layout = Self::arranged(w, h, false);
         layout.dpad = Rect::new(digital_x, face_y, face, face);
         for c in &mut layout.controls {
             c.bounds = match c.label {
@@ -468,17 +497,19 @@ impl Layout {
                 _ => continue,
             };
         }
-        for (x, label, id) in [(auxiliary_x, "L3", 14), (w - auxiliary_x - 48., "R3", 15)] {
-            layout.controls.push(Control {
-                bounds: Rect::new(x, click_y, 48., 48.),
-                label,
-                mask: 1 << id,
-            });
+        if analog {
+            for (x, label, id) in [(auxiliary_x, "L3", 14), (w - auxiliary_x - 48., "R3", 15)] {
+                layout.controls.push(Control {
+                    bounds: Rect::new(x, click_y, 48., 48.),
+                    label,
+                    mask: 1 << id,
+                });
+            }
+            layout.sticks = vec![
+                Rect::new(outer, main_y, stick, stick),
+                Rect::new(w - outer - stick, main_y, stick, stick),
+            ];
         }
-        layout.sticks = vec![
-            Rect::new(outer, main_y, stick, stick),
-            Rect::new(w - outer - stick, main_y, stick, stick),
-        ];
         layout.anchor_toolbar(w, h, 0., 0., &[]);
         layout.place_game(w, h, false, 1., [0.5; 2]);
         Some(layout)
@@ -1498,6 +1529,64 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn one_player_viewport_presents_both_controller_capabilities_consistently() {
+        let density = 2.4375;
+        for (width, height, top, bottom) in [
+            (2076., 2152., 160., 78.),
+            (2152., 2076., 136., 78.),
+            (1080., 2342., 182., 59.),
+            (2342., 1080., 0., 59.),
+        ] {
+            let (w, h) = (width / density, (height - top - bottom) / density);
+            let camera = if top > 0. {
+                Rect::new(0., -top / density, 136. / density, top / density)
+            } else {
+                Rect::new(0., 484. / density, 182. / density, 112. / density)
+            };
+            let viewport = PlayerViewport {
+                controls: [w, h],
+                picture: Rect::new(0., -top / density, w, height / density),
+                reusable_top: top / density,
+                covered_top: 0.,
+            };
+            let ps1 = viewport.layout(&Preset::default(), &[camera]);
+            let ps2 = viewport.layout(
+                &Preset {
+                    analog: true,
+                    ..Preset::default()
+                },
+                &[camera],
+            );
+            assert!(
+                ps1.game.same_bounds(ps2.game),
+                "{width}x{height}: {:?} / {:?}",
+                ps1.game,
+                ps2.game
+            );
+            for (a, b) in [
+                (ps1.pause, ps2.pause),
+                (ps1.playback, ps2.playback),
+                (ps1.speed, ps2.speed),
+                (ps1.mute, ps2.mute),
+            ] {
+                assert!(a.same_bounds(b));
+            }
+            if width == 2076. {
+                assert!((ps1.game.w * density - width).abs() < 0.02);
+            }
+            if width == 2342. {
+                assert!((ps1.game.h * density - height).abs() < 0.02);
+            }
+            for layout in [ps1, ps2] {
+                assert!(!layout.game.overlaps(camera));
+                assert!(
+                    (0..layout.element_count()).all(|i| !layout.element(i).overlaps(layout.game))
+                );
+            }
+        }
+    }
     #[test]
     fn saved_controls_survive_temporary_startup_and_replaced_surfaces() {
         for analog in [false, true] {
@@ -1969,7 +2058,7 @@ mod tests {
     fn larger_default_thumb_controls_keep_clear_spacing_and_full_fold_landscape_height() {
         for (w, h, camera, min_pad, min_face) in [
             (443., 861., None, 200., 80.),
-            (852., 817., None, 224., 65.),
+            (852., 817., None, 128., 48.),
             (
                 2342. / 2.4375,
                 1021. / 2.4375,
@@ -2112,9 +2201,8 @@ mod tests {
             let before = previous.element(i);
             let after = layout.element(i);
             if i == 0 {
-                assert_eq!(before.w, after.w);
-                assert!(after.h >= 136.);
-            } else if i <= layout.controls.len() && layout.controls[i - 1].is_face() {
+                assert!(after.w >= 128. && after.h >= 128.);
+            } else if i <= layout.controls.len() {
                 assert!(after.w >= 48. && after.h >= 48.);
             } else {
                 assert_eq!((before.w, before.h), (after.w, after.h));
@@ -2219,13 +2307,13 @@ mod tests {
                     assert!(layout.sticks.iter().all(|r| r.w >= 128.));
                     assert!(layout.dpad.h >= 122.);
                 } else {
-                    assert!(layout.dpad.h >= 200.);
+                    assert!(layout.dpad.h >= 128.);
                 }
                 assert!(layout
                     .controls
                     .iter()
                     .filter(|c| c.is_face())
-                    .all(|c| c.bounds.w >= if analog { 48. } else { 72. }));
+                    .all(|c| c.bounds.w >= 48.));
                 let normal = layout.game;
                 layout.anchor_toolbar(w, h, 66., 0., &[camera]);
                 layout.place_game_in(Rect::new(0., -66., w, h + 66.), false, 1., [0.5; 2]);
@@ -2339,9 +2427,9 @@ mod tests {
             let mut layout = Layout::new(w, h);
             layout.anchor_toolbar(w, h, 66., 0., &[]);
             layout.place_game(w, h, false, 1., [0.5, 0.5]);
-            assert!(layout.dpad.y + layout.dpad.h <= h - 32. + 0.01);
+            assert!(layout.dpad.y + layout.dpad.h <= h - 12. + 0.01);
             for face in layout.controls.iter().filter(|c| c.is_face()) {
-                assert!(face.bounds.y + face.bounds.h <= h - 32. + 0.01);
+                assert!(face.bounds.y + face.bounds.h <= h - 12. + 0.01);
             }
             let triangle = layout
                 .controls
@@ -2440,7 +2528,7 @@ mod tests {
         let r = layout.dpad;
         let (x, y) = (r.x + r.w / 2., r.y + r.h / 2.);
         let mut touches = Touches::default();
-        touches.down(1, x, y, &layout, true);
+        touches.down(1, x, y, &layout, false);
         for (degrees, expected) in [
             (20_f32, 128),
             (24., 128),

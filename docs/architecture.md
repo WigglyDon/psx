@@ -557,3 +557,29 @@ request is distinct from a confirmed pin; a callback-only receiver records the
 latter. Existing pins receive title/local-art updates from the collection.
 Removing a launcher icon does not mutate the collection or saved progress.
 These are implemented contracts; device acceptance is tracked in PLAYER-2.
+
+### Player presentation and touch-controller geometry
+
+The player viewport owns the available picture canvas and chrome clearance.
+It has no console identifier. The controller preset supplies input geometry and
+capabilities; it does not choose another presentation system. Android and the
+live editor compose through the same Rust `PlayerViewport` operation. The
+picture solver maximizes a complete, correctly proportioned image, places it
+high and honors real cutouts and explicit non-overlap obstacles. Gesture-safe
+controller bounds remain distinct from clear drawable pixels usable by the
+picture. Transient bars do not introduce a second canvas or a size preset.
+
+Generated inner-display digital and dual-stick controllers share a shallow
+thumb band and common cap, auxiliary-key and toolbar metrics. Additional PS2
+inputs affect the input geometry, not the picture/chrome policy. Existing
+per-display PS1/PS2 preset identities and normalized rectangles remain compatible;
+custom geometry takes precedence. Future physical-controller support should
+withdraw the touch overlay from this composition, retaining the same player
+presentation. Physical-controller acquisition/routing is not yet implemented.
+
+A host rectangle reaching a display edge is distinct from the visible pixels
+inside a source frame. Do not infer that all black regions are frontend
+letterboxing or crop dark content automatically. The latest FF7 checkpoint's
+320×240 display contains eight all-black guest rows at each end, verified
+read-only from its saved GPU/VRAM fields. Its larger outer margins were caused
+by the old PS1 touch dock, independently of those source rows.

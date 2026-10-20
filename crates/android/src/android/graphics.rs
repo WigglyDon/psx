@@ -329,10 +329,12 @@ impl Graphics {
         if let Some((w, h, bottom_left)) = frame {
             if w > 0 && h > 0 && w <= 1024 && h <= 1024 {
                 let r = editor.map_or_else(|| layout.game.fit(4. / 3.), |e| e.map(e.layout.game));
-                let x = (self.content.x + r.x * density) as i32;
-                let top = (self.content.y + r.y * density) as i32;
-                let width = (r.w * density) as i32;
-                let height = (r.h * density) as i32;
+                // Round endpoints together: truncating a scaled width can
+                // leave a one-pixel strip even when the solved edge is exact.
+                let x = (self.content.x + r.x * density).round() as i32;
+                let top = (self.content.y + r.y * density).round() as i32;
+                let right = (self.content.x + (r.x + r.w) * density).round() as i32;
+                let bottom_edge = (self.content.y + (r.y + r.h) * density).round() as i32;
                 gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(self.fbo));
                 let (bottom, top_source) = if bottom_left {
                     (0, h as i32)
@@ -345,8 +347,8 @@ impl Graphics {
                     w as i32,
                     top_source,
                     x,
-                    self.height - top - height,
-                    x + width,
+                    self.height - bottom_edge,
+                    right,
                     self.height - top,
                     glow::COLOR_BUFFER_BIT,
                     glow::NEAREST,
@@ -1067,7 +1069,7 @@ impl Canvas<'_> {
             self.line((x - 9., y), (x + 9., y), 2., [0.85, 0.94, 0.96, 1.]);
             self.line((x, y - 9.), (x, y + 9.), 2., [0.85, 0.94, 0.96, 1.]);
             let settings = Menu::settings_rect(self.w);
-            self.cog(settings.x + 24., settings.y + 24.);
+            self.cog(settings.x + 24., settings.y + 24., 1.);
         } else {
             let back = Menu::navigation_rect(self.w);
             let (x, y) = (back.x + 24., back.y + 24.);
@@ -1622,12 +1624,14 @@ impl Canvas<'_> {
         if background[3] > 0. {
             self.panel(r, background);
         }
+        let glyph_scale = (r.h / 32.).min(1.);
+        let point = |dx: f32, dy: f32| (x + dx * glyph_scale, y + dy * glyph_scale);
         if label == "MENU" {
-            self.cog(x, y);
+            self.cog(x, y, glyph_scale);
             return;
         }
         if label == "TIME" {
-            let scale = (r.h / 20.).min(1.);
+            let scale = glyph_scale;
             let point = |dx: f32, dy: f32| (x + dx * scale, y + dy * scale);
             let color = if strength > 0. {
                 [0.55, 0.95, 0.79, 1.]
@@ -1654,14 +1658,18 @@ impl Canvas<'_> {
             return;
         }
         if label == "PAUSE" {
-            for left in [x - 8., x + 3.] {
-                self.rounded(Rect::new(left, y - 10., 5., 20.), [0.9, 0.95, 1., 1.]);
+            for left in [-8., 3.] {
+                let (left, top) = point(left, -10.);
+                self.rounded(
+                    Rect::new(left, top, 5. * glyph_scale, 20. * glyph_scale),
+                    [0.9, 0.95, 1., 1.],
+                );
             }
             return;
         }
         if label == "PLAY" {
             self.polygon(
-                &[(x - 7., y - 11.), (x + 10., y), (x - 7., y + 11.)],
+                &[point(-7., -11.), point(10., 0.), point(-7., 11.)],
                 [0.55, 0.95, 0.79, 1.],
             );
             return;
@@ -1670,21 +1678,21 @@ impl Canvas<'_> {
             let color = [0.85, 0.92, 0.98, 1.];
             self.polygon(
                 &[
-                    (x - 12., y - 4.),
-                    (x - 7., y - 4.),
-                    (x, y - 10.),
-                    (x, y + 10.),
-                    (x - 7., y + 4.),
-                    (x - 12., y + 4.),
+                    point(-12., -4.),
+                    point(-7., -4.),
+                    point(0., -10.),
+                    point(0., 10.),
+                    point(-7., 4.),
+                    point(-12., 4.),
                 ],
                 color,
             );
             if label == "MUTE" {
-                self.line((x + 4., y - 5.), (x + 12., y + 5.), 2., color);
-                self.line((x + 4., y + 5.), (x + 12., y - 5.), 2., color);
+                self.line(point(4., -5.), point(12., 5.), 2. * glyph_scale, color);
+                self.line(point(4., 5.), point(12., -5.), 2. * glyph_scale, color);
             } else {
-                self.line((x + 5., y - 8.), (x + 10., y), 2., color);
-                self.line((x + 10., y), (x + 5., y + 8.), 2., color);
+                self.line(point(5., -8.), point(10., 0.), 2. * glyph_scale, color);
+                self.line(point(10., 0.), point(5., 8.), 2. * glyph_scale, color);
             }
             return;
         }
@@ -1702,19 +1710,19 @@ impl Canvas<'_> {
             [0.85, 0.92, 0.98, 1.],
         );
     }
-    fn cog(&mut self, x: f32, y: f32) {
+    fn cog(&mut self, x: f32, y: f32, scale: f32) {
         let color = [0.85, 0.92, 0.98, 1.];
         for i in 0..8 {
             let angle = i as f32 / 8. * std::f32::consts::TAU;
             let (sin, cos) = angle.sin_cos();
             self.line(
-                (x + cos * 8., y + sin * 8.),
-                (x + cos * 11., y + sin * 11.),
-                4.,
+                (x + cos * 8. * scale, y + sin * 8. * scale),
+                (x + cos * 11. * scale, y + sin * 11. * scale),
+                4. * scale,
                 color,
             );
         }
-        self.ring(x, y, 10., 4., color);
+        self.ring(x, y, 10. * scale, 4. * scale, color);
     }
 }
 

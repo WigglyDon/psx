@@ -15,7 +15,7 @@ use psx_player::{
     audio::AudioQueue,
     engine::Core,
     files::{Game, System},
-    input::{safe_content, ControllerSettings, Layout, Rect, Touches},
+    input::{safe_content, ControllerSettings, Layout, PlayerViewport, Rect, Touches},
     library::{self, Library},
     resume,
     retro::HostConfig,
@@ -700,15 +700,13 @@ impl Player {
             picture.w / self.density,
             picture.h / self.density + reusable,
         );
-        self.layout = preset.layout_in(w, h, &cutouts, picture);
-        self.layout
-            .anchor_toolbar(w, h, reusable, covered, &cutouts);
-        self.layout.place_game_in(
+        self.layout = PlayerViewport {
+            controls: [w, h],
             picture,
-            preset.allow_overlap,
-            preset.game_scale,
-            preset.game_offset,
-        );
+            reusable_top: reusable,
+            covered_top: covered,
+        }
+        .layout(&preset, &cutouts);
         if let Some(editor) = &mut self.editor {
             editor.set_picture_viewport(reusable, covered, picture);
         }
@@ -1907,7 +1905,7 @@ impl Player {
                 add(
                     Action::EditControls,
                     "Edit layout".into(),
-                    "Edit live; move, resize, space or mirror controls. Select Single for one button"
+                    "Edit live; move, resize or mirror groups. Shapes have spacing; Single edits one button"
                         .into(),
                 );
                 add(
