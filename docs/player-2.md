@@ -307,4 +307,26 @@ fits the camera between the secondary digital band and lower primary sticks,
 retaining symmetry and the full 1021-pixel picture height in the measured host
 fixture. It also swaps shoulder defaults to 2 outside/1 inside (1 above 2 when
 stacked), and separates default circular action caps. Saved custom positions
-retain precedence. These follow-up defaults are not in the installed build yet.
+retain precedence.
+
+The next approved window installed `c27ce6f698c3` after a fresh, readable data
+backup. Actual folded-landscape tracing confirmed the centered, top-aligned
+1361.3×1021 picture at 490.3,0 in 2342×1021 content. Red Dead's tutorial scene
+restored, with separate circular action caps and level shoulder pairs ordered
+2 outside/1 inside. This is the host viewport; the game may draw borders inside
+its own frame.
+
+Actual editor interactions moved the D-pad independently and restored it with
+Undo; a corner grip enlarged it from 147 to 160 points, with Undo restoring
+the original. The action-group spacing slider increased its bounds from 147
+to 174 points while keeping cap sizes unchanged; Undo restored the diamond.
+A group corner grip enlarged all four caps together to a 160-point well.
+Cancel discarded that final draft. The game picture remained visible and the
+paused scene stayed unchanged. Mirror, grouped dragging, live-running editing,
+Done persistence and fold/status transitions still need device checks.
+
+The game closed gracefully before a final readable backup. All eight PS1 cards,
+four PS2 cards, both controller-profile files and the library compare byte-equal
+before/after. The session checkpoint was updated normally. Locking was confirmed
+before the window ended; Android reported Dozing, not fully asleep. Ordinary
+PS2 saving and the remaining gameplay/performance acceptance are unchanged.

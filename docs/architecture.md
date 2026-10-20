@@ -496,8 +496,10 @@ the camera does not push one entire cluster into the centered picture. Selection
 compares the unscaled clear picture and applies only to generated non-overlap
 defaults, never saved custom rectangles. The measured 2342×1080 Fold with a
 59-pixel navigation strip and 182×112 side camera retains a centered, top-aligned
-1021-pixel-high 4:3 picture in the host fixture. This is a layout result, not
-an installed-device result. Primary sticks retain 104 points; separated action
+1021-pixel-high 4:3 picture in the host fixture and in the installed Fold build
+`c27ce6f698c3`. The actual viewport was 1361.3×1021 at 490.3,0 in
+2342×1021 content. This measures the host viewport, not any black borders
+drawn inside a game's own frame. Primary sticks retain 104 points; separated action
 caps are about 58 points in that particular constrained camera layout, versus
 roughly 64–74 in the square PS2 wells. Every generated cap remains at least
 48 points. PS2 cap centers leave a four-point edge gap; sizing inside the well
