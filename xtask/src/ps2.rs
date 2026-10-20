@@ -1,7 +1,10 @@
 //! Reproducible source preparation and original donor Android build operations.
 use super::*;
 pub const REVISION: &str = "83fe4e293f71ab5587ef81b06143725bf8c6a30b";
+const PATCHES_RESOURCE: &str = "platforms/android/app/src/main/assets/resources/patches.zip";
+const PATCHES_SHA256: &str = "b8ab00d2d68376cc15b792d5776a150c678a2c0ea8fd896ed20492aecc6643db";
 pub fn resources() -> Result<()> {
+    verify()?;
     let root = Path::new("vendor/armsx2/bin/resources");
     let destination = Path::new("build/apk/assets/ps2/resources");
     let mut files = Vec::new();
@@ -15,7 +18,50 @@ pub fn resources() -> Result<()> {
         fs::copy(&file, &target)?;
         index.push_str(&format!("{}\t{}\n", name.display(), hash(&file)?));
     }
+    // The donor's Android archive lives outside bin/resources. Use its exact
+    // pinned copy, never the CMake floating-release download or an empty ZIP.
+    let patches = Path::new("vendor/armsx2").join(PATCHES_RESOURCE);
+    if hash(&patches)? != PATCHES_SHA256 {
+        return Err("PS2 built-in patches differ from the reviewed donor resource".into());
+    }
+    execute(&mut command(
+        "unzip",
+        [OsStr::new("-tqq"), patches.as_os_str()],
+    ))?;
+    fs::copy(patches, destination.join("patches.zip"))?;
+    index.push_str(&format!("patches.zip\t{PATCHES_SHA256}\n"));
     fs::write("build/apk/assets/ps2/resources.tsv", index)?;
+    Ok(())
+}
+pub fn verify_resources(apk: &Path) -> Result<()> {
+    let patches = command(
+        "unzip",
+        [
+            OsStr::new("-p"),
+            apk.as_os_str(),
+            OsStr::new("assets/ps2/resources/patches.zip"),
+        ],
+    )
+    .output()?;
+    if !patches.status.success()
+        || format!("{:x}", Sha256::digest(&patches.stdout)) != PATCHES_SHA256
+    {
+        return Err("The APK lacks the exact pinned PS2 built-in patches archive".into());
+    }
+    let index = output(&mut command(
+        "unzip",
+        [
+            OsStr::new("-p"),
+            apk.as_os_str(),
+            OsStr::new("assets/ps2/resources.tsv"),
+        ],
+    ))?;
+    if !index
+        .lines()
+        .any(|line| line == format!("patches.zip\t{PATCHES_SHA256}"))
+    {
+        return Err("The APK PS2 resource index does not identify its built-in patches".into());
+    }
     Ok(())
 }
 const PATCH: &str = "patches/armsx2/0001-host-pause-and-card-flush.patch";

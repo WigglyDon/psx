@@ -180,6 +180,9 @@ width and 86% of available height to keep more content visible. Rendering, tap/s
 column counts share one Rust model. Its Add and Settings icons live in the app bar; primary actions stay distinct
 from back navigation. Controls occupy separate space by default;
 the largest clear 4:3 picture is computed from their rectangular targets.
+Maximum size takes priority over centering: use available screen edges and
+prefer the highest clear placement, leaving room below or beside it for controls.
+Horizontal centering is used only when it retains that same size and top edge.
 The default layout compares arrangements at the actual window dimensions.
 On a sufficiently wide square display, shoulders and system buttons occupy
 the space between thumb clusters. Main thumb geometry sets the dock's minimum
@@ -197,7 +200,8 @@ bounds are local obstacles rather than full-height inset strips. System bars
 remain reserved; portrait keeps its top camera margin. The shared layout moves
 the whole face-button cluster together or shifts an obstructed control locally,
 then finds the largest clear 4:3 picture around controls and camera rectangles.
-The default picture centers on the full available display width when it fits.
+The picture search includes actual camera bounds without adding a centering
+constraint or vertically centering a smaller picture in unused space.
 Camera avoidance is derived for the current window without overwriting saved
 control positions. The editor uses the same placement/defaults, and anchored
 volume/time panels slide clear of camera bounds. Shoulder caps have simple symmetric
@@ -239,7 +243,7 @@ including their system buttons, so a bottom row does not constrain picture
 height. Pause/time are anchored upper-left; sound/settings upper-right in every
 orientation. Each pair can move inward around a camera while retaining its side.
 A clear camera margin can host them only while OS decoration is absent; visible
-status bars push them below the actual bar. App chrome uses 40-point targets,
+status bars push them below the actual bar. App chrome uses 40×32-point targets,
 while game-button targets retain their 48-point minimum. Clear pixels below
 that smaller toolbar in the camera margin also become picture candidates;
 actual camera rectangles and every target remain excluded. This does not

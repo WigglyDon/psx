@@ -36,6 +36,13 @@ both compressed and stored entries. Device timing is qualified separately.
 The observed clean-boot card-format failure also has a bounded diagnostic:
 the first 32 PS2 writes and 16 erases report transfer geometry/checksums, without
 guest bytes or private paths. This is evidence collection, not a card fix.
+After both fresh JIT and IOP-interpreter boots failed before either trace
+appeared, the next diagnostic records at most four occurrences of each SIO2
+card opcode per process: port/slot, presence, auto-eject counter, terminator
+and transfer lengths. It records no guest/authentication bytes. This distinguishes
+probe/auth/setup failure from file writes without an unbounded protocol log.
+Changing this native patch changes its strict checkpoint binding; an older PS2
+snapshot is retained behind the explicit restart guard, with current cards kept.
 
 Its existing `OnPerformanceMetricsUpdated` callback also forwards a five-float
 completed sample (VPS, speed percent, average/minimum/maximum frame time) via

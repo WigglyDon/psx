@@ -161,6 +161,15 @@ checks actual GLES capability and refuses other page sizes with saved data
 intact. The existing PS1 interpreter fallback remains separate; ELF alignment
 alone does not qualify the PS2 JIT for a 16 KiB host.
 
+Resource packaging includes `bin/resources` and the same pinned donor's Android
+`platforms/android/app/src/main/assets/resources/patches.zip`. The latter is
+outside the desktop resource tree; omitting it caused the real built-in-patches
+warning on boot. Its exact SHA-256 is checked before packaging, its ZIP is
+validated, and it enters the hash-checked runtime resource index. The original
+archive and PNACH attribution remain in the corresponding source. This does
+not enable optional widescreen/cheat patches or establish a game-specific fix.
+No floating patch download or private game input is used.
+
 `PSX_PS2_DEPENDENCY_SOURCES` can name an existing exact locked source cache.
 `PSX_PS2_CORE_SOURCE` can name a qualification checkout only when its revision
 and complete tracked diff equal the recorded core and patch. These are build

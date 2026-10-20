@@ -90,6 +90,11 @@ The exact root `COPYING.GPLv3` has SHA-256
 individual files retain their original GPL and other terms. Credit the
 PCSX2 and ARMSX2 contributors and each dependency's named authors.
 The original tree retains all inherited copyright and dependency notices.
+The APK also retains the donor's unmodified Android `resources/patches.zip`,
+SHA-256 `b8ab00d2d68376cc15b792d5776a150c678a2c0ea8fd896ed20492aecc6643db`.
+Its authored PNACH text and attribution are preserved inside that exact archive;
+the same original archive is included in the complete donor source. No patches
+are fetched from a floating release or generated from private game files.
 The host adapter changes and their purpose are recorded in
 [patches/armsx2](patches/armsx2/README.md); they do not replace core internals.
 

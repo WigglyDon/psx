@@ -769,6 +769,7 @@ fn verify_apk() -> Result<()> {
         }
         println!("{name}: AArch64; all ELF LOAD alignments >=16KB");
     }
+    ps2::verify_resources(Path::new("build/psx-development.apk"))?;
     let entries = output(&mut command("unzip", ["-Z1", "build/psx-development.apk"]))?;
     for entry in [
         "classes.dex",
@@ -785,6 +786,7 @@ fn verify_apk() -> Result<()> {
         "assets/notices/openbios/LICENSE",
         "assets/notices/openbios/UPSTREAM.md",
         "assets/notices/fonts/Barlow-OFL.txt",
+        "assets/ps2/resources/patches.zip",
     ] {
         if !entries.lines().any(|e| e == entry) {
             return Err(format!("Missing APK entry: {entry}").into());

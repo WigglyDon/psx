@@ -506,22 +506,23 @@ impl Layout {
             .min(((w - 2. * padding - 3. * gap) / 4.).max(1.))
             .min(h)
             .min(w);
-        let top = if reusable_top >= size && covered_top <= 0. {
-            -reusable_top + 4_f32.min((reusable_top - size) / 2.)
+        let height = size.min(32.);
+        let top = if reusable_top >= height && covered_top <= 0. {
+            -reusable_top + 4_f32.min((reusable_top - height) / 2.)
         } else {
-            (covered_top + 4.).clamp(0., (h - size).max(0.))
+            (covered_top + 4.).clamp(0., (h - height).max(0.))
         };
         let pair = |mut x: f32, left: bool| {
             let mut y = top;
             for _ in 0..cutouts.len() + 1 {
-                let bar = Rect::new(x, y, 2. * size + gap, size);
+                let bar = Rect::new(x, y, 2. * size + gap, height);
                 if let Some(c) = cutouts.iter().find(|c| bar.overlaps(**c)) {
                     let shifted = if left {
                         c.x + c.w + 8.
                     } else {
                         c.x - bar.w - 8.
                     };
-                    let candidate = Rect::new(shifted, y, bar.w, size);
+                    let candidate = Rect::new(shifted, y, bar.w, height);
                     if shifted >= 0.
                         && shifted + bar.w <= w
                         && if left {
@@ -533,7 +534,7 @@ impl Layout {
                     {
                         x = shifted;
                     } else {
-                        y = (c.y + c.h + 8.).min((h - size).max(0.));
+                        y = (c.y + c.h + 8.).min((h - height).max(0.));
                     }
                 } else {
                     break;
@@ -544,10 +545,10 @@ impl Layout {
         let right = w - padding - size;
         let (left_x, left_y) = pair(padding, true);
         let (right_x, right_y) = pair(right - size - gap, false);
-        self.playback = Rect::new(left_x, left_y, size, size);
-        self.speed = Rect::new(left_x + size + gap, left_y, size, size);
-        self.mute = Rect::new(right_x, right_y, size, size);
-        self.pause = Rect::new(right_x + size + gap, right_y, size, size);
+        self.playback = Rect::new(left_x, left_y, size, height);
+        self.speed = Rect::new(left_x + size + gap, left_y, size, height);
+        self.mute = Rect::new(right_x, right_y, size, height);
+        self.pause = Rect::new(right_x + size + gap, right_y, size, height);
     }
     pub fn controller_elements(&self) -> impl DoubleEndedIterator<Item = usize> {
         (0..self.controls.len() + 1).chain(self.controls.len() + 5..self.element_count())
@@ -768,9 +769,10 @@ impl Layout {
     }
 }
 
-/// Largest 4:3 rectangle clear of all control bounds. A feasible placement can
-/// slide to the top/left boundary of an obstacle or screen; examine those
-/// anchors and stop growth at the first obstacle. Only used on layout changes.
+/// Largest clear 4:3 picture, preferring its highest feasible placement.
+/// Examine screen/obstacle anchors and stop growth at the first obstruction.
+/// Center horizontally only when doing so retains that maximum size and top.
+/// Only used on layout changes, never during emulation frames.
 fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
     let mut best = Rect::default();
     for x in std::iter::once(0.)
@@ -789,21 +791,24 @@ fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
                 let limit = (r.x - x).max((r.y - y) * 4. / 3.).max(0.);
                 width = width.min(limit);
             }
-            if width > best.w {
+            if width > best.w || (width == best.w && y < best.y) {
                 best = Rect::new(x, y, width, width * 3. / 4.);
             }
         }
     }
-    // Center within the same unobstructed region, without crossing a target.
     let mut centered = best;
     centered.x = (w - best.w) / 2.;
-    centered.y = (h - best.h) / 2.;
     if !obstacles.iter().any(|r| centered.overlaps(*r)) {
         best = centered;
     } else {
-        centered.y = best.y;
-        if !obstacles.iter().any(|r| centered.overlaps(*r)) {
-            best = centered;
+        // A local camera can prevent centering. Use an available screen edge
+        // rather than leave a gratuitous strip on both sides of the picture.
+        for x in [0., w - best.w] {
+            let edge = Rect::new(x, best.y, best.w, best.h);
+            if !obstacles.iter().any(|r| edge.overlaps(*r)) {
+                best = edge;
+                break;
+            }
         }
     }
     best
@@ -1600,6 +1605,73 @@ mod tests {
     }
 
     #[test]
+    fn measured_inner_camera_keeps_the_largest_clear_picture_high_and_inputs_unchanged() {
+        let density = 2.4375;
+        let (w, h, top) = (
+            2076. / density,
+            (2152. - 160. - 78.) / density,
+            160. / density,
+        );
+        for analog in [false, true] {
+            for camera_x in [0., 1940. / density] {
+                let camera = Rect::new(camera_x, -top, 136. / density, top);
+                let preset = Preset {
+                    analog,
+                    ..Preset::default()
+                };
+                let saved = serde_json::to_vec(&preset).unwrap();
+                let mut layout = preset.layout_with_cutouts(w, h, &[camera]);
+                let controls: Vec<_> = layout
+                    .controller_elements()
+                    .map(|i| layout.element(i))
+                    .collect();
+                let normal = layout.game;
+                layout.anchor_toolbar(w, h, top, 0., &[camera]);
+                layout.place_game_in(Rect::new(0., -top, w, h + top), false, 1., [0.5; 2]);
+                let picture = layout.game;
+                assert!((picture.w / picture.h - 4. / 3.).abs() < 0.001);
+                assert!(picture.w >= normal.w, "{analog}: {picture:?}");
+                assert!(picture.y >= -top && picture.y + picture.h <= h);
+                assert!(
+                    picture.y <= 0.,
+                    "Picture should use clear top-margin space: {picture:?}"
+                );
+                assert!(!picture.overlaps(camera));
+                assert!((0..layout.element_count()).all(|i| !picture.overlaps(layout.element(i))));
+                assert!(
+                    picture.x < 0.01 || picture.x + picture.w > w - 0.01,
+                    "{analog} {camera_x}: {picture:?}"
+                );
+                // At the actual camera, maximizing the picture reaches a
+                // screen edge; it must not sacrifice size to force centering.
+                let wider = picture.w + 1.;
+                for x in [0., w - wider] {
+                    for y in (-160..2152).map(|pixel| pixel as f32 / density) {
+                        let candidate = Rect::new(x, y, wider, wider * 3. / 4.);
+                        if candidate.y >= -top && candidate.y + candidate.h <= h {
+                            assert!(
+                                candidate.overlaps(camera)
+                                    || (0..layout.element_count())
+                                        .any(|i| candidate.overlaps(layout.element(i)))
+                            );
+                        }
+                    }
+                }
+                layout.anchor_toolbar(w, h, 0., 32., &[camera]);
+                layout.place_game(w, h, false, 1., [0.5; 2]);
+                assert!(layout.game.y >= 0.);
+                layout.anchor_toolbar(w, h, top, 0., &[camera]);
+                layout.place_game_in(Rect::new(0., -top, w, h + top), false, 1., [0.5; 2]);
+                assert!(picture.same_bounds(layout.game));
+                assert_eq!(saved, serde_json::to_vec(&preset).unwrap());
+                for (before, i) in controls.iter().zip(layout.controller_elements()) {
+                    assert!(before.same_bounds(layout.element(i)));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn primary_controls_keep_their_size_while_picture_reuses_only_clear_top_pixels() {
         for analog in [false, true] {
             for (w, h) in [(852., 817.), (817., 852.)] {
@@ -1908,7 +1980,7 @@ mod tests {
                 assert!(bounds.x >= 0. && bounds.y >= 0.);
                 assert!(bounds.x + bounds.w <= w && bounds.y + bounds.h <= h);
             }
-            assert!(layout.pause.w >= 40. && layout.pause.h >= 40.);
+            assert!(layout.pause.w >= 40. && layout.pause.h >= 32.);
             assert!(!layout.game.overlaps(layout.pause));
             for control in &layout.controls {
                 let x = control.bounds.x + control.bounds.w / 2.;

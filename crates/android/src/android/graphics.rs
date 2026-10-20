@@ -447,8 +447,8 @@ impl Graphics {
                 0.,
             );
             let mut time_icon = layout.speed;
-            if visuals.playback_speed == psx_player::settings::Speed::NORMAL && time_icon.h >= 40. {
-                time_icon.y += 9.; // Center the icon when no rate caption is needed.
+            if visuals.playback_speed != psx_player::settings::Speed::NORMAL {
+                time_icon.h = time_icon.h.min(16.);
             }
             canvas.button(
                 time_icon,
@@ -1557,28 +1557,30 @@ impl Canvas<'_> {
             return;
         }
         if label == "TIME" {
-            let y = y - if r.h >= 40. { 9. } else { 0. };
+            let scale = (r.h / 20.).min(1.);
+            let point = |dx: f32, dy: f32| (x + dx * scale, y + dy * scale);
             let color = if strength > 0. {
                 [0.55, 0.95, 0.79, 1.]
             } else {
                 [0.85, 0.92, 0.98, 1.]
             };
-            self.line((x - 8., y - 10.), (x + 8., y - 10.), 2., color);
-            self.line((x - 8., y + 10.), (x + 8., y + 10.), 2., color);
+            self.line(point(-8., -10.), point(8., -10.), 2. * scale, color);
+            self.line(point(-8., 10.), point(8., 10.), 2. * scale, color);
             let glass = [
-                (x - 6., y - 10.),
-                (x - 6., y - 5.),
-                (x + 6., y + 5.),
-                (x + 6., y + 10.),
-                (x - 6., y + 10.),
-                (x - 6., y + 5.),
-                (x + 6., y - 5.),
-                (x + 6., y - 10.),
-            ];
+                (-6., -10.),
+                (-6., -5.),
+                (6., 5.),
+                (6., 10.),
+                (-6., 10.),
+                (-6., 5.),
+                (6., -5.),
+                (6., -10.),
+            ]
+            .map(|(dx, dy)| point(dx, dy));
             for i in 0..glass.len() - 1 {
-                self.line(glass[i], glass[i + 1], 1.6, color);
+                self.line(glass[i], glass[i + 1], 1.6 * scale, color);
             }
-            self.polygon(&[(x - 4., y + 8.), (x + 4., y + 8.), (x, y + 4.)], color);
+            self.polygon(&[point(-4., 8.), point(4., 8.), point(0., 4.)], color);
             return;
         }
         if label == "PAUSE" {

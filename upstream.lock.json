@@ -28,6 +28,8 @@
     "selectionStatus": "Android qualification candidate; PS2 gameplay, iOS non-JIT and store distribution unverified",
     "build": "cargo xtask ps2",
     "embeddedPatchDownloads": false,
+    "patchesResource": "platforms/android/app/src/main/assets/resources/patches.zip",
+    "patchesResourceSha256": "b8ab00d2d68376cc15b792d5776a150c678a2c0ea8fd896ed20492aecc6643db",
     "androidHostPageSize": 4096
   },
   "firmware": {

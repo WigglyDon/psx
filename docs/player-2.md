@@ -39,7 +39,39 @@ larger thumb geometry, uses a smaller app toolbar and recovers clear pixels in
 the existing top camera margin without moving saved controls. Sheets are wider
 and taller. Compact OFL typography replaces the general-purpose UI face; normal
 1× has no rate caption and other rates use larger green labels. Actual device
-acceptance is still required for these subsequent corrections.
+acceptance is still required for comfort across every display/orientation.
+
+The October 20 03:22–03:55 UTC window installed `31753eef3fab` after a fresh
+complete backup. The larger controls, four-column library, compact typography,
+roomier settings and non-normal time label rendered. Resident Evil restored
+its paused newspaper frame. The actual camera exposed left-biased picture
+placement: the earlier host fixture underestimated its bounds. The owner
+clarified that maximum edge-reaching size and high placement take precedence
+over centering. The next correction retains that maximum, prefers the highest
+clear placement and uses a 32-point-high toolbar with 40-point-wide tap targets,
+testing the measured camera/navigation geometry without changing controllers.
+
+Fresh Baldur's Gate boot still failed slot-1 card formatting. A verified,
+temporary IOP-interpreter comparison and fresh restart produced the same
+error; that setting was restored byte-for-byte and its temporary file removed.
+No bounded protocol write/erase trace appeared. Both PS2 cards and all eight
+PS1 cards, the library and PS1 profiles remained byte-equal to the fresh
+initial backup. These observations do not establish a particular card-protocol
+cause, controlled gameplay or ordinary saving. Own logs also identified a real
+missing built-in patches resource, now included from the pinned donor's Android
+assets; the fixed-API and framebuffer-copy warnings describe the selected
+host/driver path and are not proof of an additional fault. Expansion lines
+report renderer capabilities. Original diagnostics are retained.
+The next native diagnostic adds a bounded SIO2 opcode/status trace before
+write/erase, without card or authentication payloads. It is not a card fix.
+The changed patch identity retains older PS2 checkpoints behind explicit
+restart recovery; current cards and all PS1 checkpoint bindings are preserved.
+
+PSX was closed and confirmed stopped before final backup/handback. The Fold
+woke during the lock check and USB disappeared before retry; final lock and
+screen-off were unverified. All clients/leases ended within the authorized
+extension and the owner was informed. No system/USB/radio/security setting or
+unrelated app was changed. There is no current device custody.
 
 ## Preserved baseline
 

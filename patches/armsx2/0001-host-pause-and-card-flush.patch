@@ -227,3 +227,26 @@ index bfa67e63a..d3c0474a2 100644
  	mcd->EraseBlock();
  	The2bTerminator(4);
  
+diff --git a/pcsx2/SIO/Sio2.cpp b/pcsx2/SIO/Sio2.cpp
+index 349c503c0..339ecbc2d 100644
+--- a/pcsx2/SIO/Sio2.cpp
++++ b/pcsx2/SIO/Sio2.cpp
+@@ -286,6 +286,18 @@ void Sio2::Memcard()
+ 	MultitapProtocol& mtap = g_MultitapArr.at(this->port);
+ 
+ 	mcd = &mcds[port][mtap.GetMemcardSlot()];
++	// Format failure has produced no write/erase trace. Record only
++	// bounded command/status metadata, never card contents or auth payloads.
++	static u8 psx_command_traces[256] = {};
++	if (!g_Sio2FifoIn.empty() && psx_command_traces[g_Sio2FifoIn.front()] < 4)
++	{
++		psx_command_traces[g_Sio2FifoIn.front()]++;
++		Console.WriteLn("psx card command: port=%u slot=%u cmd=%02X present=%u eject=%u term=%02X in=%u expected=%u",
++			static_cast<unsigned>(port), static_cast<unsigned>(mtap.GetMemcardSlot()),
++			static_cast<unsigned>(g_Sio2FifoIn.front()), static_cast<unsigned>(mcd->IsPresent()),
++			static_cast<unsigned>(mcd->autoEjectTicks), static_cast<unsigned>(mcd->term),
++			static_cast<unsigned>(g_Sio2FifoIn.size()), static_cast<unsigned>(commandLength));
++	}
+ 
+ 	// Check if auto ejection is active. If so, set cmd stat to DISCONNECTED,
+ 	// and zero out the fifo to simulate dead air over the wire.
