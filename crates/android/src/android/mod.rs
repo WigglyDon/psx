@@ -1875,7 +1875,7 @@ impl Player {
                 add(
                     Action::EditControls,
                     "Edit layout".into(),
-                    "Move or resize the action buttons together; select Individual for one button"
+                    "Edit live; move, resize, space or mirror controls. Select Single for one button"
                         .into(),
                 );
                 add(

@@ -128,7 +128,7 @@ impl Layout {
     fn arranged(w: f32, h: f32, compact: bool) -> Self {
         // Default controls occupy their own dock. The picture never intersects
         // even a translucent control's rectangular touch target.
-        let cluster = (w / 2. - 20.).clamp(112., 224.).min((h - 140.).max(112.));
+        let cluster = (w / 2. - 20.).clamp(128., 224.).min((h - 140.).max(128.));
         let size = (cluster * 0.4).clamp(48., 84.);
         let well_height = if compact {
             // Leave a real gap between Triangle and Cross, even in the
@@ -176,7 +176,7 @@ impl Layout {
                     } else {
                         right_column
                     },
-                    dpad.y + if label.ends_with('1') { 56. } else { 0. },
+                    dpad.y + if label.ends_with('2') { 56. } else { 0. },
                     shoulder_width,
                     48.,
                 )
@@ -259,10 +259,10 @@ impl Layout {
                 "O" => (fx + offset - size / 2., fy - size / 2., size, size),
                 "X" => (fx - size / 2., fy + vertical - size / 2., size, size),
                 "SQ" => (fx - offset - size / 2., fy - size / 2., size, size),
-                "L1" => (16., 64., shoulder, 48.),
-                "L2" => (24. + shoulder, 64., shoulder, 48.),
-                "R2" => (w - 16. - cluster, 64., shoulder, 48.),
-                "R1" => (w - 16. - shoulder, 64., shoulder, 48.),
+                "L2" => (16., 64., shoulder, 48.),
+                "L1" => (24. + shoulder, 64., shoulder, 48.),
+                "R1" => (w - 16. - cluster, 64., shoulder, 48.),
+                "R2" => (w - 16. - shoulder, 64., shoulder, 48.),
                 "SELECT" => (
                     if layout.dpad.y >= 200. {
                         16. + cluster - 88.
@@ -315,9 +315,9 @@ impl Layout {
         let face = if landscape {
             // 48-point minimum caps, a real Triangle/Cross gap, and a fixed
             // comfortable stick. Extra height grows both digital clusters.
-            (h - 56. - 48. - 16. - stick - bottom).clamp(112., 184.)
+            (h - 56. - 48. - 16. - stick - bottom).clamp(122., 184.)
         } else {
-            (w / 2. - 20.).clamp(112., 184.)
+            (w / 2. - 20.).clamp(122., 184.)
         };
         let column = face.max(stick + 56.);
         let main_y = h - bottom - stick;
@@ -328,7 +328,9 @@ impl Layout {
         layout.dpad = Rect::new(digital_x, face_y, face, face);
         let fx = w - 16. - column / 2.;
         let fy = face_y + face / 2.;
-        let cap = (face - 16.) / 2.;
+        // Adjacent diagonal centers are sqrt(2) * step apart. Leave four
+        // points between their circular caps within the existing square well.
+        let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
         let middle_shoulders = !landscape && w - 2. * (16. + column) >= 192.;
         let shoulder = if middle_shoulders {
@@ -346,18 +348,18 @@ impl Layout {
                 "START" => (right.x - 56., main_y, 48., 48.),
                 label => {
                     let left_side = label.starts_with('L');
-                    let first = label.ends_with('1');
+                    let second = label.ends_with('2');
                     if middle_shoulders {
                         let x = 16. + column + 8.;
                         (
                             if left_side { x } else { w - x - shoulder },
-                            face_y + if first { 56. } else { 0. },
+                            face_y + if second { 56. } else { 0. },
                             shoulder,
                             48.,
                         )
                     } else {
                         let outer = 16.;
-                        let x = outer + if first { 0. } else { shoulder + 8. };
+                        let x = outer + if second { 0. } else { shoulder + 8. };
                         (
                             if left_side { x } else { w - x - shoulder },
                             face_y - 56.,
@@ -425,7 +427,7 @@ impl Layout {
         let face = (w / 2. - digital_x - 64.).clamp(160., 184.);
         let main_y = h - 32. - stick;
         let face_y = h - 32. - face;
-        let cap = (face - 16.) / 2.;
+        let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
         let fx = w - digital_x - face / 2.;
         let fy = face_y + face / 2.;
@@ -446,7 +448,7 @@ impl Layout {
                         } else {
                             w - x - 48.
                         },
-                        face_y + if label.ends_with('1') { 56. } else { 0. },
+                        face_y + if label.ends_with('2') { 56. } else { 0. },
                         48.,
                         48.,
                     )
@@ -466,6 +468,73 @@ impl Layout {
         ];
         layout.anchor_toolbar(w, h, 0., 0., &[]);
         layout.place_game(w, h, false, 1., [0.5, 0.5]);
+        Some(layout)
+    }
+    /// Keep a side camera in the gap between the secondary digital cluster
+    /// and primary stick, rather than moving a whole rail into the picture.
+    /// Compare actual clear picture area before choosing this generated layout.
+    fn ps2_camera_rails(w: f32, h: f32, cutouts: &[Rect]) -> Option<Self> {
+        if w <= h * 1.35 || h < 360. || cutouts.is_empty() {
+            return None;
+        }
+        let rail = (w - h * 4. / 3.) / 2.;
+        // A 104-point stick, separate system/click column and edge clearance.
+        if rail < 184. {
+            return None;
+        }
+        let top = 44.; // 32-point toolbar and a real gap.
+        let camera_top = cutouts
+            .iter()
+            .filter(|c| c.y + c.h > top && (c.x < rail || c.x + c.w > w - rail))
+            .map(|c| c.y)
+            .fold(h, f32::min);
+        let face = (rail - 32.).min(184.).min(camera_top - top - 8.);
+        if face < 122. {
+            return None;
+        }
+        let stick = 104.;
+        let main_y = h - 32. - stick;
+        let shoulder_y = top + face + 8.;
+        if shoulder_y + 56. > main_y {
+            return None;
+        }
+        let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
+        let step = (face - cap) / 2.;
+        let fx = w - 16. - face / 2.;
+        let fy = top + face / 2.;
+        let outer = rail - 112.;
+        let inner = outer + 56.;
+        let mut layout = Self::ps2(w, h);
+        layout.dpad = Rect::new(16., top, face, face);
+        for c in &mut layout.controls {
+            c.bounds = match c.label {
+                "TRI" => Rect::new(fx - cap / 2., fy - step - cap / 2., cap, cap),
+                "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
+                "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
+                "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
+                "L2" => Rect::new(outer, shoulder_y, 48., 48.),
+                "L1" => Rect::new(inner, shoulder_y, 48., 48.),
+                "R1" => Rect::new(w - inner - 48., shoulder_y, 48., 48.),
+                "R2" => Rect::new(w - outer - 48., shoulder_y, 48., 48.),
+                "SELECT" => Rect::new(128., main_y, 48., 48.),
+                "START" => Rect::new(w - 176., main_y, 48., 48.),
+                "L3" => Rect::new(128., main_y + 56., 48., 48.),
+                "R3" => Rect::new(w - 176., main_y + 56., 48., 48.),
+                _ => continue,
+            };
+        }
+        layout.sticks = vec![
+            Rect::new(16., main_y, stick, stick),
+            Rect::new(w - 120., main_y, stick, stick),
+        ];
+        layout.anchor_toolbar(w, h, 0., 0., cutouts);
+        if (0..layout.element_count())
+            .any(|i| cutouts.iter().any(|c| layout.element(i).overlaps(*c)))
+        {
+            return None;
+        }
+        layout.avoid_cutouts(w, h, cutouts);
+        layout.place_game(w, h, false, 1., [0.5; 2]);
         Some(layout)
     }
     pub fn action_elements(&self) -> impl Iterator<Item = usize> + '_ {
@@ -512,11 +581,17 @@ impl Layout {
         } else {
             (covered_top + 4.).clamp(0., (h - height).max(0.))
         };
+        let mut obstacles = cutouts.to_vec();
+        if covered_top > 0. {
+            // A revealed status bar can push chrome into a top digital well.
+            // Move chrome around that well without moving stored game inputs.
+            obstacles.extend(self.controller_elements().map(|i| self.element(i)));
+        }
         let pair = |mut x: f32, left: bool| {
             let mut y = top;
-            for _ in 0..cutouts.len() + 1 {
+            for _ in 0..obstacles.len() + 1 {
                 let bar = Rect::new(x, y, 2. * size + gap, height);
-                if let Some(c) = cutouts.iter().find(|c| bar.overlaps(**c)) {
+                if let Some(c) = obstacles.iter().find(|c| bar.overlaps(**c)) {
                     let shifted = if left {
                         c.x + c.w + 8.
                     } else {
@@ -530,7 +605,7 @@ impl Layout {
                         } else {
                             shifted >= w / 2.
                         }
-                        && !cutouts.iter().any(|c| candidate.overlaps(*c))
+                        && !obstacles.iter().any(|c| candidate.overlaps(*c))
                     {
                         x = shifted;
                     } else {
@@ -874,6 +949,15 @@ impl Preset {
         } else {
             Layout::default_with_cutouts(w, h, cutouts)
         };
+        if self.analog && self.elements.is_empty() && !self.allow_overlap {
+            if let Some(candidate) = Layout::ps2_camera_rails(w, h, cutouts) {
+                layout.avoid_cutouts(w, h, cutouts);
+                layout.place_game(w, h, false, 1., [0.5; 2]);
+                if candidate.game.w > layout.game.w + 0.01 {
+                    layout = candidate;
+                }
+            }
+        }
         for (i, r) in self
             .elements
             .iter()
@@ -1291,6 +1375,146 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn ps2_measured_fold_landscape_camera_retains_full_height_and_symmetry() {
+        let density = 2.4375;
+        let (w, h) = (2342. / density, 1021. / density);
+        for camera_x in [0., 2160. / density] {
+            let camera = Rect::new(camera_x, 484. / density, 182. / density, 112. / density);
+            let preset = Preset {
+                analog: true,
+                ..Preset::default()
+            };
+            let mut layout = preset.layout_with_cutouts(w, h, &[camera]);
+            assert!(
+                (layout.game.h * density - 1021.).abs() < 0.02,
+                "{:?}",
+                layout.game
+            );
+            assert!(layout.game.y.abs() < 0.01);
+            assert!((layout.game.x + layout.game.w / 2. - w / 2.).abs() < 0.01);
+            let mirrored = |a: Rect, b: Rect| {
+                assert!((a.x + a.w + b.x - w).abs() < 0.02 && (a.y - b.y).abs() < 0.02);
+                assert!((a.w - b.w).abs() < 0.02 && (a.h - b.h).abs() < 0.02);
+            };
+            mirrored(layout.dpad, layout.action_bounds());
+            mirrored(layout.sticks[0], layout.sticks[1]);
+            assert!(layout.sticks.iter().all(|r| r.w >= 104.));
+            assert!(layout
+                .controls
+                .iter()
+                .all(|c| c.bounds.w >= 48. && c.bounds.h >= 48.));
+            for i in 0..layout.element_count() {
+                let r = layout.element(i);
+                assert!(!r.overlaps(camera), "camera: {}", layout.element_name(i));
+                assert!(
+                    !r.overlaps(layout.game),
+                    "picture: {}",
+                    layout.element_name(i)
+                );
+                assert!(r.x >= 0. && r.y >= 0. && r.x + r.w <= w + 0.01 && r.y + r.h <= h + 0.01);
+                if layout.controller_elements().any(|j| j == i) {
+                    for j in layout.controller_elements().filter(|j| *j > i) {
+                        let face = |i| layout.action_elements().any(|j| j == i);
+                        if !(face(i) && face(j)) {
+                            assert!(
+                                !r.overlaps(layout.element(j)),
+                                "{} / {}",
+                                layout.element_name(i),
+                                layout.element_name(j)
+                            );
+                        }
+                    }
+                }
+            }
+            let full_picture = layout.game;
+            let inputs: Vec<_> = layout
+                .controller_elements()
+                .map(|i| (i, layout.element(i)))
+                .collect();
+            layout.anchor_toolbar(w, h, 0., 32., &[camera]);
+            layout.place_game(w, h, false, 1., [0.5; 2]);
+            for chrome in [layout.pause, layout.mute, layout.speed, layout.playback] {
+                assert!(chrome.y >= 32.);
+                assert!(inputs.iter().all(|(_, r)| !chrome.overlaps(*r)));
+                assert!(!chrome.overlaps(layout.game));
+            }
+            layout.anchor_toolbar(w, h, 0., 0., &[camera]);
+            layout.place_game(w, h, false, 1., [0.5; 2]);
+            assert!(layout.game.same_bounds(full_picture));
+            assert!(inputs
+                .iter()
+                .all(|(i, r)| layout.element(*i).same_bounds(*r)));
+            let mut custom = preset.clone();
+            let mut old = Layout::ps2(w, h);
+            custom.capture(&old, w, h);
+            let saved = serde_json::to_vec(&custom).unwrap();
+            old.avoid_cutouts(w, h, &[camera]);
+            old.anchor_toolbar(w, h, 0., 0., &[camera]);
+            old.place_game(w, h, false, 1., [0.5; 2]);
+            let retained = custom.layout_with_cutouts(w, h, &[camera]);
+            assert!(
+                (0..old.element_count()).all(|i| retained.element(i).same_bounds(old.element(i)))
+            );
+            assert_eq!(saved, serde_json::to_vec(&custom).unwrap());
+        }
+    }
+
+    #[test]
+    fn default_action_caps_never_visually_overlap_and_shoulder_twos_are_outside_or_lower() {
+        for analog in [false, true] {
+            for (w, h) in [
+                (360., 800.),
+                (443., 961.),
+                (960., 360.),
+                (960., 420.),
+                (852., 817.),
+                (817., 852.),
+            ] {
+                let layout = Preset {
+                    analog,
+                    ..Preset::default()
+                }
+                .layout(w, h);
+                let caps: Vec<_> = layout
+                    .controls
+                    .iter()
+                    .filter(|c| c.is_face())
+                    .map(|c| c.bounds)
+                    .collect();
+                for (i, a) in caps.iter().enumerate() {
+                    for b in caps.iter().skip(i + 1) {
+                        let distance = (a.x + a.w / 2. - b.x - b.w / 2.)
+                            .hypot(a.y + a.h / 2. - b.y - b.h / 2.);
+                        assert!(
+                            distance + 0.01 >= (a.w + b.w) / 2.,
+                            "{analog} {w}x{h}: {a:?} / {b:?}"
+                        );
+                    }
+                }
+                let rect = |name| {
+                    layout
+                        .controls
+                        .iter()
+                        .find(|c| c.label == name)
+                        .unwrap()
+                        .bounds
+                };
+                for (a, b) in [("L1", "L2"), ("R1", "R2")] {
+                    let (one, two) = (rect(a), rect(b));
+                    if (one.y - two.y).abs() < 0.01 {
+                        assert!(
+                            (two.x + two.w / 2. - w / 2.).abs()
+                                > (one.x + one.w / 2. - w / 2.).abs()
+                        );
+                    } else {
+                        assert!(two.y > one.y);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn ps2_square_dock_does_not_add_a_separate_row_for_every_input() {
         for (w, h) in [(852., 817.), (817., 852.), (852., 883.)] {
@@ -1710,7 +1934,7 @@ mod tests {
                     .controls
                     .iter()
                     .filter(|c| c.is_face())
-                    .all(|c| c.bounds.w >= 72.));
+                    .all(|c| c.bounds.w >= if analog { 60. } else { 72. }));
                 let normal = layout.game;
                 layout.anchor_toolbar(w, h, 66., 0., &[camera]);
                 layout.place_game_in(Rect::new(0., -66., w, h + 66.), false, 1., [0.5; 2]);
@@ -1804,8 +2028,8 @@ mod tests {
                 .unwrap()
                 .bounds
         };
-        assert!(bounds("L1").x < bounds("L2").x);
-        assert!(bounds("R1").x > bounds("R2").x);
+        assert!(bounds("L2").x < bounds("L1").x);
+        assert!(bounds("R2").x > bounds("R1").x);
         assert_eq!(bounds("L1").y, bounds("L2").y);
         assert_eq!(bounds("R1").y, bounds("R2").y);
         assert!(bounds("SELECT").x + bounds("SELECT").w / 2. > layout.dpad.x + layout.dpad.w / 2.);

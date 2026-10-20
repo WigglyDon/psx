@@ -207,8 +207,8 @@ shifting the picture sideways; saved game-control rectangles remain unchanged.
 Camera avoidance is derived for the current window without overwriting saved
 control positions. The editor uses the same placement/defaults, and anchored
 volume/time panels slide clear of camera bounds. Shoulder caps have simple symmetric
-faces with small corners. Landscape pairs sit level, with L1/R1 outside and L2/R2 inside;
-Start/Select have smaller faces inside their retained touch targets, at
+faces with small corners. Landscape pairs sit level, with L2/R2 outside and L1/R1 inside;
+Stacked pairs put L1/R1 above L2/R2. Start/Select have smaller faces inside their retained touch targets, at
 the inner ends of wide-display side rails. Rendering and hit areas remain distinct.
 
 On Android 12 and later, `BEHAVIOR_DEFAULT` requests hidden navigation with
@@ -308,8 +308,8 @@ opposite partner: sticks, matching shoulders, Start/Select, stick clicks or
 D-pad/action-group bounds. It does not silently link later drags. Camera
 collisions stop the selected object instead of pushing unselected face buttons.
 The game alone still recomputes its available clear area as controls change. The
-unsnapped drag origin is retained so slow movement can escape a guide; no grid
-locks placement. A bounded 32-step draft Undo records one entry per gesture,
+unsnapped drag origin is retained so slow movement can escape a guide; disabling
+Grid permits free placement. A bounded 32-step draft Undo records one entry per gesture,
 spacing adjustment, Mirror or Reset. These are draft changes until Done;
 Cancel discards the editor's draft. Existing saved custom positions are preserved.
 The game picture keeps its aspect ratio. Reset appears only for a changed
@@ -474,7 +474,7 @@ with the current card; ordinary audio-interruption recovery is unaffected.
 Dual-analog/digital touch and normalized editor profiles have separate PS2
 storage, retaining all existing PS1 profile names and element positions.
 PS2 defaults reuse the PS1 controls and cap styling, adding primary lower
-thumb sticks and secondary stick-click keys; they do not change PS1 defaults.
+thumb sticks and secondary stick-click keys; they do not overwrite PS1 profiles.
 The mirrored PS2 lower band shares height between each stick and an inner
 system/click column. On wide inner displays a compact candidate places secondary
 digital clusters inside and slightly above the primary sticks, with shoulders
@@ -488,6 +488,22 @@ Generated button targets stay at least 48 points and sticks at least 104
 points on usable displays. The clear-picture solver excludes them all, and
 saved custom rectangles retain precedence. Transient tiny surfaces scale only
 their presentation, without rewriting profiles.
+
+For a wide surface with sufficient rail width, a side-camera candidate places
+the digital clusters above the camera band, shoulders beside it, and primary
+sticks below it. Both rails are solved symmetrically before camera avoidance;
+the camera does not push one entire cluster into the centered picture. Selection
+compares the unscaled clear picture and applies only to generated non-overlap
+defaults, never saved custom rectangles. The measured 2342×1080 Fold with a
+59-pixel navigation strip and 182×112 side camera retains a centered, top-aligned
+1021-pixel-high 4:3 picture in the host fixture. This is a layout result, not
+an installed-device result. Primary sticks retain 104 points; separated action
+caps are about 58 points in that particular constrained camera layout, versus
+roughly 64–74 in the square PS2 wells. Every generated cap remains at least
+48 points. PS2 cap centers leave a four-point edge gap; sizing inside the well
+replaces the previous overlapping diamond. Narrow PS1 wells grow to 128 points
+to separate their minimum-size caps. Manual group spacing remains independent
+of cap resizing and does not rewrite existing profiles automatically.
 
 PS2 checkpoints use the donor's existing uncompressed ZIP option and omit its
 unused PNG thumbnail. Rust validates the native length prefix and stores only

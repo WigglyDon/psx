@@ -289,3 +289,22 @@ existing per-display preset format persists its resulting positions. Draft
 changes still require Done, with Cancel and contextual Reset retained. This
 implementation needs its own actual Fold interaction check; host fixtures
 and shared-renderer previews do not establish that acceptance.
+
+The subsequent owner-approved window installed `15ca5ba4c71b` after a verified
+current-data backup. The live editor, actual game image, grid, size readout,
+group selection and spacing slider rendered over Red Dead Revolver. Full
+drag/resize/spacing-gesture acceptance is still pending. At the owner's explicit
+instruction, the mock square-display profile was reset through the app to our
+defaults. All eight PS1 cards, all four current PS2 cards, the library and PS1
+profiles compared unchanged against that fresh backup. Red Dead's tutorial scene
+was visible after resume; no controlled locomotion/save/audio/performance pass
+is inferred. Its core was gracefully closed before a final complete backup.
+
+Actual folded-landscape tracing exposed a PS2 camera-layout failure: the picture
+was 1145×858.7 pixels in a 2342×1021 content area. Camera avoidance pushed the
+D-pad inward and narrowed the centered picture. A new generated arrangement
+fits the camera between the secondary digital band and lower primary sticks,
+retaining symmetry and the full 1021-pixel picture height in the measured host
+fixture. It also swaps shoulder defaults to 2 outside/1 inside (1 above 2 when
+stacked), and separates default circular action caps. Saved custom positions
+retain precedence. These follow-up defaults are not in the installed build yet.
