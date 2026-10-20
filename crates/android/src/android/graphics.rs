@@ -1636,7 +1636,7 @@ impl Canvas<'_> {
         if background[3] > 0. {
             self.panel(r, background);
         }
-        let glyph_scale = (r.h / 32.).min(1.);
+        let glyph_scale = (r.h / 28.).min(1.);
         let point = |dx: f32, dy: f32| (x + dx * glyph_scale, y + dy * glyph_scale);
         if label == "MENU" {
             self.cog(x, y, glyph_scale);

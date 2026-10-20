@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const TOOLBAR_HEIGHT: f32 = 16.;
+const TOOLBAR_HEIGHT: f32 = 18.;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
@@ -278,60 +278,51 @@ impl Layout {
         // Grow the thumb wells into spare side-rail width before taking space
         // from a full-height picture. Narrower windows retain the old ceiling.
         let picture_clearance = ((w - picture_height * 4. / 3.) / 2. - 16.).max(160.);
-        let cluster = (h - 184.).clamp(112., 200.).min(picture_clearance);
-        // A side camera can meet the upper edge of a larger thumb well. Use
-        // the clear height below it, retaining rail width and placing it below
-        // the camera. Do this only for generated defaults;
-        // saved custom element bounds are applied later without alteration.
-        let well_height = |x| {
-            let well = Rect::new(x, h - 32. - cluster, cluster, cluster);
-            cutouts
-                .iter()
-                .filter(|c| well.overlaps(**c))
-                .map(|c| (h - c.y - c.h - 8.).clamp(112., cluster))
-                .fold(cluster, f32::min)
-        };
-        let face_height = well_height(w - 16. - cluster);
-        let face_bottom = if face_height < cluster { 0. } else { 32. };
-        let size = (cluster * 0.4).min(face_height * 0.43).clamp(48., 80.);
+        let bottom = 4.;
+        let requested = (h - 168.).clamp(122., 200.).min(picture_clearance);
+        // Solve the two sides together. A camera on either side must not
+        // squash one well or leave the opposite thumb at another height.
+        let cluster = cutouts
+            .iter()
+            .filter(|c| {
+                [16., w - 16. - requested].into_iter().any(|x| {
+                    Rect::new(x, h - bottom - requested, requested, requested).overlaps(**c)
+                })
+            })
+            .map(|c| h - bottom - c.y - c.h - 8.)
+            .fold(requested, f32::min);
+        if cluster < 122. {
+            // This surface cannot hold this camera-safe rail arrangement.
+            // Let the existing clear-picture comparison use another layout.
+            return layout;
+        }
+        let size = (cluster - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let offset = (cluster - size) / 2.;
-        let vertical = (face_height - size) / 2.;
-        let (fx, fy) = (w - 16. - cluster / 2., h - face_bottom - face_height / 2.);
-        let dpad_height = well_height(16.);
-        let dpad_bottom = if dpad_height < cluster { 0. } else { 32. };
-        layout.dpad = Rect::new(16., h - dpad_bottom - dpad_height, cluster, dpad_height);
-        let shoulder = (cluster - 8.) / 2.;
-        let system_y = if layout.dpad.y >= 200. { 144. } else { h - 48. };
+        let main_y = h - bottom - cluster;
+        let (fx, fy) = (w - 16. - cluster / 2., main_y + cluster / 2.);
+        layout.dpad = Rect::new(16., main_y, cluster, cluster);
+        let shoulder = ((cluster - 8.) / 2.).min(64.);
+        let shoulder_x = 16. + cluster - 2. * shoulder - 8.;
+        let shoulder_y = main_y - 112.;
+        let system_y = main_y - 56.;
+        let system_x = 16. + cluster - 80.;
         for c in &mut layout.controls {
             let (x, y, width, height) = match c.label {
-                "TRI" => (fx - size / 2., fy - vertical - size / 2., size, size),
+                "TRI" => (fx - size / 2., fy - offset - size / 2., size, size),
                 "O" => (fx + offset - size / 2., fy - size / 2., size, size),
-                "X" => (fx - size / 2., fy + vertical - size / 2., size, size),
+                "X" => (fx - size / 2., fy + offset - size / 2., size, size),
                 "SQ" => (fx - offset - size / 2., fy - size / 2., size, size),
-                "L1" => (16., 64., shoulder, 48.),
-                "L2" => (24. + shoulder, 64., shoulder, 48.),
-                "R2" => (w - 16. - cluster, 64., shoulder, 48.),
-                "R1" => (w - 16. - shoulder, 64., shoulder, 48.),
-                "SELECT" => (
-                    if layout.dpad.y >= 200. {
-                        16. + cluster - 88.
-                    } else {
-                        w / 2. - 96.
-                    },
-                    system_y,
-                    88.,
+                "L1" => (shoulder_x, shoulder_y, shoulder, 48.),
+                "L2" => (shoulder_x + shoulder + 8., shoulder_y, shoulder, 48.),
+                "R2" => (
+                    w - shoulder_x - 2. * shoulder - 8.,
+                    shoulder_y,
+                    shoulder,
                     48.,
                 ),
-                _ => (
-                    if layout.dpad.y >= 200. {
-                        w - 16. - cluster
-                    } else {
-                        w / 2. + 8.
-                    },
-                    system_y,
-                    88.,
-                    48.,
-                ),
+                "R1" => (w - shoulder_x - shoulder, shoulder_y, shoulder, 48.),
+                "SELECT" => (system_x, system_y, 80., 48.),
+                _ => (w - system_x - 80., system_y, 80., 48.),
             };
             c.bounds = Rect::new(x, y, width, height);
         }
@@ -476,11 +467,12 @@ impl Layout {
         }
         let outer = 28.;
         let bottom = 4.;
-        let available = h - bottom - (picture.y + TOOLBAR_HEIGHT + w * 0.75);
+        let headroom = h - (picture.y + TOOLBAR_HEIGHT + w * 0.75);
+        let available = headroom - bottom;
         // A deeper center dock keeps the main controls large in a taller
         // window. A shallower one fits rotations with less vertical headroom.
         // Rectangles can share an edge; molded caps leave their own visual gap.
-        let deep = analog && available >= 192.;
+        let deep = analog && headroom >= 192.;
         let auxiliary_width = if deep { 104. } else { 204. };
         let width_limit = if analog {
             (w - 2. * outer - 16. - auxiliary_width) / 4.
@@ -498,7 +490,14 @@ impl Layout {
         let fx = w - digital_x - face / 2.;
         let fy = main_y + face / 2.;
         let auxiliary_x = (w - auxiliary_width) / 2.;
-        let auxiliary_y = h - bottom - if deep { 192. } else { 100. };
+        // Center keys may use the last few safe points before the gesture
+        // strip. A small toolbar change must not collapse all four wells.
+        let auxiliary_bottom = if deep {
+            bottom.min(headroom - 192.)
+        } else {
+            bottom
+        };
+        let auxiliary_y = h - auxiliary_bottom - if deep { 192. } else { 100. };
         let key = |label| {
             if !analog {
                 let shoulder_x = outer + face + 8.;
@@ -1549,7 +1548,7 @@ mod tests {
             .layout(&preset, &[camera]);
             assert!((layout.game.w * density - 2076.).abs() < 0.02);
             assert!(layout.game.x.abs() < 0.01);
-            assert!((layout.game.y + top - 16.).abs() < 0.01);
+            assert!((layout.game.y + top - 18.).abs() < 0.01);
             let digital = [layout.dpad, layout.action_bounds()];
             assert!(layout.sticks.iter().all(|s| s.w >= 168.));
             for c in layout.controls.iter().filter(|c| !c.is_face()) {
@@ -1593,7 +1592,7 @@ mod tests {
             }
             for bar in [layout.playback, layout.speed, layout.pause, layout.mute] {
                 assert!(bar.x >= 28. && bar.x + bar.w <= w - 28.);
-                assert_eq!(bar.h, 16.);
+                assert_eq!(bar.h, 18.);
             }
         }
     }
@@ -1661,11 +1660,7 @@ mod tests {
                     assert!((a.y - b.y).abs() < 0.02);
                     assert!((a.w - b.w).abs() < 0.02 && (a.h - b.h).abs() < 0.02);
                 };
-                // Side cameras may constrain each digital well vertically;
-                // the inner band has room to preserve exact mirrored geometry.
-                if width == 2076. || width == 2152. {
-                    reflected(layout.dpad, layout.action_bounds());
-                }
+                reflected(layout.dpad, layout.action_bounds());
                 for (left, right) in [("L1", "R1"), ("L2", "R2"), ("SELECT", "START")] {
                     let key = |label| {
                         layout
@@ -1693,7 +1688,7 @@ mod tests {
             }
             if width != 2342. {
                 assert!((ps1.game.w * density - width).abs() < 0.02);
-                assert!((ps1.game.y * density + top - 16. * density).abs() < 0.02);
+                assert!((ps1.game.y * density + top - 18. * density).abs() < 0.02);
                 // Owner explicitly permits the camera to occlude the corner
                 // of the picture. It must not reserve a broad top/side band.
                 assert!(ps1.game.overlaps(camera));
@@ -2272,13 +2267,13 @@ mod tests {
                     182. / 2.4375,
                     112. / 2.4375,
                 )),
-                184.,
-                71.,
+                160.,
+                64.,
             ),
         ] {
             let cutouts: Vec<_> = camera.into_iter().collect();
             let layout = Preset::default().layout_with_cutouts(w, h, &cutouts);
-            assert!(layout.dpad.w >= min_pad);
+            assert!(layout.dpad.w.min(layout.dpad.h) >= min_pad);
             let faces: Vec<_> = layout
                 .action_elements()
                 .map(|i| layout.element(i))
@@ -2800,7 +2795,7 @@ mod tests {
                 assert!(bounds.x >= 0. && bounds.y >= 0.);
                 assert!(bounds.x + bounds.w <= w && bounds.y + bounds.h <= h);
             }
-            assert!(layout.pause.w >= 40. && layout.pause.h == 16.);
+            assert!(layout.pause.w >= 40. && layout.pause.h == 18.);
             assert!(!layout.game.overlaps(layout.pause));
             for control in &layout.controls {
                 let x = control.bounds.x + control.bounds.w / 2.;

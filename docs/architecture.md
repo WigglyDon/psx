@@ -195,8 +195,11 @@ center: taller bands use two columns, shorter bands use two rows, without
 occupying the route between each stick and its adjacent digital well. First
 shoulders are outside second shoulders, or below them when stacked. Stick-click
 and system keys retain separate reachable targets; double-tap-and-hold remains
-available for stick clicks. This band leaves four points plus the system gesture
-strip below it. Other display shapes compare clear docks/side rails.
+available for stick clicks. Thumb wells leave four points plus the system gesture
+strip below them; center keys can use the remaining gesture-safe height. Other
+display shapes compare clear docks/side rails. Wide digital controls solve both
+thumb wells together around a side camera, keeping square proportions and equal
+heights. Mirrored shoulder pairs and inward system keys sit directly above them.
 No input is overlapped merely to imitate a physical controller. Owner-created
 arrangements guide size and balance; defaults correct accidental asymmetry.
 Saved custom rectangles still take precedence, so changing defaults does not
@@ -246,8 +249,9 @@ The less-used system buttons keep their own separate row. Wide phone layouts use
 including their system buttons, so a bottom row does not constrain picture
 height. Pause/time are anchored upper-left; sound/settings upper-right in every
 orientation. Each pair can move inward around a camera while retaining its side.
-The toolbar uses a 16-point-high strip with no extra gap below it; ordinary
+The toolbar uses an 18-point-high strip with no extra gap below it; ordinary
 targets remain 40 points wide, and time has room for a horizontal readable rate.
+Glyphs use more of the strip's height to remain readable.
 Its normal position uses the display's top edge, moving a corner pair inward
 around a camera. Visible status bars push chrome below their actual bounds,
 temporarily over the stable picture. Game-button targets remain separate from

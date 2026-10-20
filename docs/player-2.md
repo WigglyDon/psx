@@ -108,7 +108,7 @@ saved profiles. Controls, toolbar and popovers still avoid actual holes.
 Default controls remain separate from the picture; overlap is explicit.
 
 Pause/time stay upper-left and sound/settings upper-right in every orientation.
-The normal toolbar is a 16-point strip without an extra gap below it, with
+The normal toolbar is an 18-point strip without an extra gap below it, with
 40-point-wide ordinary targets. Non-normal time uses a horizontal readable
 caption beside its hourglass. Visible OS status pushes toolbar controls down
 over the stable picture; it does not resize the game or controller geometry.
@@ -123,10 +123,13 @@ The analog controller uses the same thumb-area ceiling for four wells, limited
 by actual headroom and width. Auxiliary keys occupy clear center space in two
 columns or two rows as space permits; they do not occupy the route between
 primary and secondary thumb areas. First shoulders are outside or below second.
-Separate stick-click and system keys remain available. This band leaves four
-points plus the OS gesture strip beneath it. Other surfaces use clear docks/side
-rails. Owner references guide size and balance; opposite sides use exact mirrored
-geometry. Saved manual rectangles retain precedence; applying new defaults is
+Separate stick-click and system keys remain available. Thumb wells leave four
+points plus the OS gesture strip beneath them; center keys use the available
+gesture-safe height. Wide digital controls use equal square wells around either
+side camera, with mirrored shoulder pairs and inward system keys directly above.
+Other surfaces use clear docks/side rails. Owner references guide size and balance;
+opposite sides use exact mirrored geometry. Saved manual rectangles retain
+precedence; applying new defaults is
 explicit. Generated sizing uses each orientation's actual dimensions.
 
 Do not infer that all black regions are host margins. Read-only decoding of
