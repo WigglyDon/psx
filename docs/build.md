@@ -14,6 +14,14 @@ are separate. The first build needs ordinary crates.io access; `Cargo.lock`
 pins the resolved packages. SDK, NDK and JDK are build tools, not copied
 from another application's source.
 
+A clean PS2 dependency build also needs Flex, Bison and GNU M4. Put their
+executables on `PATH`. With a local tool prefix, set `M4` to its absolute
+executable and `BISON_PKGDATADIR` to that prefix's `share/bison` directory;
+Bison can otherwise try its compiled-in system paths. These are host build
+tools, not libraries shipped in the APK. `cargo run --release -p xtask -- apk`
+uses the same build recipe with an optimized packager, which reduces the cost
+of source-manifest hashing after restoring a cache.
+
 ```sh
 export ANDROID_SDK_ROOT=/path/to/android-sdk
 export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/30.0.16248370"
