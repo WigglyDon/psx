@@ -2,9 +2,14 @@ use ab_glyph::{Font, FontRef, ScaleFont};
 use glow::HasContext;
 use std::collections::BTreeMap;
 
-const SCALE: f32 = 48.;
-const WIDTH: usize = 1024;
-const HEIGHT: usize = 2048;
+// Enough source coverage for normal menu type on dense phone displays.
+// Mipmaps preserve that coverage when small labels are minified; four empty
+// texels separate glyphs to protect ordinary bilinear/trilinear downsampling.
+const SCALE: f32 = 72.;
+const CELL: usize = 96;
+const PAD: usize = 4;
+const WIDTH: usize = CELL * 16;
+const HEIGHT: usize = CELL * 32;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Glyph {
@@ -40,11 +45,11 @@ impl Text {
                 let bounds = outline.px_bounds();
                 let w = bounds.width() as usize;
                 let h = bounds.height() as usize;
-                if w > 62 || h > 62 {
+                if w > CELL - PAD * 2 || h > CELL - PAD * 2 {
                     return Err("The bundled UI glyph exceeded its atlas cell.".into());
                 }
-                let x = i % 16 * 64 + 1;
-                let y = i / 16 * 64 + 1;
+                let x = i % 16 * CELL + PAD;
+                let y = i / 16 * CELL + PAD;
                 outline.draw(|dx, dy, coverage| {
                     bitmap[(y + dy as usize) * WIDTH + x + dx as usize] =
                         (coverage * 255.).round() as u8;
@@ -73,9 +78,17 @@ impl Text {
             glow::UNSIGNED_BYTE,
             glow::PixelUnpackData::Slice(Some(&bitmap)),
         );
-        for parameter in [glow::TEXTURE_MIN_FILTER, glow::TEXTURE_MAG_FILTER] {
-            gl.tex_parameter_i32(glow::TEXTURE_2D, parameter, glow::LINEAR as i32);
-        }
+        gl.generate_mipmap(glow::TEXTURE_2D);
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::LINEAR_MIPMAP_LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::LINEAR as i32,
+        );
         for parameter in [glow::TEXTURE_WRAP_S, glow::TEXTURE_WRAP_T] {
             gl.tex_parameter_i32(glow::TEXTURE_2D, parameter, glow::CLAMP_TO_EDGE as i32);
         }

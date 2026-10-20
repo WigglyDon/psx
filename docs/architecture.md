@@ -61,6 +61,17 @@ the same GLES context. The system document/permission screens remain platform
 UI. Shared menu/input geometry has no Android handles. Native accessibility
 semantics for the custom interface still require release qualification.
 
+The native UI uses analytic GLES signed-distance coverage for rounded caps,
+circles, rings, strokes and the molded D-pad cross. Screen derivatives keep
+edge smoothing at physical-pixel scale across densities and custom sizes;
+small polygon icons use an edge-only coverage fringe. A bounded 72-pixel
+font atlas with mipmaps supplies text, with sampler binding isolated from
+the donor. Charcoal sheets, restrained material shading and shared control
+edges are rendered in the existing UI batch; rounded sheet clipping also
+contains scrolling content and opaque header/footer masks. This requires no multisampled
+game framebuffer or full-screen smoothing pass, and does not change native
+game resolution, game filtering, controller hit targets or saved layouts.
+
 The fixed renderer is SwanStation OpenGL ES 3.0 at 1x resolution. The host
 negotiates the exact context version, provides a persistent framebuffer,
 calls context reset after game load and context destroy while current before

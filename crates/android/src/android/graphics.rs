@@ -12,6 +12,7 @@ use std::ffi::{c_char, CStr};
 use text::Text;
 
 const API: egl::Instance<egl::Static> = egl::Instance::new(egl::Static);
+const VERTEX_FLOATS: usize = 16;
 pub struct Graphics {
     display: egl::Display,
     config: egl::Config,
@@ -139,11 +140,18 @@ impl Graphics {
         gl.clear(glow::COLOR_BUFFER_BIT);
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         let program = gl.create_program()?;
-        for (kind,source) in [(glow::VERTEX_SHADER,"#version 300 es\nlayout(location=0) in vec2 position; layout(location=1) in vec4 color; layout(location=2) in vec2 uv; out vec4 vcolor; out vec2 vuv; void main(){gl_Position=vec4(position,0.0,1.0);vcolor=color;vuv=uv;}"),
-            (glow::FRAGMENT_SHADER,"#version 300 es\nprecision mediump float; in vec4 vcolor; in vec2 vuv; uniform sampler2D glyphs; out vec4 outputColor; void main(){float coverage=vuv.x<0.0?1.0:texture(glyphs,vuv).r;outputColor=vec4(vcolor.rgb,vcolor.a*coverage);}")] {
-            let shader=gl.create_shader(kind)?;gl.shader_source(shader,source);gl.compile_shader(shader);
-            if !gl.get_shader_compile_status(shader) {return Err(gl.get_shader_info_log(shader));}
-            gl.attach_shader(program,shader);gl.delete_shader(shader);
+        for (kind, source) in [
+            (glow::VERTEX_SHADER, include_str!("graphics/ui.vert")),
+            (glow::FRAGMENT_SHADER, include_str!("graphics/ui.frag")),
+        ] {
+            let shader = gl.create_shader(kind)?;
+            gl.shader_source(shader, source);
+            gl.compile_shader(shader);
+            if !gl.get_shader_compile_status(shader) {
+                return Err(gl.get_shader_info_log(shader));
+            }
+            gl.attach_shader(program, shader);
+            gl.delete_shader(shader);
         }
         gl.link_program(program);
         if !gl.get_program_link_status(program) {
@@ -157,12 +165,24 @@ impl Graphics {
         let vbo = gl.create_buffer()?;
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-        gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 32, 0);
-        gl.enable_vertex_attrib_array(1);
-        gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, 32, 8);
-        gl.enable_vertex_attrib_array(2);
-        gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, 32, 24);
+        for (index, size, offset) in [
+            (0, 2, 0),
+            (1, 4, 8),
+            (2, 2, 24),
+            (3, 2, 32),
+            (4, 4, 40),
+            (5, 2, 56),
+        ] {
+            gl.enable_vertex_attrib_array(index);
+            gl.vertex_attrib_pointer_f32(
+                index,
+                size,
+                glow::FLOAT,
+                false,
+                (VERTEX_FLOATS * 4) as i32,
+                offset,
+            );
+        }
         gl.bind_vertex_array(None);
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
         Ok(Self {
@@ -303,7 +323,7 @@ impl Graphics {
             gl.disable(cap);
         }
         gl.color_mask(true, true, true, true);
-        gl.clear_color(0.035, 0.045, 0.065, 1.);
+        gl.clear_color(0.028, 0.033, 0.042, 1.);
         gl.clear(glow::COLOR_BUFFER_BIT);
         if let Some((w, h, bottom_left)) = frame {
             if w > 0 && h > 0 && w <= 1024 && h <= 1024 {
@@ -338,13 +358,14 @@ impl Graphics {
         let origin = [self.content.x / density, self.content.y / density];
         gl.viewport(0, 0, self.width, self.height);
         let mut canvas = Canvas {
-            vertices: Vec::with_capacity(20000),
+            vertices: Vec::with_capacity(24000),
             w,
             h,
             font: &self.text,
             opacity: 1.,
             offset: origin,
             screen: [self.width as f32 / density, self.height as f32 / density],
+            pixel: 1. / density,
         };
         if frame.is_some() && editor.is_none() && visuals.pause_overlay > 0. {
             canvas.opacity = visuals.pause_overlay;
@@ -475,7 +496,19 @@ impl Graphics {
             if menu.over_game && menu.anchor.is_none() {
                 canvas.polygon(&[(0., 0.), (w, 0.), (w, h), (0., h)], [0., 0., 0., 0.2]);
             }
-            menu_start = (canvas.vertices.len() / 8) as i32;
+            if menu.over_game || menu.anchor.is_some() {
+                canvas.rounded_radius(
+                    Rect::new(panel.x - 3., panel.y + 3., panel.w + 6., panel.h + 3.),
+                    [0., 0., 0., 0.18],
+                    20.,
+                );
+                canvas.rounded_radius(
+                    Rect::new(panel.x - 1., panel.y + 2., panel.w + 2., panel.h),
+                    [0., 0., 0., 0.25],
+                    18.,
+                );
+            }
+            menu_start = (canvas.vertices.len() / VERTEX_FLOATS) as i32;
             menu_clip = Some(panel);
             canvas.w = panel.w;
             canvas.h = panel.h;
@@ -499,7 +532,15 @@ impl Graphics {
             glow::ONE_MINUS_SRC_ALPHA,
         );
         gl.use_program(Some(self.program));
+        let clip_radius = gl.get_uniform_location(self.program, "panelRadius");
+        gl.uniform_1_f32(clip_radius.as_ref(), 0.);
         gl.active_texture(glow::TEXTURE0);
+        // A donor sampler can override the atlas's linear/mipmap filters.
+        // Leave the donor's cached sampler binding intact after UI drawing.
+        let saved_sampler =
+            std::num::NonZeroU32::new(gl.get_parameter_i32(glow::SAMPLER_BINDING) as u32)
+                .map(glow::NativeSampler);
+        gl.bind_sampler(0, None);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.text.texture));
         gl.bind_vertex_array(Some(self.vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
@@ -508,9 +549,19 @@ impl Graphics {
             canvas.vertices.len() * 4,
         );
         gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
-        let count = (canvas.vertices.len() / 8) as i32;
+        let count = (canvas.vertices.len() / VERTEX_FLOATS) as i32;
         if let Some(panel) = menu_clip {
             gl.draw_arrays(glow::TRIANGLES, 0, menu_start);
+            if menu.is_some_and(|m| m.over_game || m.anchor.is_some()) {
+                gl.uniform_4_f32(
+                    gl.get_uniform_location(self.program, "panelClip").as_ref(),
+                    self.content.x + panel.x * density,
+                    self.height as f32 - self.content.y - (panel.y + panel.h) * density,
+                    panel.w * density,
+                    panel.h * density,
+                );
+                gl.uniform_1_f32(clip_radius.as_ref(), 18. * density);
+            }
             gl.enable(glow::SCISSOR_TEST);
             gl.scissor(
                 (self.content.x + panel.x * density) as i32,
@@ -527,6 +578,7 @@ impl Graphics {
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
         gl.use_program(saved_program.filter(|program| gl.is_program(*program)));
         gl.bind_texture(glow::TEXTURE_2D, None);
+        gl.bind_sampler(0, saved_sampler);
         gl.disable(glow::BLEND);
         API.swap_buffers(self.display, self.surface.unwrap())
             .map_err(|e| format!("Display changed: {e}"))
@@ -570,6 +622,7 @@ struct Canvas<'a> {
     opacity: f32,
     offset: [f32; 2],
     screen: [f32; 2],
+    pixel: f32,
 }
 impl Canvas<'_> {
     fn artwork(&mut self, r: Rect, artwork: &Artwork, time: f64) {
@@ -595,7 +648,7 @@ impl Canvas<'_> {
                             let right = r.x + x as f32 * r.w / 16.;
                             let top = r.y + y as f32 * r.h / 16.;
                             let bottom = top + r.h / 16.;
-                            self.polygon(
+                            self.flat_polygon(
                                 &[(left, top), (right, top), (right, bottom), (left, bottom)],
                                 color.map(|v| v as f32 / 255.),
                             );
@@ -733,11 +786,13 @@ impl Canvas<'_> {
     fn menu(&mut self, menu: &Menu, time: f64) {
         let column = Menu::column(self.w);
         let viewport = menu.viewport(self.w, self.h);
-        let background = [0.018, 0.028, 0.085, 1.];
-        self.polygon(
-            &[(0., 0.), (self.w, 0.), (self.w, self.h), (0., self.h)],
-            background,
-        );
+        let background = [0.055, 0.063, 0.075, 1.];
+        let radius = if menu.over_game || menu.anchor.is_some() {
+            18.
+        } else {
+            0.
+        };
+        self.rounded_radius(Rect::new(0., 0., self.w, self.h), background, radius);
         let total = menu.rows.iter().map(|r| r.height).sum::<f32>();
         let pressed = menu.pressed_row(self.w, self.h);
         let mut y = viewport.y - menu.scroll;
@@ -747,7 +802,7 @@ impl Canvas<'_> {
                     if pressed == Some(index) {
                         self.panel(
                             Rect::new(column.x, y, column.w, row.height),
-                            [0.07, 0.16, 0.29, 1.],
+                            [0.12, 0.19, 0.21, 1.],
                         );
                     }
                     let x = column.x
@@ -763,18 +818,14 @@ impl Canvas<'_> {
                     }
                     if let Some(checked) = row.checked {
                         let r = Rect::new(column.x + 16., y + 26., 20., 20.);
-                        self.polygon(
-                            &[
-                                (r.x, r.y),
-                                (r.x + r.w, r.y),
-                                (r.x + r.w, r.y + r.h),
-                                (r.x, r.y + r.h),
-                            ],
+                        self.rounded_radius(
+                            r,
                             if checked {
                                 [0.18, 0.75, 0.63, 1.]
                             } else {
                                 [0.19, 0.23, 0.29, 1.]
                             },
+                            5.,
                         );
                         if checked {
                             self.line(
@@ -848,33 +899,32 @@ impl Canvas<'_> {
                         );
                         let r = menu.slider_rect(index, self.w, self.h);
                         let track = Rect::new(r.x + 8., r.y + 21., r.w - 16., 6.);
-                        self.panel(track, [0.12, 0.18, 0.28, 1.]);
+                        self.rounded_radius(track, [0.18, 0.21, 0.24, 1.], 3.);
                         let filled = track.w * value as f32 / 100.;
                         if filled > 0. {
-                            self.panel(
+                            self.rounded_radius(
                                 Rect::new(track.x, track.y, filled, track.h),
-                                [0.31, 0.66, 0.82, 1.],
+                                [0.42, 0.76, 0.71, 1.],
+                                3.,
                             );
                         }
-                        self.panel(
-                            Rect::new(track.x + filled - 5., r.y + 13., 10., 22.),
-                            [0.80, 0.90, 0.94, 1.],
-                        );
+                        self.disc(track.x + filled, r.y + 25., 10., [0., 0., 0., 0.35]);
+                        self.disc(track.x + filled, r.y + 24., 9., [0.86, 0.92, 0.93, 1.]);
                     } else if let Some(on) = row.toggle {
-                        self.panel(
+                        self.rounded_radius(
                             Rect::new(right - 44., y + 19., 44., 26.),
-                            [0.03, 0.07, 0.15, 1.],
-                        );
-                        self.text(
-                            right - 37.,
-                            y + 24.,
-                            if on { "ON" } else { "OFF" },
-                            14.,
                             if on {
-                                [0.5, 0.95, 0.76, 1.]
+                                [0.21, 0.49, 0.44, 1.]
                             } else {
-                                [0.62, 0.7, 0.8, 1.]
+                                [0.22, 0.25, 0.28, 1.]
                             },
+                            13.,
+                        );
+                        self.disc(
+                            if on { right - 13. } else { right - 31. },
+                            y + 32.,
+                            10.,
+                            [0.90, 0.94, 0.94, 1.],
                         );
                     }
                     if index + 1 < menu.rows.len() {
@@ -892,23 +942,16 @@ impl Canvas<'_> {
             y += row.height;
         }
         // Opaque header/footer clip scrolling text without another render pass.
-        self.polygon(
-            &[
-                (0., 0.),
-                (self.w, 0.),
-                (self.w, viewport.y),
-                (0., viewport.y),
-            ],
+        self.rounded_radius(Rect::new(0., 0., self.w, viewport.y), background, radius);
+        self.rounded_radius(
+            Rect::new(
+                0.,
+                viewport.y + viewport.h,
+                self.w,
+                self.h - viewport.y - viewport.h,
+            ),
             background,
-        );
-        self.polygon(
-            &[
-                (0., viewport.y + viewport.h),
-                (self.w, viewport.y + viewport.h),
-                (self.w, self.h),
-                (0., self.h),
-            ],
-            background,
+            radius,
         );
         if menu.anchor.is_some() {
             let close = Menu::settings_rect(self.w);
@@ -950,7 +993,7 @@ impl Canvas<'_> {
             17.,
             &elide(
                 self.font,
-                &menu.title.to_uppercase(),
+                &menu.title,
                 column.w - if menu.home { 112. } else { 48. },
                 22.,
             ),
@@ -969,7 +1012,7 @@ impl Canvas<'_> {
         if menu.has_footer() {
             let back = Menu::back_rect(self.w, self.h);
             if menu.back != "Cancel" {
-                self.panel(back, [0.06, 0.15, 0.28, 1.]);
+                self.panel(back, [0.12, 0.22, 0.23, 1.]);
             }
             self.text(
                 back.x + (back.w - self.font.measure(&menu.back, 17.)) / 2.,
@@ -987,107 +1030,212 @@ impl Canvas<'_> {
                 [0.36, 0.47, 0.57, 0.8],
             );
         }
-        if menu.over_game {
-            self.frame(Rect::new(1., 1., self.w - 2., self.h - 2.));
+        if menu.over_game || menu.anchor.is_some() {
+            self.shape(
+                Rect::new(
+                    self.pixel * 0.5,
+                    self.pixel * 0.5,
+                    self.w - self.pixel,
+                    self.h - self.pixel,
+                ),
+                radius,
+                self.pixel,
+                [0.62, 0.68, 0.72, 0.22],
+                0.2,
+                0.,
+            );
         }
     }
     fn panel(&mut self, r: Rect, color: [f32; 4]) {
-        self.polygon(
-            &[
-                (r.x, r.y),
-                (r.x + r.w, r.y),
-                (r.x + r.w, r.y + r.h),
-                (r.x, r.y + r.h),
-            ],
-            color,
-        );
-        self.frame(r);
+        let radius = 10_f32.min(r.h / 2.);
+        self.shape(r, radius, 0., color, 0.12, 0.);
+        self.shape(r, radius, self.pixel, [0.65, 0.73, 0.78, 0.16], 0., 0.);
     }
-    fn frame(&mut self, r: Rect) {
-        self.line((r.x, r.y + r.h), (r.x, r.y), 1., [0.30, 0.40, 0.55, 1.]);
-        self.line((r.x, r.y), (r.x + r.w, r.y), 1., [0.42, 0.52, 0.65, 1.]);
-        self.line(
-            (r.x + r.w, r.y),
-            (r.x + r.w, r.y + r.h),
-            1.,
-            [0.10, 0.17, 0.28, 1.],
-        );
-        self.line(
-            (r.x + r.w, r.y + r.h),
-            (r.x, r.y + r.h),
-            1.,
-            [0.10, 0.17, 0.28, 1.],
-        );
+    fn vertex(
+        &mut self,
+        p: (f32, f32),
+        c: [f32; 4],
+        uv: [f32; 2],
+        local: [f32; 2],
+        shape: [f32; 4],
+        surface: [f32; 2],
+    ) {
+        self.vertices.extend_from_slice(&[
+            (p.0 + self.offset[0]) / self.screen[0] * 2. - 1.,
+            1. - (p.1 + self.offset[1]) / self.screen[1] * 2.,
+            c[0],
+            c[1],
+            c[2],
+            c[3] * self.opacity,
+            uv[0],
+            uv[1],
+            local[0],
+            local[1],
+            shape[0],
+            shape[1],
+            shape[2],
+            shape[3],
+            surface[0],
+            surface[1],
+        ]);
     }
-    /// Convex or star-shaped polygon, with the mean point inside its boundary.
+    // Keep adjacent original game-icon pixels seamless rather than applying
+    // an independent coverage fringe to every run of the pixel artwork.
+    fn flat_polygon(&mut self, points: &[(f32, f32)], c: [f32; 4]) {
+        if points.len() < 3 {
+            return;
+        }
+        for i in 1..points.len() - 1 {
+            for p in [points[0], points[i], points[i + 1]] {
+                self.vertex(p, c, [-1.; 2], [0.; 2], [0.; 4], [0.; 2]);
+            }
+        }
+    }
+    /// Convex or star-shaped outline. A coverage fringe smooths the boundary
+    /// only; internal fan edges are opaque, avoiding diagonal seams.
     fn polygon(&mut self, points: &[(f32, f32)], c: [f32; 4]) {
+        if points.len() < 3 || c[3] <= 0. {
+            return;
+        }
         let center = points.iter().fold((0., 0.), |(x, y), p| (x + p.0, y + p.1));
         let center = (
             center.0 / points.len() as f32,
             center.1 / points.len() as f32,
         );
+        let area: f32 = points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .map(|(a, b)| a.0 * b.1 - b.0 * a.1)
+            .sum();
+        let normal = |a: (f32, f32), b: (f32, f32)| {
+            let length = (b.0 - a.0).hypot(b.1 - a.1).max(0.0001);
+            (
+                (b.1 - a.1) / length * area.signum(),
+                (a.0 - b.0) / length * area.signum(),
+            )
+        };
+        let edge = |i: usize, side: f32| {
+            let p = points[i];
+            let a = normal(points[(i + points.len() - 1) % points.len()], p);
+            let b = normal(p, points[(i + 1) % points.len()]);
+            let scale = self.pixel * 0.5 / (1. + a.0 * b.0 + a.1 * b.1).max(0.25);
+            (
+                p.0 + (a.0 + b.0) * scale * side,
+                p.1 + (a.1 + b.1) * scale * side,
+            )
+        };
+        // This small stack buffer bounds all current native icon outlines.
+        // Larger geometry uses the flat path rather than allocating per edge.
+        if points.len() > 32 {
+            self.flat_polygon(points, c);
+            return;
+        }
+        let mut inner = [(0., 0.); 32];
+        let mut outer = inner;
         for i in 0..points.len() {
-            for (x, y) in [center, points[i], points[(i + 1) % points.len()]] {
-                self.vertices.extend_from_slice(&[
-                    (x + self.offset[0]) / self.screen[0] * 2. - 1.,
-                    1. - (y + self.offset[1]) / self.screen[1] * 2.,
-                    c[0],
-                    c[1],
-                    c[2],
-                    c[3] * self.opacity,
-                    -1.,
-                    -1.,
-                ]);
+            inner[i] = edge(i, -1.);
+            outer[i] = edge(i, 1.);
+        }
+        let clear = [c[0], c[1], c[2], 0.];
+        for i in 0..points.len() {
+            let j = (i + 1) % points.len();
+            for p in [center, inner[i], inner[j]] {
+                self.vertex(p, c, [-1.; 2], [0.; 2], [0.; 4], [0.; 2]);
+            }
+            for (p, color) in [
+                (inner[i], c),
+                (outer[i], clear),
+                (outer[j], clear),
+                (inner[i], c),
+                (outer[j], clear),
+                (inner[j], c),
+            ] {
+                self.vertex(p, color, [-1.; 2], [0.; 2], [0.; 4], [0.; 2]);
             }
         }
     }
-    fn disc(&mut self, x: f32, y: f32, radius: f32, c: [f32; 4]) {
-        let points: [_; 96] = std::array::from_fn(|i| {
-            let angle = i as f32 / 96. * std::f32::consts::TAU;
-            (x + angle.cos() * radius, y + angle.sin() * radius)
-        });
-        self.polygon(&points, c);
+    /// One small quad per analytic primitive; no multisampled game target,
+    /// offscreen UI image or full-screen post-process is required.
+    fn shape(&mut self, r: Rect, radius: f32, stroke: f32, c: [f32; 4], shade: f32, angle: f32) {
+        self.primitive(r, [radius, stroke], c, [1., shade], angle);
     }
-    fn ring(&mut self, x: f32, y: f32, radius: f32, width: f32, c: [f32; 4]) {
-        for i in 0..96 {
-            let a = i as f32 / 96. * std::f32::consts::TAU;
-            let b = (i + 1) as f32 / 96. * std::f32::consts::TAU;
-            self.polygon(
-                &[
-                    (x + a.cos() * radius, y + a.sin() * radius),
-                    (x + b.cos() * radius, y + b.sin() * radius),
-                    (
-                        x + b.cos() * (radius - width),
-                        y + b.sin() * (radius - width),
-                    ),
-                    (
-                        x + a.cos() * (radius - width),
-                        y + a.sin() * (radius - width),
-                    ),
-                ],
+    fn primitive(&mut self, r: Rect, edge: [f32; 2], c: [f32; 4], surface: [f32; 2], angle: f32) {
+        if r.w <= 0. || r.h <= 0. || c[3] <= 0. {
+            return;
+        }
+        let half = [r.w / 2., r.h / 2.];
+        let radius = edge[0].clamp(0., half[0].min(half[1]));
+        let extent = [half[0] + self.pixel * 1.5, half[1] + self.pixel * 1.5];
+        let (sin, cos) = angle.sin_cos();
+        for (x, y) in [
+            (-1., -1.),
+            (1., -1.),
+            (-1., 1.),
+            (-1., 1.),
+            (1., -1.),
+            (1., 1.),
+        ] {
+            let local = [x * extent[0], y * extent[1]];
+            let p = (
+                r.x + half[0] + local[0] * cos - local[1] * sin,
+                r.y + half[1] + local[0] * sin + local[1] * cos,
+            );
+            self.vertex(
+                p,
                 c,
+                [-1.; 2],
+                local,
+                [half[0], half[1], radius, edge[1]],
+                surface,
             );
         }
+    }
+    fn disc(&mut self, x: f32, y: f32, radius: f32, c: [f32; 4]) {
+        self.shape(
+            Rect::new(x - radius, y - radius, radius * 2., radius * 2.),
+            radius,
+            0.,
+            c,
+            0.,
+            0.,
+        );
+    }
+    fn ring(&mut self, x: f32, y: f32, radius: f32, width: f32, c: [f32; 4]) {
+        self.shape(
+            Rect::new(x - radius, y - radius, radius * 2., radius * 2.),
+            radius,
+            width.max(0.01),
+            c,
+            0.,
+            0.,
+        );
     }
     fn line(&mut self, a: (f32, f32), b: (f32, f32), width: f32, c: [f32; 4]) {
         let length = (b.0 - a.0).hypot(b.1 - a.1);
         if length == 0. {
             return;
         }
-        let dx = -(b.1 - a.1) / length * width / 2.;
-        let dy = (b.0 - a.0) / length * width / 2.;
-        self.polygon(
-            &[
-                (a.0 + dx, a.1 + dy),
-                (b.0 + dx, b.1 + dy),
-                (b.0 - dx, b.1 - dy),
-                (a.0 - dx, a.1 - dy),
-            ],
+        self.shape(
+            Rect::new(
+                (a.0 + b.0 - length - width) / 2.,
+                (a.1 + b.1 - width) / 2.,
+                length + width,
+                width,
+            ),
+            width / 2.,
+            0.,
             c,
+            0.,
+            (b.1 - a.1).atan2(b.0 - a.0),
         );
     }
     fn stick(&mut self, r: Rect, axes: [i16; 2]) {
-        self.rounded_radius(r, [0.025, 0.035, 0.05, 0.96], r.w.min(r.h) / 2.);
+        let radius = r.w.min(r.h) / 2.;
+        let x = r.x + r.w / 2.;
+        let y = r.y + r.h / 2.;
+        self.disc(x, y, radius, [0.014, 0.018, 0.022, 1.]);
+        self.ring(x, y, radius, 1., [0.36, 0.40, 0.43, 0.55]);
+        self.ring(x, y, radius * 0.72, self.pixel, [0.30, 0.34, 0.37, 0.18]);
         let travel = r.w.min(r.h) * 0.22;
         let size = r.w.min(r.h) * 0.56;
         let knob = Rect::new(
@@ -1096,11 +1244,22 @@ impl Canvas<'_> {
             size,
             size,
         );
-        self.rounded_radius(knob, [0.17, 0.21, 0.25, 1.], size / 2.);
-        self.rounded_radius(
-            Rect::new(knob.x + 5., knob.y + 5., knob.w - 10., knob.h - 10.),
-            [0.23, 0.28, 0.31, 1.],
-            (size - 10.) / 2.,
+        self.shape(
+            Rect::new(knob.x, knob.y + 2., knob.w, knob.h),
+            size / 2.,
+            0.,
+            [0., 0., 0., 0.65],
+            0.,
+            0.,
+        );
+        self.shape(knob, size / 2., 0., [0.17, 0.19, 0.21, 1.], 0.24, 0.);
+        self.shape(knob, size / 2., 1., [0.49, 0.53, 0.56, 0.48], 0.28, 0.);
+        self.ring(
+            knob.x + size / 2.,
+            knob.y + size / 2.,
+            size * 0.36,
+            self.pixel,
+            [0.43, 0.47, 0.50, 0.25],
         );
     }
     fn rounded(&mut self, r: Rect, c: [f32; 4]) {
@@ -1108,22 +1267,7 @@ impl Canvas<'_> {
         self.rounded_radius(r, c, radius);
     }
     fn rounded_radius(&mut self, r: Rect, c: [f32; 4], radius: f32) {
-        let points: [_; 24] = std::array::from_fn(|i| {
-            let corner = i / 6;
-            let angle = (-0.5 + corner as f32 * 0.5 + (i % 6) as f32 / 10.) * std::f32::consts::PI;
-            let cx = if corner < 2 {
-                r.x + r.w - radius
-            } else {
-                r.x + radius
-            };
-            let cy = if corner == 0 || corner == 3 {
-                r.y + radius
-            } else {
-                r.y + r.h - radius
-            };
-            (cx + angle.cos() * radius, cy + angle.sin() * radius)
-        });
-        self.polygon(&points, c);
+        self.shape(r, radius, 0., c, 0., 0.);
     }
     fn hardware_key(&mut self, r: Rect, label: &str, strength: f32) {
         let body = [
@@ -1145,12 +1289,14 @@ impl Canvas<'_> {
                 [0.015, 0.02, 0.025, 0.95],
                 cap.h / 2.,
             );
-            self.rounded_radius(cap, body, cap.h / 2.);
-            self.line(
-                (cap.x + cap.h / 2., cap.y + 1.),
-                (cap.x + cap.w - cap.h / 2., cap.y + 1.),
-                0.8,
-                [0.54, 0.59, 0.65, 0.6],
+            self.shape(cap, cap.h / 2., 0., body, 0.23, 0.);
+            self.shape(
+                cap,
+                cap.h / 2.,
+                self.pixel,
+                [0.52, 0.57, 0.61, 0.5],
+                0.35,
+                0.,
             );
         } else {
             let cap = Rect::new(
@@ -1165,13 +1311,8 @@ impl Canvas<'_> {
                 [0.015, 0.02, 0.025, 0.95],
                 radius,
             );
-            self.rounded_radius(cap, body, radius);
-            self.line(
-                (cap.x + radius, cap.y + 1.),
-                (cap.x + cap.w - radius, cap.y + 1.),
-                0.9,
-                [0.54, 0.59, 0.65, 0.65],
-            );
+            self.shape(cap, radius, 0., body, 0.23, 0.);
+            self.shape(cap, radius, self.pixel, [0.52, 0.57, 0.61, 0.5], 0.35, 0.);
         }
         let size = if matches!(label, "START" | "SELECT" | "L3" | "R3") {
             12_f32
@@ -1197,30 +1338,23 @@ impl Canvas<'_> {
         // capture well and following behavior do not need a circular outline.
         // The cross and marker stay inside the reserved well during drift.
         let arm = radius * 0.91;
-        let half = radius * 0.31;
-        let outline = [
-            (x - half, y - arm),
-            (x + half, y - arm),
-            (x + half, y - half),
-            (x + arm, y - half),
-            (x + arm, y + half),
-            (x + half, y + half),
-            (x + half, y + arm),
-            (x - half, y + arm),
-            (x - half, y + half),
-            (x - arm, y + half),
-            (x - arm, y - half),
-            (x - half, y - half),
-        ];
-        self.polygon(&outline, [0.065, 0.09, 0.12, 0.9]);
-        for i in 0..outline.len() {
-            self.line(
-                outline[i],
-                outline[(i + 1) % outline.len()],
-                1.2,
-                [0.65, 0.76, 0.84, 0.65],
-            );
-        }
+        let cap = Rect::new(x - arm, y - arm, arm * 2., arm * 2.);
+        let corner = radius * 0.075;
+        self.primitive(
+            Rect::new(cap.x, cap.y + 2., cap.w, cap.h),
+            [corner, 0.],
+            [0.005, 0.008, 0.011, 0.95],
+            [2., 0.],
+            0.,
+        );
+        self.primitive(cap, [corner, 0.], [0.105, 0.125, 0.145, 1.], [2., 0.25], 0.);
+        self.primitive(
+            cap,
+            [corner, self.pixel],
+            [0.49, 0.55, 0.59, 0.6],
+            [2., 0.35],
+            0.,
+        );
         for (dx, dy, bit) in [(0., -1., 4), (-1., 0., 6), (1., 0., 7), (0., 1., 5)] {
             let ax = x + dx * radius * 0.65;
             let ay = y + dy * radius * 0.65;
@@ -1256,16 +1390,20 @@ impl Canvas<'_> {
             let left = x + glyph.offset[0] * scale;
             let top = baseline + glyph.offset[1] * scale;
             for (dx, dy) in [(0., 0.), (1., 0.), (0., 1.), (0., 1.), (1., 0.), (1., 1.)] {
-                self.vertices.extend_from_slice(&[
-                    (left + self.offset[0] + dx * glyph.size[0] * scale) / self.screen[0] * 2. - 1.,
-                    1. - (top + self.offset[1] + dy * glyph.size[1] * scale) / self.screen[1] * 2.,
-                    c[0],
-                    c[1],
-                    c[2],
-                    c[3] * self.opacity,
-                    glyph.uv[0] + dx * (glyph.uv[2] - glyph.uv[0]),
-                    glyph.uv[1] + dy * (glyph.uv[3] - glyph.uv[1]),
-                ]);
+                self.vertex(
+                    (
+                        left + dx * glyph.size[0] * scale,
+                        top + dy * glyph.size[1] * scale,
+                    ),
+                    c,
+                    [
+                        glyph.uv[0] + dx * (glyph.uv[2] - glyph.uv[0]),
+                        glyph.uv[1] + dy * (glyph.uv[3] - glyph.uv[1]),
+                    ],
+                    [0.; 2],
+                    [0.; 4],
+                    [0.; 2],
+                );
             }
             x += glyph.advance * scale;
         }
@@ -1288,13 +1426,23 @@ impl Canvas<'_> {
         let x = r.x + r.w / 2.;
         let y = r.y + r.h / 2.;
         if matches!(label, "TRI" | "O" | "X" | "SQ") {
-            self.disc(x, y, r.w / 2. - 1., background);
-            self.ring(
-                x,
-                y,
-                r.w / 2. - 1.,
-                1.3,
-                [0.85, 0.93, 1., 0.4 + 0.4 * strength],
+            let radius = r.w.min(r.h) / 2. - 2.;
+            self.disc(x, y + 1.5, radius, [0.005, 0.008, 0.012, 0.95]);
+            let cap = Rect::new(x - radius, y - radius, radius * 2., radius * 2.);
+            let body = [
+                0.105 + strength * 0.025,
+                0.125 + strength * 0.15,
+                0.145 + strength * 0.11,
+                background[3],
+            ];
+            self.shape(cap, radius, 0., body, 0.25, 0.);
+            self.shape(
+                cap,
+                radius,
+                1.,
+                [0.55, 0.61, 0.65, 0.48 + strength * 0.3],
+                0.35,
+                0.,
             );
             let a = r.w * 0.20;
             let color = match label {
@@ -1411,21 +1559,18 @@ impl Canvas<'_> {
         );
     }
     fn cog(&mut self, x: f32, y: f32) {
-        for i in 0..32 {
-            let a = i as f32 / 32. * std::f32::consts::TAU;
-            let b = (i + 1) as f32 / 32. * std::f32::consts::TAU;
-            let ra = if i % 4 < 2 { 12. } else { 9.5 };
-            let rb = if (i + 1) % 4 < 2 { 12. } else { 9.5 };
-            self.polygon(
-                &[
-                    (x + a.cos() * ra, y + a.sin() * ra),
-                    (x + b.cos() * rb, y + b.sin() * rb),
-                    (x + b.cos() * 4.5, y + b.sin() * 4.5),
-                    (x + a.cos() * 4.5, y + a.sin() * 4.5),
-                ],
-                [0.90, 0.95, 1., 0.95],
+        let color = [0.85, 0.92, 0.98, 1.];
+        for i in 0..8 {
+            let angle = i as f32 / 8. * std::f32::consts::TAU;
+            let (sin, cos) = angle.sin_cos();
+            self.line(
+                (x + cos * 8., y + sin * 8.),
+                (x + cos * 11., y + sin * 11.),
+                4.,
+                color,
             );
         }
+        self.ring(x, y, 10., 4., color);
     }
 }
 
