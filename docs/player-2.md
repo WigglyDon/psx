@@ -420,3 +420,38 @@ directories across concurrent PID namespaces. Production ownership is unchanged.
 Actual shared GLES previews, coverage and donor-sampler isolation pass. These
 are host results; the prepared layout still requires installation and a physical
 fold/rotation/gesture check under a fresh window.
+
+## Picture and thumb-pair follow-up
+
+The October 20 19:44–20:00 UTC window installed `337e767ac11a` with the
+original signing identity after a fresh verified backup. GTA restored and
+rendered. The owner approved resetting only the current Square PS2 profile.
+The actual unfolded portrait picture reached 2076×1557 at 0,160; rotated inner
+landscape remained 2027.7×1520.8 at 62.2,136. Folded landscape reached the
+full 1021-pixel control surface, but still excluded a 59-pixel hidden navigation
+strip from the 1080-pixel drawable. The latter is a frontend reservation, not
+a game-rendered border. All eight PS1 and six PS2 cards, library and PS1
+profiles remained unchanged; the authorized PS2 reset was the sole profile
+change. Normal Close game preceded final backup and app shutdown. Locking was
+verified, power reported Dozing, full screen-off unverified. Access was released
+before the window expired; no current device custody.
+
+The next Rust revision separates gesture-safe controller coordinates from the
+picture canvas. Hidden navigation space may display the game while input stays
+above its reserved strip. Caption/camera bounds remain honored. Transient bar
+reveals move chrome around the existing picture and controls; the live editor
+uses the same expanded picture without changing saved coordinate identities.
+Generated PS1/PS2 side rails budget against that canvas. Inner PS2 thumb pairs
+now have an eight-point clear gap; auxiliary keys use the center outside both
+pairs. Folded camera rails keep auxiliary keys beside the primary well, outside
+the thumb travel corridor. The toolbar is 24 points high with 40-point-wide
+hit targets and existing rounded-corner clearance. Saved custom input rectangles
+retain precedence. No native emulation, checkpoint identity or card-protocol
+change accompanies this revision.
+
+Do not promise four-edge filling: complete 4:3 output, camera clearance and
+separate comfortable controls can constrain a nearly square rotated display.
+The solver maximizes the centered, high clear picture. Game-drawn black regions
+remain separate from host geometry; no automatic crop/stretch is introduced.
+The new geometry and rendering checks require another installed-device pass;
+they do not settle Baldur's card failure or PS2 gameplay/audio/performance.

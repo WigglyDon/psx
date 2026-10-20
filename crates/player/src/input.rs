@@ -108,7 +108,11 @@ impl Layout {
     }
 
     fn default_with_cutouts(w: f32, h: f32, cutouts: &[Rect]) -> Self {
+        Self::default_in(w, h, cutouts, Rect::new(0., 0., w, h))
+    }
+    fn default_in(w: f32, h: f32, cutouts: &[Rect], picture: Rect) -> Self {
         let mut rails = Self::arranged(w, h, false);
+        rails.place_game_in(picture, false, 1., [0.5; 2]);
         let cluster = rails.dpad.w;
         let shoulder = (cluster - 8.) / 2.;
         let middle = w - 2. * (16. + cluster);
@@ -116,13 +120,15 @@ impl Layout {
         // the two thumb clusters. Compare the resulting clear picture rather
         // than imposing the same dock on a wide or narrow display.
         if cluster >= 160. && middle >= 2. * shoulder + 16. {
-            let dock = Self::arranged(w, h, true);
+            let mut dock = Self::arranged(w, h, true);
+            dock.place_game_in(picture, false, 1., [0.5; 2]);
             if dock.game.w > rails.game.w + 0.01 {
                 rails = dock;
             }
         }
         if w > h * 1.35 && h >= 304. {
-            let side = Self::side_rails(w, h, cutouts);
+            let mut side = Self::side_rails(w, h, picture.h, cutouts);
+            side.place_game_in(picture, false, 1., [0.5; 2]);
             if side.game.w > rails.game.w + 0.01 {
                 rails = side;
             }
@@ -229,11 +235,11 @@ impl Layout {
         layout
     }
 
-    fn side_rails(w: f32, h: f32, cutouts: &[Rect]) -> Self {
+    fn side_rails(w: f32, h: f32, picture_height: f32, cutouts: &[Rect]) -> Self {
         let mut layout = Self::arranged(w, h, false);
         // Grow the thumb wells into spare side-rail width before taking space
         // from a full-height picture. Narrower windows retain the old ceiling.
-        let picture_clearance = ((w - h * 4. / 3.) / 2. - 16.).max(160.);
+        let picture_clearance = ((w - picture_height * 4. / 3.) / 2. - 16.).max(160.);
         let cluster = (h - 184.).clamp(112., 200.).min(picture_clearance);
         // A side camera can meet the upper edge of a larger thumb well. Use
         // the clear height below it, retaining rail width and placing it below
@@ -418,88 +424,28 @@ impl Layout {
         }
         layout
     }
-    /// Budget a shallow controller band around the largest high picture.
-    /// Use the thumb bridge where width permits; narrow inner windows retain
-    /// the previous compact fallback rather than squeezing its input targets.
+    /// Adjacent thumb wells share a shallow band; auxiliary keys occupy its
+    /// center, outside both thumb pairs. Never crop or overlap for extra width.
     fn ps2_shared_band(w: f32, h: f32) -> Option<Self> {
         if w < 800. || h < 600. || w > h * 1.35 {
             return None;
         }
-        if let Some(layout) = Self::ps2_picture_band(w, h) {
-            return Some(layout);
-        }
-        let mut layout = Self::new(w, h);
-        let stick = (w / 2. - 268.).clamp(128., 144.);
-        let digital_x = 16. + stick + 12.;
-        let face = (w / 2. - digital_x - 102.).clamp(122., 160.);
-        let main_y = h - 24. - stick;
-        let face_y = h - 28. - face;
-        let middle = (w - 204.) / 2.;
-        let auxiliary_y = face_y + face - 48.;
-        let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
-        let step = (face - cap) / 2.;
-        let fx = w - digital_x - face / 2.;
-        let fy = face_y + face / 2.;
-        layout.dpad = Rect::new(digital_x, face_y, face, face);
-        for c in &mut layout.controls {
-            c.bounds = match c.label {
-                "TRI" => Rect::new(fx - cap / 2., fy - step - cap / 2., cap, cap),
-                "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
-                "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
-                "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
-                "SELECT" => Rect::new(middle + 52., auxiliary_y, 48., 48.),
-                "START" => Rect::new(middle + 104., auxiliary_y, 48., 48.),
-                label => {
-                    let x = middle + if label.ends_with('2') { 52. } else { 0. };
-                    Rect::new(
-                        if label.starts_with('L') {
-                            x
-                        } else {
-                            w - x - 48.
-                        },
-                        face_y,
-                        48.,
-                        48.,
-                    )
-                }
-            };
-        }
-        for (x, label, id) in [(middle, "L3", 14), (w - middle - 48., "R3", 15)] {
-            layout.controls.push(Control {
-                bounds: Rect::new(x, auxiliary_y, 48., 48.),
-                label,
-                mask: 1 << id,
-            });
-        }
-        layout.sticks = vec![
-            Rect::new(16., main_y, stick, stick),
-            Rect::new(w - 16. - stick, main_y, stick, stick),
-        ];
-        layout.anchor_toolbar(w, h, 0., 0., &[]);
-        layout.place_game(w, h, false, 1., [0.5, 0.5]);
-        Some(layout)
-    }
-    /// Spend the full-width picture's remaining height on controls first.
-    /// Shoulder pairs bridge the thumb wells above their centers; stick-click
-    /// sits below that bridge. Never obtain width by cropping or overlapping.
-    fn ps2_picture_band(w: f32, h: f32) -> Option<Self> {
         let outer = 8.;
         let bottom = 12.;
-        let shoulder_pair = 100.; // Two 48-point keys and a four-point gap.
-        let maximum_stick = w / 2. - outer - 8. - shoulder_pair - 122. - 56.;
+        let maximum_stick = w / 2. - outer - 8. - 122. - 110.;
         if maximum_stick < 128. {
             return None;
         }
         let stick = (h - w * 0.75 - bottom - 4.)
             .clamp(128., 144.)
             .min(maximum_stick);
-        let face = (w / 2. - outer - stick - 8. - shoulder_pair - 56.)
+        let face = (w / 2. - outer - stick - 8. - 110.)
             .clamp(122., 160.)
             .min(stick);
         let main_y = h - bottom - stick;
         let face_y = main_y + (stick - face) / 2.;
-        let shoulder_x = outer + stick + 4.;
-        let digital_x = shoulder_x + shoulder_pair + 4.;
+        let digital_x = outer + stick + 8.;
+        let auxiliary_x = w / 2. - 102.;
         let click_y = h - bottom - 48.;
         let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
@@ -513,19 +459,16 @@ impl Layout {
                 "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
                 "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
                 "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
-                "L1" => Rect::new(shoulder_x, main_y, 48., 48.),
-                "L2" => Rect::new(shoulder_x + 52., main_y, 48., 48.),
-                "R1" => Rect::new(w - shoulder_x - 48., main_y, 48., 48.),
-                "R2" => Rect::new(w - shoulder_x - 100., main_y, 48., 48.),
-                "SELECT" => Rect::new(w / 2. - 52., click_y, 48., 48.),
-                "START" => Rect::new(w / 2. + 4., click_y, 48., 48.),
+                "L1" => Rect::new(auxiliary_x, main_y, 48., 48.),
+                "L2" => Rect::new(auxiliary_x + 52., main_y, 48., 48.),
+                "R1" => Rect::new(w - auxiliary_x - 48., main_y, 48., 48.),
+                "R2" => Rect::new(w - auxiliary_x - 100., main_y, 48., 48.),
+                "SELECT" => Rect::new(auxiliary_x + 52., click_y, 48., 48.),
+                "START" => Rect::new(auxiliary_x + 104., click_y, 48., 48.),
                 _ => continue,
             };
         }
-        for (x, label, id) in [
-            (shoulder_x + 26., "L3", 14),
-            (w - shoulder_x - 74., "R3", 15),
-        ] {
+        for (x, label, id) in [(auxiliary_x, "L3", 14), (w - auxiliary_x - 48., "R3", 15)] {
             layout.controls.push(Control {
                 bounds: Rect::new(x, click_y, 48., 48.),
                 label,
@@ -543,17 +486,17 @@ impl Layout {
     /// Keep a side camera in the gap between the secondary digital cluster
     /// and primary stick, rather than moving a whole rail into the picture.
     /// Compare actual clear picture area before choosing this generated layout.
-    fn ps2_camera_rails(w: f32, h: f32, cutouts: &[Rect]) -> Option<Self> {
+    fn ps2_camera_rails(w: f32, h: f32, picture: Rect, cutouts: &[Rect]) -> Option<Self> {
         if w <= h * 1.35 || h < 360. {
             return None;
         }
-        let rail = (w - h * 4. / 3.) / 2.;
-        // A larger primary stick with a level shoulder bridge above it.
-        // Both sides use the same clear rail geometry around the camera.
-        if rail < 200. {
+        let rail = (w - picture.h * 4. / 3.) / 2.;
+        // Match both rails around the full picture, keeping auxiliary keys
+        // beside the stick rather than in the thumb travel corridor.
+        if rail < 184. {
             return None;
         }
-        let top = 40.; // 28-point toolbar and a real gap.
+        let top = 32.; // Compact toolbar and a real gap.
         let camera_top = cutouts
             .iter()
             .filter(|c| c.y + c.h > top && (c.x < rail || c.x + c.w > w - rail))
@@ -561,45 +504,42 @@ impl Layout {
             .fold(h, f32::min);
         let stick = 128.;
         let main_y = h - 24. - stick;
-        let face = (rail - 32.)
+        let face = (rail - 8.)
             .min(184.)
             .min(camera_top - top - 8.)
-            .min(main_y - top - 56.);
+            .min(h - top - 224.);
         if face < 122. {
             return None;
         }
-        let shoulder_y = main_y - 56.;
-        if shoulder_y < top + face + 8. {
-            return None;
-        }
+        let auxiliary_y = top + face + 8.;
         let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
-        let fx = w - 16. - face / 2.;
+        let outer = 4.;
+        let fx = w - outer - face / 2.;
         let fy = top + face / 2.;
-        let inner = 16. + stick + 8.;
-        let shoulder_x = rail - 104.;
+        let inner = rail - 48.;
         let mut layout = Self::ps2(w, h);
-        layout.dpad = Rect::new(16., top, face, face);
+        layout.dpad = Rect::new(outer, top, face, face);
         for c in &mut layout.controls {
             c.bounds = match c.label {
                 "TRI" => Rect::new(fx - cap / 2., fy - step - cap / 2., cap, cap),
                 "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
                 "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
                 "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
-                "L1" => Rect::new(shoulder_x, shoulder_y, 48., 48.),
-                "L2" => Rect::new(shoulder_x + 52., shoulder_y, 48., 48.),
-                "R1" => Rect::new(w - shoulder_x - 48., shoulder_y, 48., 48.),
-                "R2" => Rect::new(w - shoulder_x - 100., shoulder_y, 48., 48.),
-                "SELECT" => Rect::new(inner, main_y, 48., 48.),
-                "START" => Rect::new(w - inner - 48., main_y, 48., 48.),
-                "L3" => Rect::new(inner, main_y + stick - 48., 48., 48.),
-                "R3" => Rect::new(w - inner - 48., main_y + stick - 48., 48., 48.),
+                "L2" => Rect::new(inner, auxiliary_y, 48., 48.),
+                "L1" => Rect::new(inner, auxiliary_y + 52., 48., 48.),
+                "R2" => Rect::new(w - inner - 48., auxiliary_y, 48., 48.),
+                "R1" => Rect::new(w - inner - 48., auxiliary_y + 52., 48., 48.),
+                "SELECT" => Rect::new(inner, auxiliary_y + 104., 48., 48.),
+                "START" => Rect::new(w - inner - 48., auxiliary_y + 104., 48., 48.),
+                "L3" => Rect::new(inner, auxiliary_y + 156., 48., 48.),
+                "R3" => Rect::new(w - inner - 48., auxiliary_y + 156., 48., 48.),
                 _ => continue,
             };
         }
         layout.sticks = vec![
-            Rect::new(16., main_y, stick, stick),
-            Rect::new(w - 16. - stick, main_y, stick, stick),
+            Rect::new(outer, main_y, stick, stick),
+            Rect::new(w - outer - stick, main_y, stick, stick),
         ];
         layout.anchor_toolbar(w, h, 0., 0., cutouts);
         if (0..layout.element_count())
@@ -608,7 +548,7 @@ impl Layout {
             return None;
         }
         layout.avoid_cutouts(w, h, cutouts);
-        layout.place_game(w, h, false, 1., [0.5; 2]);
+        layout.place_game_in(picture, false, 1., [0.5; 2]);
         Some(layout)
     }
     pub fn action_elements(&self) -> impl Iterator<Item = usize> + '_ {
@@ -649,7 +589,7 @@ impl Layout {
             .min(((w - 2. * padding - 3. * gap) / 4.).max(1.))
             .min(h)
             .min(w);
-        let height = size.min(28.);
+        let height = size.min(24.);
         let top = if reusable_top >= height && covered_top <= 0. {
             -reusable_top + 4_f32.min((reusable_top - height) / 2.)
         } else {
@@ -660,6 +600,9 @@ impl Layout {
             // A revealed status bar can push chrome into a top digital well.
             // Move chrome around that well without moving stored game inputs.
             obstacles.extend(self.controller_elements().map(|i| self.element(i)));
+            // Transient chrome moves around the existing picture as well;
+            // revealing system bars must not narrow the game canvas.
+            obstacles.push(self.game);
         }
         let pair = |mut x: f32, left: bool| {
             let mut y = top;
@@ -1019,18 +962,23 @@ impl Preset {
         self.layout_with_cutouts(w, h, &[])
     }
     pub fn layout_with_cutouts(&self, w: f32, h: f32, cutouts: &[Rect]) -> Layout {
+        self.layout_in(w, h, cutouts, Rect::new(0., 0., w.max(1.), h.max(1.)))
+    }
+    /// Controls use their safe surface while the picture may use clear pixels
+    /// reserved only for system gestures. Saved rectangles retain that surface.
+    pub fn layout_in(&self, w: f32, h: f32, cutouts: &[Rect], picture: Rect) -> Layout {
         // Android may briefly expose a 1-pixel pbuffer before the window is
         // adopted. Saved controls must remain safe during that transition.
         let (w, h) = (w.max(1.), h.max(1.));
         let mut layout = if self.analog {
             Layout::ps2(w, h)
         } else {
-            Layout::default_with_cutouts(w, h, cutouts)
+            Layout::default_in(w, h, cutouts, picture)
         };
         if self.analog && self.elements.is_empty() && !self.allow_overlap {
-            if let Some(candidate) = Layout::ps2_camera_rails(w, h, cutouts) {
+            if let Some(candidate) = Layout::ps2_camera_rails(w, h, picture, cutouts) {
                 layout.avoid_cutouts(w, h, cutouts);
-                layout.place_game(w, h, false, 1., [0.5; 2]);
+                layout.place_game_in(picture, false, 1., [0.5; 2]);
                 if candidate.game.w > layout.game.w + 0.01
                     || ((candidate.game.w - layout.game.w).abs() <= 0.01
                         && candidate.sticks[0].w > layout.sticks[0].w)
@@ -1061,7 +1009,12 @@ impl Preset {
         }
         layout.avoid_cutouts(w, h, cutouts);
         layout.anchor_toolbar(w, h, 0., 0., cutouts);
-        layout.place_game(w, h, self.allow_overlap, self.game_scale, self.game_offset);
+        layout.place_game_in(
+            picture,
+            self.allow_overlap,
+            self.game_scale,
+            self.game_offset,
+        );
         layout
     }
     pub fn capture(&mut self, layout: &Layout, w: f32, h: f32) {
@@ -1488,7 +1441,7 @@ mod tests {
         assert_eq!(t.frame_mask(), 0);
     }
     #[test]
-    fn picture_first_inner_dock_bridges_thumb_areas_without_sacrificing_edge_width() {
+    fn inner_thumb_pairs_are_adjacent_and_auxiliary_keys_leave_the_gap_clear() {
         let density = 2.4375;
         let (w, h, top) = (2076. / density, 1914. / density, 160. / density);
         for camera_x in [0., 1940. / density] {
@@ -1526,19 +1479,22 @@ mod tests {
                     .unwrap()
                     .bounds
             };
-            for name in ["L1", "L2", "L3"] {
+            assert!((digital[0].x - layout.sticks[0].x - layout.sticks[0].w - 8.).abs() < 0.01);
+            let gap = Rect::new(
+                layout.sticks[0].x + layout.sticks[0].w,
+                layout.sticks[0].y,
+                8.,
+                layout.sticks[0].h,
+            );
+            for name in ["L1", "L2", "L3", "SELECT", "START", "R1", "R2", "R3"] {
                 let r = key(name);
-                assert!(r.x >= layout.sticks[0].x + layout.sticks[0].w);
-                assert!(r.x + r.w <= digital[0].x + 0.01);
-                if name == "L3" {
-                    assert!(r.y > digital[0].y + digital[0].h / 2.);
-                } else {
-                    assert!(r.y + r.h < digital[0].y + digital[0].h / 2.);
-                }
+                assert!(!r.overlaps(gap));
+                assert!(r.x >= digital[0].x + digital[0].w);
+                assert!(r.x + r.w <= digital[1].x);
             }
             for bar in [layout.playback, layout.speed, layout.pause, layout.mute] {
                 assert!(bar.x >= 28. && bar.x + bar.w <= w - 28.);
-                assert_eq!(bar.h, 28.);
+                assert_eq!(bar.h, 24.);
             }
         }
     }
@@ -1918,6 +1874,57 @@ mod tests {
             safe_edges([0, 40, 0, 0], [0, 0, 0, 78], [0, 136, 0, 0], false),
             [0, 136, 0, 78]
         );
+    }
+
+    #[test]
+    fn hidden_navigation_does_not_shorten_the_game_or_move_saved_controls() {
+        let density = 2.4375;
+        let (w, h) = (2342. / density, 1021. / density);
+        let picture = Rect::new(0., 0., w, 1080. / density);
+        for analog in [false, true] {
+            for x in [0., 2160. / density] {
+                let camera = Rect::new(x, 484. / density, 182. / density, 112. / density);
+                let mut preset = Preset {
+                    analog,
+                    ..Preset::default()
+                };
+                let mut layout = preset.layout_in(w, h, &[camera], picture);
+                assert!(
+                    (layout.game.h * density - 1080.).abs() < 0.02,
+                    "{analog}: {:?}",
+                    layout.game
+                );
+                assert!(layout.game.y.abs() < 0.01);
+                assert!((layout.game.x + layout.game.w / 2. - w / 2.).abs() < 0.01);
+                for i in layout.controller_elements() {
+                    let r = layout.element(i);
+                    assert!(r.y + r.h <= h + 0.01);
+                    assert!(
+                        !r.overlaps(layout.game) && !r.overlaps(camera),
+                        "{analog}: {}",
+                        layout.element_name(i)
+                    );
+                }
+                let original = layout.game;
+                let controls: Vec<_> = layout
+                    .controller_elements()
+                    .map(|i| (i, layout.element(i)))
+                    .collect();
+                preset.capture(&layout, w, h);
+                let bytes = serde_json::to_vec(&preset).unwrap();
+                layout.anchor_toolbar(w, h, 0., 32., &[camera]);
+                layout.place_game_in(picture, false, 1., [0.5; 2]);
+                assert!(layout.game.same_bounds(original));
+                for (i, r) in controls {
+                    assert!(layout.element(i).same_bounds(r));
+                }
+                let custom = preset.layout_in(w, h, &[camera], picture);
+                assert!((0..custom.element_count())
+                    .filter(|i| custom.controller_elements().any(|j| j == *i))
+                    .all(|i| custom.element(i).same_bounds(layout.element(i))));
+                assert_eq!(serde_json::to_vec(&preset).unwrap(), bytes);
+            }
+        }
     }
 
     #[test]
@@ -2502,7 +2509,7 @@ mod tests {
                 assert!(bounds.x >= 0. && bounds.y >= 0.);
                 assert!(bounds.x + bounds.w <= w && bounds.y + bounds.h <= h);
             }
-            assert!(layout.pause.w >= 40. && layout.pause.h >= 28.);
+            assert!(layout.pause.w >= 40. && layout.pause.h >= 24.);
             assert!(!layout.game.overlaps(layout.pause));
             for control in &layout.controls {
                 let x = control.bounds.x + control.bounds.w / 2.;

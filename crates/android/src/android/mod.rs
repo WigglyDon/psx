@@ -124,6 +124,7 @@ struct Player {
     density: f32,
     insets: [i32; 4],
     fullscreen_insets: Option<[i32; 4]>,
+    picture_insets: Option<[i32; 4]>,
     status_bar_top: i32,
     inset_size: [i32; 2],
     last_insets_request: Instant,
@@ -204,6 +205,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         density: 1.,
         insets: [0; 4],
         fullscreen_insets: None,
+        picture_insets: None,
         status_bar_top: 0,
         inset_size: [0; 2],
         last_insets_request: now,
@@ -674,7 +676,6 @@ impl Player {
         }
         let preset = self.controller_settings.preset(w, h);
         let cutouts = self.cutout_rects();
-        self.layout = preset.layout_with_cutouts(w, h, &cutouts);
         let matching = self.inset_size == [self.graphics.width, self.graphics.height];
         let reusable = if matching && self.top_margin_available && self.activity.audio_focus {
             self.graphics.content.y / self.density
@@ -686,16 +687,30 @@ impl Player {
         } else {
             0.
         };
+        let picture = safe_content(
+            [self.graphics.width, self.graphics.height],
+            self.inset_size,
+            self.picture_insets
+                .filter(|_| fullscreen.is_some())
+                .unwrap_or(fullscreen.unwrap_or(self.insets)),
+        );
+        let picture = Rect::new(
+            (picture.x - content.x) / self.density,
+            (picture.y - content.y) / self.density - reusable,
+            picture.w / self.density,
+            picture.h / self.density + reusable,
+        );
+        self.layout = preset.layout_in(w, h, &cutouts, picture);
         self.layout
             .anchor_toolbar(w, h, reusable, covered, &cutouts);
         self.layout.place_game_in(
-            Rect::new(0., -reusable, w, h + reusable),
+            picture,
             preset.allow_overlap,
             preset.game_scale,
             preset.game_offset,
         );
         if let Some(editor) = &mut self.editor {
-            editor.set_viewport(reusable, covered);
+            editor.set_picture_viewport(reusable, covered, picture);
         }
         if let Some(menu) = &mut self.menu {
             menu.cutouts = cutouts;
@@ -1085,6 +1100,7 @@ impl Player {
                 density,
                 edges,
                 fullscreen_edges,
+                picture_edges,
                 status_bar_top,
                 cutouts,
                 top_margin_available,
@@ -1102,6 +1118,7 @@ impl Player {
                 }
                 if edges != self.insets
                     || fullscreen_edges != self.fullscreen_insets
+                    || picture_edges != self.picture_insets
                     || status_bar_top != self.status_bar_top
                     || size != self.inset_size
                     || density != self.density
@@ -1110,6 +1127,7 @@ impl Player {
                 {
                     self.insets = edges;
                     self.fullscreen_insets = fullscreen_edges;
+                    self.picture_insets = picture_edges;
                     self.status_bar_top = status_bar_top;
                     self.inset_size = size;
                     if (0.5..=6.).contains(&density) {

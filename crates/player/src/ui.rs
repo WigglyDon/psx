@@ -290,6 +290,7 @@ pub struct Editor {
     tools_bottom: bool,
     reusable_top: f32,
     covered_top: f32,
+    picture_bounds: Rect,
 }
 
 #[derive(Clone, Copy)]
@@ -388,20 +389,33 @@ impl Editor {
             tools_bottom: false,
             reusable_top: 0.,
             covered_top: 0.,
+            picture_bounds: Rect::new(0., 0., width, height),
         }
     }
     /// Editing uses the actual play surface, including the same bar/camera
     /// clearance. No scaled preview or extra controller margin is introduced.
     pub fn set_viewport(&mut self, reusable_top: f32, covered_top: f32) {
-        if self.reusable_top != reusable_top || self.covered_top != covered_top {
+        self.set_picture_viewport(
+            reusable_top,
+            covered_top,
+            Rect::new(0., -reusable_top, self.width, self.height + reusable_top),
+        );
+    }
+    pub fn set_picture_viewport(&mut self, reusable_top: f32, covered_top: f32, picture: Rect) {
+        if self.reusable_top != reusable_top
+            || self.covered_top != covered_top
+            || !self.picture_bounds.same_bounds(picture)
+        {
             self.cancel_touch();
             self.reusable_top = reusable_top;
             self.covered_top = covered_top;
+            self.picture_bounds = picture;
             self.layout = self.layout_for(&self.preset);
         }
     }
     fn layout_for(&self, preset: &Preset) -> Layout {
-        let mut layout = preset.layout_with_cutouts(self.width, self.height, &self.cutouts);
+        let mut layout =
+            preset.layout_in(self.width, self.height, &self.cutouts, self.picture_bounds);
         layout.anchor_toolbar(
             self.width,
             self.height,
@@ -410,12 +424,7 @@ impl Editor {
             &self.cutouts,
         );
         layout.place_game_in(
-            Rect::new(
-                0.,
-                -self.reusable_top,
-                self.width,
-                self.height + self.reusable_top,
-            ),
+            self.picture_bounds,
             preset.allow_overlap,
             preset.game_scale,
             preset.game_offset,
@@ -1524,6 +1533,33 @@ mod editor_tests {
             assert!(editor.layout.playback.y >= 32.);
             assert!(editor.preset == draft);
             editor.set_viewport(66., 0.);
+            assert!(editor.layout.game.same_bounds(play.game));
+        }
+    }
+
+    #[test]
+    fn editor_uses_the_same_picture_beyond_the_gesture_safe_control_surface() {
+        let density = 2.4375;
+        let (w, h) = (2342. / density, 1021. / density);
+        let picture = Rect::new(0., 0., w, 1080. / density);
+        let camera = Rect::new(0., 484. / density, 182. / density, 112. / density);
+        for analog in [false, true] {
+            let preset = Preset {
+                analog,
+                ..Preset::default()
+            };
+            let play = preset.layout_in(w, h, &[camera], picture);
+            let mut editor = Editor::with_cutouts(preset, w, h, vec![camera]);
+            editor.set_picture_viewport(0., 0., picture);
+            assert!(editor.layout.game.same_bounds(play.game));
+            assert!(editor.layout.game.h > editor.height);
+            assert!((0..play.element_count())
+                .all(|i| editor.layout.element(i).same_bounds(play.element(i))));
+            let draft = editor.preset.clone();
+            editor.set_picture_viewport(0., 32., picture);
+            assert!(editor.layout.game.same_bounds(play.game));
+            assert!(editor.preset == draft);
+            editor.set_picture_viewport(0., 0., picture);
             assert!(editor.layout.game.same_bounds(play.game));
         }
     }

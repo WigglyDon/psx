@@ -35,6 +35,7 @@ pub enum Event {
         density: f32,
         edges: [i32; 4],
         fullscreen_edges: Option<[i32; 4]>,
+        picture_edges: Option<[i32; 4]>,
         status_bar_top: i32,
         cutouts: Vec<[i32; 4]>,
         top_margin_available: bool,
@@ -500,6 +501,7 @@ impl Platform {
             let mut decoration = [0; 4];
             let mut navigation_edges = [0; 4];
             let mut fullscreen_decoration = [0; 4];
+            let mut picture_decoration = [0; 4];
             let mut camera_edges = [0; 4];
             let mut cutouts = Vec::new();
             let size = [
@@ -558,10 +560,22 @@ impl Platform {
                         &[JValue::Int(bars & !status)],
                     )?
                     .l()?;
+                let caption = env
+                    .call_static_method("android/view/WindowInsets$Type", "captionBar", "()I", &[])?
+                    .i()?;
+                let picture = env
+                    .call_method(
+                        &insets,
+                        "getInsets",
+                        "(I)Landroid/graphics/Insets;",
+                        &[JValue::Int(caption)],
+                    )?
+                    .l()?;
                 for (i, field) in ["left", "top", "right", "bottom"].iter().enumerate() {
                     decoration[i] = env.get_field(&occupied, field, "I")?.i()?;
                     navigation_edges[i] = env.get_field(&nav, field, "I")?.i()?;
                     fullscreen_decoration[i] = env.get_field(&without_status, field, "I")?.i()?;
+                    picture_decoration[i] = env.get_field(&picture, field, "I")?.i()?;
                 }
             }
             let cutout = env
@@ -620,6 +634,16 @@ impl Platform {
                     local_side_camera,
                 )
             });
+            // Navigation gestures still own their input strip. They do not
+            // own the game canvas; transient bars overlay that stable canvas.
+            let picture_edges = (sdk >= 31).then(|| {
+                psx_player::input::safe_edges(
+                    picture_decoration,
+                    [0; 4],
+                    camera_edges,
+                    local_side_camera,
+                )
+            });
             let resources = env
                 .call_method(
                     &view,
@@ -642,6 +666,7 @@ impl Platform {
                 density,
                 edges,
                 fullscreen_edges,
+                picture_edges,
                 status_bar_top,
                 cutouts,
                 top_margin_available,
