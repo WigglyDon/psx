@@ -353,3 +353,70 @@ The private host inventory has eleven PS1/PS2 titles. GTA: San Andreas is the
 remaining consolidated title absent from the last Fold library; transfer/add
 is pending a fresh safe device window. Other-console/PC downloads are not
 presented as PS1/PS2 games. Games and firmware remain private.
+
+## October 20 graphics candidate on the Fold
+
+The owner granted a fresh window at 18:49 UTC. A complete readable current-data
+backup preceded successful in-place installation of `867333a7449c`, retaining
+the package and signing identity. GTA: San Andreas transferred with the full
+image hash verified on the phone. The owner selected it; a temporary black
+picture subsequently gave way to readable intro credits. This establishes
+startup rendering, not controlled gameplay or ordinary saving.
+
+The own-process log reports PowerVR EXT/PLS framebuffer fetch active, with both
+ARM and EXT advertised and no shader compilation error in that startup capture.
+Short native startup samples report 59.90–59.95 VPS and 99.9–100% speed; audio
+underruns also increased. These are distinct from sustained gameplay and sound
+acceptance. GTA's remaining warning says Basic blending is below its database's
+recommended Medium level, which increases system requirements. No global
+quality setting was raised and this advisory was not suppressed.
+
+The new inner-display arrangement rendered with larger sticks, adjacent digital
+clusters, central shoulders and lower central system/click keys. Red Dead's
+automatic restore logged and visibly returned to its known tutorial scene.
+Its image reached both sides of the host frame after removing the nested fit.
+That frame was still only 1967.5 pixels wide in the 2076-pixel display: the owner
+correctly distinguishes filling the frame from reaching the display edges.
+The next default must spend less height on chrome and controls, with shoulder
+pairs above the gap between each stick and digital cluster and click keys below.
+Physical L3 gestures, current fold transitions and ordinary PS2 saving remain
+unqualified.
+
+After reconnection, both games closed gracefully to the 11-game/16-disc library.
+A final complete readable backup preserves all eight PS1 cards, four existing
+PS2 cards, both profiles and all ten prior library records unchanged. GTA is the
+only new entry. Only psx was force-stopped afterward. The phone repeatedly woke
+during locking; the owner confirmed waking it to inspect the game. USB vanished
+before the final sleep action. The lease ended at 19:13:23 UTC before expiry,
+with final locking/screen-off explicitly reported unverified. No unrelated app,
+system-package, security, radio, USB configuration or server setting changed.
+
+## Picture-first default follow-up
+
+The next Rust default budgets the control band after a full-width 4:3 picture.
+On the measured 2076×2152 inner portrait display, with its actual 160-pixel top
+and 78-pixel bottom exclusions, the host fixture now reaches 2076 pixels wide
+at the top of the clear content, compared with the installed 1967.5 pixels.
+This adds about 11% picture area. Sticks remain about 130 points, secondary
+caps at least 48 points and separate; all auxiliary keys retain 48-point targets.
+Shoulder pairs bridge above each stick/digital gap, stick-click below, with
+Start/Select in the lower middle. The toolbar is 28 points high, with 40-point
+width and the existing corner clearance; non-normal time keeps 14-point text.
+
+Folded camera rails retain the full-height picture and 128-point sticks,
+with level shoulders between the upper digital well and lower stick. The
+system/click keys stay on the inner side. Other surfaces use the largest clear
+fit when the full-width picture plus minimum controls cannot fit. There is no
+cropping, stretching, automatic overlap or change to saved custom rectangles.
+PS1 thumb defaults and the native patch/state format remain unchanged.
+
+All 101 active workspace tests and the deliberately ignored subprocess fixture
+pass. Geometry tests cover actual picture edges, camera clearance, mirrored
+keys, separate targets, status transitions and saved layouts. The independent
+maximum-picture fixture now checks horizontal containment too: its old wider
+candidate could leave the display once the real picture reached full width.
+Writer fixtures use a per-run timestamp as well as PID to avoid sharing lock
+directories across concurrent PID namespaces. Production ownership is unchanged.
+Actual shared GLES previews, coverage and donor-sampler isolation pass. These
+are host results; the prepared layout still requires installation and a physical
+fold/rotation/gesture check under a fresh window.

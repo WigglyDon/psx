@@ -448,7 +448,7 @@ impl Graphics {
             );
             let mut time_icon = layout.speed;
             if visuals.playback_speed != psx_player::settings::Speed::NORMAL {
-                time_icon.h = time_icon.h.min(16.);
+                time_icon.h = (time_icon.h - 16.).clamp(1., 16.);
             }
             canvas.button(
                 time_icon,

@@ -198,7 +198,14 @@ mod tests {
     }
     #[test]
     fn writer_lock_is_released_after_worker_death() {
-        let root = std::env::temp_dir().join(format!("psx-session-death-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "psx-session-death-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         fs::create_dir_all(&root).unwrap();
         let _ = fs::remove_file(root.join("ready"));
         let mut child = ChildGuard(
@@ -275,7 +282,14 @@ mod tests {
     }
     #[test]
     fn saved_sessions_outlive_runtime_assignment_and_competing_writers_are_refused() {
-        let root = std::env::temp_dir().join(format!("psx-session-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "psx-session-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let a = SavedSession {
             game: GameId::parse("abc123").unwrap(),
         };
