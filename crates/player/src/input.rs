@@ -2,7 +2,7 @@ use crate::saves::atomic_write;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, io, path::Path};
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,
@@ -769,11 +769,34 @@ impl Layout {
     }
 }
 
-/// Largest clear 4:3 picture, preferring its highest feasible placement.
-/// Examine screen/obstacle anchors and stop growth at the first obstruction.
-/// Center horizontally only when doing so retains that maximum size and top.
+/// Largest horizontally centered clear 4:3 picture, at its highest placement.
+/// Grow about the display center, stopping beside or above each obstruction.
 /// Only used on layout changes, never during emulation frames.
 fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
+    let center = w / 2.;
+    let mut centered = Rect::default();
+    for y in std::iter::once(0.)
+        .chain(obstacles.iter().map(|r| r.y + r.h))
+        .filter(|y| *y >= 0. && *y <= h)
+    {
+        let mut width = w.min((h - y) * 4. / 3.).max(0.);
+        for r in obstacles {
+            if r.y + r.h <= y + 0.01 {
+                continue;
+            }
+            let beside = (center - r.x - r.w).max(r.x - center).max(0.) * 2.;
+            let above = (r.y - y).max(0.) * 4. / 3.;
+            width = width.min(beside.max(above));
+        }
+        if width > centered.w || (width == centered.w && y < centered.y) {
+            centered = Rect::new((w - width) / 2., y, width, width * 3. / 4.);
+        }
+    }
+    if centered.w > 0. {
+        return centered;
+    }
+    // Explicit custom controls can occupy the whole center column. Retain a
+    // usable clear side region in that case rather than an empty game view.
     let mut best = Rect::default();
     for x in std::iter::once(0.)
         .chain(obstacles.iter().map(|r| r.x + r.w))
@@ -796,25 +819,10 @@ fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
             }
         }
     }
-    let mut centered = best;
-    centered.x = (w - best.w) / 2.;
-    if !obstacles.iter().any(|r| centered.overlaps(*r)) {
-        best = centered;
-    } else {
-        // A local camera can prevent centering. Use an available screen edge
-        // rather than leave a gratuitous strip on both sides of the picture.
-        for x in [0., w - best.w] {
-            let edge = Rect::new(x, best.y, best.w, best.h);
-            if !obstacles.iter().any(|r| edge.overlaps(*r)) {
-                best = edge;
-                break;
-            }
-        }
-    }
     best
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Preset {
     #[serde(default, skip_serializing_if = "is_false")]
     pub analog: bool,
@@ -1605,7 +1613,7 @@ mod tests {
     }
 
     #[test]
-    fn measured_inner_camera_keeps_the_largest_clear_picture_high_and_inputs_unchanged() {
+    fn measured_inner_camera_keeps_the_largest_centered_picture_high_and_inputs_unchanged() {
         let density = 2.4375;
         let (w, h, top) = (
             2076. / density,
@@ -1629,6 +1637,7 @@ mod tests {
                 layout.anchor_toolbar(w, h, top, 0., &[camera]);
                 layout.place_game_in(Rect::new(0., -top, w, h + top), false, 1., [0.5; 2]);
                 let picture = layout.game;
+                assert!((picture.x + picture.w / 2. - w / 2.).abs() < 0.01);
                 assert!((picture.w / picture.h - 4. / 3.).abs() < 0.001);
                 assert!(picture.w >= normal.w, "{analog}: {picture:?}");
                 assert!(picture.y >= -top && picture.y + picture.h <= h);
@@ -1638,28 +1647,23 @@ mod tests {
                 );
                 assert!(!picture.overlaps(camera));
                 assert!((0..layout.element_count()).all(|i| !picture.overlaps(layout.element(i))));
-                assert!(
-                    picture.x < 0.01 || picture.x + picture.w > w - 0.01,
-                    "{analog} {camera_x}: {picture:?}"
-                );
-                // At the actual camera, maximizing the picture reaches a
-                // screen edge; it must not sacrifice size to force centering.
+                // An independent pixel-size search must not find a larger
+                // centered picture at any vertical position in the viewport.
                 let wider = picture.w + 1.;
-                for x in [0., w - wider] {
-                    for y in (-160..2152).map(|pixel| pixel as f32 / density) {
-                        let candidate = Rect::new(x, y, wider, wider * 3. / 4.);
-                        if candidate.y >= -top && candidate.y + candidate.h <= h {
-                            assert!(
-                                candidate.overlaps(camera)
-                                    || (0..layout.element_count())
-                                        .any(|i| candidate.overlaps(layout.element(i)))
-                            );
-                        }
+                for y in (-160..2152).map(|pixel| pixel as f32 / density) {
+                    let candidate = Rect::new((w - wider) / 2., y, wider, wider * 3. / 4.);
+                    if candidate.y >= -top && candidate.y + candidate.h <= h {
+                        assert!(
+                            candidate.overlaps(camera)
+                                || (0..layout.element_count())
+                                    .any(|i| candidate.overlaps(layout.element(i)))
+                        );
                     }
                 }
                 layout.anchor_toolbar(w, h, 0., 32., &[camera]);
                 layout.place_game(w, h, false, 1., [0.5; 2]);
                 assert!(layout.game.y >= 0.);
+                assert!((layout.game.x + layout.game.w / 2. - w / 2.).abs() < 0.01);
                 layout.anchor_toolbar(w, h, top, 0., &[camera]);
                 layout.place_game_in(Rect::new(0., -top, w, h + top), false, 1., [0.5; 2]);
                 assert!(picture.same_bounds(layout.game));
@@ -1669,6 +1673,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn clear_picture_stays_high_and_custom_center_obstruction_keeps_a_usable_view() {
+        let clear = clear_picture(1200., 1000., &[]);
+        assert!(clear.same_bounds(Rect::new(0., 0., 1200., 900.)));
+        let center_bar = Rect::new(380., 0., 40., 600.);
+        let side = clear_picture(800., 600., &[center_bar]);
+        assert!(side.w >= 380. && side.y == 0.);
+        assert!(!side.overlaps(center_bar));
     }
 
     #[test]

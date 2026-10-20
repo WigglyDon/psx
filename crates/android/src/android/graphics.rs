@@ -520,7 +520,8 @@ impl Graphics {
             canvas.offset = origin;
         }
         if let Some(editor) = editor {
-            canvas.editor(editor);
+            canvas.opacity = 1.;
+            canvas.editor(editor, frame.is_some());
         }
         gl.enable(glow::BLEND);
         // The core legitimately uses subtractive PS1 blending. Frontend UI
@@ -677,15 +678,36 @@ impl Canvas<'_> {
             );
         }
     }
-    fn editor(&mut self, editor: &Editor) {
+    fn editor(&mut self, editor: &Editor, has_frame: bool) {
         let preview = editor.preview();
-        self.rounded(preview, [0.04, 0.06, 0.085, 0.9]);
         let game = editor.map(editor.layout.game);
-        self.rounded(game, [0.1, 0.20, 0.24, 1.]);
+        // The game has already been presented at this exact draft rectangle.
+        // Keep it visible while editing; only an absent frame gets a placeholder.
+        if !has_frame {
+            self.rounded(game, [0.1, 0.20, 0.24, 1.]);
+        }
+        if editor.grid {
+            for step in 0..=((preview.w / 8.) as usize).min(512) {
+                let x = preview.w / 2. + (step as f32 - (preview.w / 16.).floor()) * 8.;
+                if (0. ..=preview.w).contains(&x) {
+                    self.line((x, 0.), (x, preview.h), 0.5, [0.65, 0.78, 0.86, 0.10]);
+                }
+            }
+            for step in 0..=((preview.h / 8.) as usize).min(512) {
+                let y = step as f32 * 8.;
+                self.line((0., y), (preview.w, y), 0.5, [0.65, 0.78, 0.86, 0.10]);
+            }
+            self.line(
+                (preview.w / 2., 0.),
+                (preview.w / 2., preview.h),
+                1.,
+                [0.39, 0.81, 0.76, 0.45],
+            );
+        }
         for cutout in editor.cutouts() {
             self.rounded(editor.map(*cutout), [0.015, 0.02, 0.025, 1.]);
         }
-        if game.w > 100. {
+        if !has_frame && game.w > 100. {
             self.text(
                 game.x + 8.,
                 game.y + 8.,
@@ -694,9 +716,7 @@ impl Canvas<'_> {
                 [0.7, 0.89, 0.91, 1.],
             );
         }
-        // Render the miniature in the layout's own coordinate system. Mapping
-        // only button bounds leaves fixed-size symbols and lettering enormous
-        // in the preview; scaling all drawing also preserves edge coverage.
+        // Use the very same control drawing and coordinates as play.
         let scale = (preview.w / editor.width.max(1.)).max(0.001);
         let saved = (self.offset, self.screen, self.pixel);
         self.offset = [
@@ -757,40 +777,90 @@ impl Canvas<'_> {
         ] {
             self.line(a, b, 2., [0.22, 0.95, 0.73, 1.]);
         }
-        for (x, y) in editor.handles() {
-            self.disc(x, y, 8., [0.22, 0.95, 0.73, 1.]);
-            self.disc(x, y, 3.5, [0.04, 0.13, 0.15, 1.]);
+        if editor.resizing {
+            for (x, y) in editor.handles() {
+                self.disc(x, y, 24., [0.03, 0.10, 0.13, 0.96]);
+                self.ring(x, y, 22., 2., [0.22, 0.95, 0.73, 1.]);
+                self.line(
+                    (x - 7., y + 7.),
+                    (x + 7., y - 7.),
+                    2.,
+                    [0.22, 0.95, 0.73, 1.],
+                );
+            }
         }
-        self.text(16., 16., "Layout", 28., [0.94, 0.97, 1., 1.]);
+        if editor.dragging() {
+            return;
+        }
+        let tray = editor.tools();
+        self.rounded(tray, [0.035, 0.045, 0.06, 0.97]);
         self.text(
+            tray.x + 10.,
+            tray.y + 4.,
+            &elide(self.font, editor.selected_name(), tray.w - 125., 18.),
+            18.,
+            [0.86, 0.94, 0.96, 1.],
+        );
+        let bounds = editor.selected_bounds();
+        let size = format!("{:.0} × {:.0}", bounds.w, bounds.h);
+        self.text(
+            tray.x + tray.w - self.font.measure(&size, 16.) - 10.,
+            tray.y + 5.,
+            &size,
             16.,
-            56.,
-            &elide(self.font, editor.selected_name(), self.w - 32., 23.),
-            23.,
             [0.64, 0.76, 0.83, 1.],
         );
         self.text(
-            16.,
-            88.,
-            "Drag to align · pull a corner to resize",
-            17.,
+            tray.x + 10.,
+            tray.y + 26.,
+            if editor.resizing {
+                "Pull a grip · Dock moves these tools"
+            } else {
+                "Drag a control · Mirror matches its partner"
+            },
+            12.,
             [0.64, 0.76, 0.83, 1.],
         );
+        if let Some(slider) = editor.spacing_slider() {
+            self.text(
+                slider.x,
+                slider.y,
+                "BUTTON SPACING",
+                12.,
+                [0.64, 0.76, 0.83, 1.],
+            );
+            let y = slider.y + 30.;
+            let x = slider.x + slider.w * editor.spacing_value();
+            self.line(
+                (slider.x, y),
+                (slider.x + slider.w, y),
+                4.,
+                [0.18, 0.23, 0.28, 1.],
+            );
+            self.line((slider.x, y), (x, y), 4., [0.22, 0.95, 0.73, 1.]);
+            self.disc(x, y, 10., [0.84, 0.96, 0.94, 1.]);
+        }
         for (rect, button) in editor.buttons() {
-            let label = button.label();
+            let label = if button == psx_player::ui::EditorButton::Resize && editor.resizing {
+                "Move"
+            } else {
+                button.label()
+            };
             self.rounded(
                 rect,
                 if label == "Done" {
                     [0.11, 0.45, 0.40, 1.]
+                } else if editor.active_button(button) {
+                    [0.12, 0.28, 0.31, 1.]
                 } else {
                     [0.09, 0.13, 0.18, 1.]
                 },
             );
             self.text(
-                rect.x + (rect.w - self.font.measure(label, 23.)) / 2.,
+                rect.x + (rect.w - self.font.measure(label, 17.)) / 2.,
                 rect.y + 14.,
                 label,
-                23.,
+                17.,
                 [0.9, 0.95, 1., 1.],
             );
         }

@@ -283,6 +283,13 @@ pub struct Editor {
     original_actions: Vec<(usize, Rect)>,
     cutouts: Vec<Rect>,
     pointer: Option<EditorPointer>,
+    undo: Vec<Preset>,
+    gesture_start: Option<Preset>,
+    pub resizing: bool,
+    pub grid: bool,
+    tools_bottom: bool,
+    reusable_top: f32,
+    covered_top: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -304,6 +311,10 @@ enum EditorPointer {
         id: i32,
         button: EditorButton,
     },
+    Spacing {
+        id: i32,
+        center: [f32; 2],
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -314,23 +325,36 @@ pub enum EditorButton {
     Reset,
     Cancel,
     Done,
+    Resize,
+    Undo,
+    Grid,
+    Mirror,
+    Dock,
 }
 impl EditorButton {
     pub fn label(self) -> &'static str {
         match self {
             Self::Next => "Next",
             Self::Group => "Group",
-            Self::Individual => "Individual",
+            Self::Individual => "Single",
             Self::Reset => "Reset",
             Self::Cancel => "Cancel",
             Self::Done => "Done",
+            Self::Resize => "Resize",
+            Self::Undo => "Undo",
+            Self::Grid => "Grid",
+            Self::Mirror => "Mirror",
+            Self::Dock => "Dock",
         }
     }
 }
 impl EditorPointer {
     fn id(self) -> i32 {
         match self {
-            Self::Move { id, .. } | Self::Resize { id, .. } | Self::Button { id, .. } => id,
+            Self::Move { id, .. }
+            | Self::Resize { id, .. }
+            | Self::Button { id, .. }
+            | Self::Spacing { id, .. } => id,
         }
     }
 }
@@ -357,11 +381,49 @@ impl Editor {
             original_actions: Vec::new(),
             cutouts,
             pointer: None,
+            undo: Vec::new(),
+            gesture_start: None,
+            resizing: false,
+            grid: true,
+            tools_bottom: false,
+            reusable_top: 0.,
+            covered_top: 0.,
         }
     }
+    /// Editing uses the actual play surface, including the same bar/camera
+    /// clearance. No scaled preview or extra controller margin is introduced.
+    pub fn set_viewport(&mut self, reusable_top: f32, covered_top: f32) {
+        if self.reusable_top != reusable_top || self.covered_top != covered_top {
+            self.cancel_touch();
+            self.reusable_top = reusable_top;
+            self.covered_top = covered_top;
+            self.layout = self.layout_for(&self.preset);
+        }
+    }
+    fn layout_for(&self, preset: &Preset) -> Layout {
+        let mut layout = preset.layout_with_cutouts(self.width, self.height, &self.cutouts);
+        layout.anchor_toolbar(
+            self.width,
+            self.height,
+            self.reusable_top,
+            self.covered_top,
+            &self.cutouts,
+        );
+        layout.place_game_in(
+            Rect::new(
+                0.,
+                -self.reusable_top,
+                self.width,
+                self.height + self.reusable_top,
+            ),
+            preset.allow_overlap,
+            preset.game_scale,
+            preset.game_offset,
+        );
+        layout
+    }
     pub fn preview(&self) -> Rect {
-        Rect::new(24., 124., self.width - 48., (self.height - 276.).max(24.))
-            .fit(self.width / self.height)
+        Rect::new(0., 0., self.width, self.height)
     }
     pub fn map(&self, rect: Rect) -> Rect {
         let preview = self.preview();
@@ -374,38 +436,232 @@ impl Editor {
         )
     }
     pub fn buttons(&self) -> Vec<(Rect, EditorButton)> {
-        let bottom = (self.width - 40.) / 2.;
-        let mut buttons = vec![
-            (
-                Rect::new(self.width - 96., 16., 80., 48.),
-                EditorButton::Next,
-            ),
-            (
-                Rect::new(16., self.height - 64., bottom, 52.),
-                EditorButton::Cancel,
-            ),
-            (
-                Rect::new(24. + bottom, self.height - 64., bottom, 52.),
-                EditorButton::Done,
-            ),
-        ];
-        if self.action_group_selected() || self.action_selected(self.selected) {
-            buttons.push((
-                Rect::new(self.width - 228., 16., 124., 48.),
+        if self.dragging() {
+            return Vec::new();
+        }
+        let tray = self.tools();
+        let cell = (tray.w - 12.) / 5.;
+        let spacing_row = if self.action_group_selected() {
+            50.
+        } else {
+            0.
+        };
+        let actions = [
+            Some(EditorButton::Next),
+            Some(EditorButton::Resize),
+            (self.action_group_selected() || self.action_selected(self.selected)).then_some(
                 if self.action_group_selected() {
                     EditorButton::Individual
                 } else {
                     EditorButton::Group
                 },
-            ));
+            ),
+            self.mirror_target().map(|_| EditorButton::Mirror),
+            Some(EditorButton::Dock),
+            (!self.undo.is_empty()).then_some(EditorButton::Undo),
+            (!self.selected_is_default()).then_some(EditorButton::Reset),
+            Some(EditorButton::Grid),
+            Some(EditorButton::Cancel),
+            Some(EditorButton::Done),
+        ];
+        actions
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, b)| {
+                b.map(|b| {
+                    (
+                        Rect::new(
+                            tray.x + 6. + (i % 5) as f32 * cell,
+                            tray.y + 44. + spacing_row + (i / 5) as f32 * 50.,
+                            cell - 2.,
+                            48.,
+                        ),
+                        b,
+                    )
+                })
+            })
+            .collect()
+    }
+    pub fn tools(&self) -> Rect {
+        let width = (self.width - 16.).min(520.);
+        let height = if self.action_group_selected() {
+            198.
+        } else {
+            148.
+        };
+        Rect::new(
+            (self.width - width) / 2.,
+            if self.tools_bottom {
+                (self.height - height - 6.).max(0.)
+            } else {
+                self.covered_top.max(8.)
+            },
+            width,
+            height,
+        )
+    }
+    pub fn dragging(&self) -> bool {
+        matches!(
+            self.pointer,
+            Some(EditorPointer::Move { .. } | EditorPointer::Resize { .. })
+        )
+    }
+    pub fn spacing_slider(&self) -> Option<Rect> {
+        self.action_group_selected().then(|| {
+            let tray = self.tools();
+            Rect::new(tray.x + 16., tray.y + 44., tray.w - 32., 48.)
+        })
+    }
+    pub fn spacing_value(&self) -> f32 {
+        let r = self.layout.action_bounds();
+        let diameter = self
+            .layout
+            .action_elements()
+            .map(|i| {
+                let b = self.layout.element(i);
+                b.w.max(b.h)
+            })
+            .fold(1_f32, f32::max);
+        let average = self
+            .layout
+            .action_elements()
+            .map(|i| {
+                let b = self.layout.element(i);
+                (b.x + b.w / 2. - r.x - r.w / 2.).hypot(b.y + b.h / 2. - r.y - r.h / 2.)
+            })
+            .sum::<f32>()
+            / 4.;
+        ((average / diameter - std::f32::consts::FRAC_1_SQRT_2) / 0.8).clamp(0., 1.)
+    }
+    fn spacing_motion(&mut self, x: f32) {
+        let Some(slider) = self.spacing_slider() else {
+            return;
+        };
+        let value = ((x - slider.x) / slider.w).clamp(0., 1.);
+        let Some(EditorPointer::Spacing { center, .. }) = self.pointer else {
+            return;
+        };
+        let diameter = self
+            .layout
+            .action_elements()
+            .map(|i| {
+                let b = self.layout.element(i);
+                b.w.max(b.h)
+            })
+            .fold(1_f32, f32::max);
+        let step = (diameter * (std::f32::consts::FRAC_1_SQRT_2 + 0.8 * value))
+            .min(((self.width.min(self.height) - diameter) / 2.).max(0.));
+        let extent = step + diameter / 2.;
+        let cx = center[0].clamp(extent, (self.width - extent).max(extent));
+        let cy = center[1].clamp(extent, (self.height - extent).max(extent));
+        if self
+            .cutouts
+            .iter()
+            .any(|c| Rect::new(cx - extent, cy - extent, extent * 2., extent * 2.).overlaps(*c))
+        {
+            return;
         }
-        if !self.selected_is_default() {
-            buttons.push((
-                Rect::new(16., self.height - 128., self.width - 32., 48.),
-                EditorButton::Reset,
-            ));
+        let members: Vec<_> = self.layout.action_elements().collect();
+        for i in members {
+            let c = self.layout.controls[i - 1];
+            let (dx, dy) = match c.label {
+                "TRI" => (0., -step),
+                "O" => (step, 0.),
+                "X" => (0., step),
+                "SQ" => (-step, 0.),
+                _ => continue,
+            };
+            self.layout.set_element(
+                i,
+                Rect::new(
+                    cx + dx - c.bounds.w / 2.,
+                    cy + dy - c.bounds.h / 2.,
+                    c.bounds.w,
+                    c.bounds.h,
+                ),
+            );
         }
-        buttons
+        self.preset.capture(&self.layout, self.width, self.height);
+        self.layout = self.layout_for(&self.preset);
+    }
+    pub fn active_button(&self, button: EditorButton) -> bool {
+        (button == EditorButton::Resize && self.resizing)
+            || (button == EditorButton::Grid && self.grid)
+    }
+    fn finish_gesture(&mut self) {
+        if let Some(before) = self.gesture_start.take() {
+            self.remember(before);
+        }
+    }
+    fn remember(&mut self, before: Preset) {
+        if before != self.preset {
+            if self.undo.len() == 32 {
+                self.undo.remove(0);
+            }
+            self.undo.push(before);
+        }
+    }
+    fn mirror_target(&self) -> Option<usize> {
+        if self.selected == 0 {
+            return Some(self.layout.element_count() + 1);
+        }
+        if self.action_group_selected() {
+            return Some(0);
+        }
+        let opposite = match self.selected_name() {
+            "Left stick" => "Right stick",
+            "Right stick" => "Left stick",
+            "L1" => "R1",
+            "R1" => "L1",
+            "L2" => "R2",
+            "R2" => "L2",
+            "L3" => "R3",
+            "R3" => "L3",
+            "Select" => "Start",
+            "Start" => "Select",
+            _ => return None,
+        };
+        self.layout
+            .controller_elements()
+            .find(|i| self.layout.element_name(*i) == opposite)
+    }
+    fn mirror(&mut self) {
+        let Some(target) = self.mirror_target() else {
+            return;
+        };
+        let selected = self.selected_bounds();
+        let reflected = Rect::new(
+            self.width - selected.x - selected.w,
+            selected.y,
+            selected.w,
+            selected.h,
+        );
+        if self.cutouts.iter().any(|c| reflected.overlaps(*c)) {
+            return;
+        }
+        if target == self.layout.element_count() + 1 {
+            let original = self.layout.action_bounds();
+            let members: Vec<_> = self
+                .layout
+                .action_elements()
+                .map(|i| (i, self.layout.element(i)))
+                .collect();
+            for (i, member) in members {
+                self.layout.set_element(
+                    i,
+                    Rect::new(
+                        reflected.x + (member.x - original.x) * reflected.w / original.w,
+                        reflected.y + (member.y - original.y) * reflected.h / original.h,
+                        member.w * reflected.w / original.w,
+                        member.h * reflected.h / original.h,
+                    ),
+                );
+            }
+        } else {
+            self.layout.set_element(target, reflected);
+        }
+        self.preset.capture(&self.layout, self.width, self.height);
+        self.layout = self.layout_for(&self.preset);
     }
     pub fn selected_bounds(&self) -> Rect {
         if self.action_group_selected() {
@@ -430,18 +686,15 @@ impl Editor {
             let mut reset = self.preset.clone();
             reset.game_scale = 1.;
             reset.game_offset = [0.5, 0.5];
-            reset
-                .layout_with_cutouts(self.width, self.height, &self.cutouts)
-                .game
+            self.layout_for(&reset).game
         };
         self.selected_bounds().same_bounds(expected)
     }
     fn defaults(&self) -> Layout {
-        Preset {
+        self.layout_for(&Preset {
             analog: self.preset.analog,
             ..Preset::default()
-        }
-        .layout_with_cutouts(self.width, self.height, &self.cutouts)
+        })
     }
     fn action_selected(&self, index: usize) -> bool {
         self.layout.action_elements().any(|i| i == index)
@@ -453,6 +706,10 @@ impl Editor {
         self.selected == self.layout.element_count()
     }
     fn set_selected_bounds(&mut self, original: Rect, rect: Rect) {
+        // Stop the selected object at a camera edge. Passing an overlapping
+        // individual face button into the play-layout normalizer would move
+        // the entire diamond, including controls the user did not select.
+        let rect = self.camera_limited(original, rect);
         if self.action_group_selected() {
             for &(i, member) in &self.original_actions {
                 self.layout.set_element(
@@ -470,21 +727,53 @@ impl Editor {
         }
         self.preset.capture(&self.layout, self.width, self.height);
     }
+    fn camera_limited(&self, original: Rect, requested: Rect) -> Rect {
+        if !self.cutouts.iter().any(|c| requested.overlaps(*c)) {
+            return requested;
+        }
+        if self.cutouts.iter().any(|c| original.overlaps(*c)) {
+            return original;
+        }
+        let interpolate = |t| {
+            Rect::new(
+                original.x + (requested.x - original.x) * t,
+                original.y + (requested.y - original.y) * t,
+                original.w + (requested.w - original.w) * t,
+                original.h + (requested.h - original.h) * t,
+            )
+        };
+        let (mut low, mut high) = (0., 1.);
+        for _ in 0..20 {
+            let t = (low + high) / 2.;
+            if self.cutouts.iter().any(|c| interpolate(t).overlaps(*c)) {
+                high = t;
+            } else {
+                low = t;
+            }
+        }
+        interpolate(low)
+    }
     pub fn cutouts(&self) -> &[Rect] {
         &self.cutouts
     }
     /// Visible corner grips share the same 48-point touch areas as rendering.
     pub fn handles(&self) -> [(f32, f32); 4] {
         let r = self.map(self.selected_bounds());
-        // Small preview controls need room between corner touch areas and the
+        // Small custom controls need room between corner touch areas and the
         // movable center. Outset their grips rather than stealing center drags.
-        let outset = ((56. - r.w.min(r.h)) / 2.).max(0.);
+        let outset = ((88. - r.w.min(r.h)) / 2.).max(0.);
         [
             (r.x - outset, r.y - outset),
             (r.x + r.w + outset, r.y - outset),
             (r.x + r.w + outset, r.y + r.h + outset),
             (r.x - outset, r.y + r.h + outset),
         ]
+        .map(|(x, y)| {
+            (
+                x.clamp(24., (self.width - 24.).max(24.)),
+                y.clamp(24., (self.height - 24.).max(24.)),
+            )
+        })
     }
     pub fn selected_name(&self) -> &str {
         if self.action_group_selected() {
@@ -503,16 +792,39 @@ impl Editor {
             self.pointer = Some(EditorPointer::Button { id, button });
             return;
         }
+        if self.spacing_slider().is_some_and(|r| r.contains(x, y)) {
+            self.gesture_start = Some(self.preset.clone());
+            let r = self.layout.action_bounds();
+            self.pointer = Some(EditorPointer::Spacing {
+                id,
+                center: [r.x + r.w / 2., r.y + r.h / 2.],
+            });
+            self.spacing_motion(x);
+            return;
+        }
+        if self.tools().contains(x, y) {
+            return;
+        }
         self.original_actions = self
             .layout
             .action_elements()
             .map(|i| (i, self.layout.element(i)))
             .collect();
         if let Some(corner) = self
-            .handles()
-            .iter()
-            .position(|(hx, hy)| (x - hx).abs() <= 24. && (y - hy).abs() <= 24.)
+            .resizing
+            .then(|| {
+                self.handles()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (hx, hy))| (x - hx).abs() <= 24. && (y - hy).abs() <= 24.)
+                    .min_by(|(_, (ax, ay)), (_, (bx, by))| {
+                        (x - ax).hypot(y - ay).total_cmp(&(x - bx).hypot(y - by))
+                    })
+                    .map(|(i, _)| i)
+            })
+            .flatten()
         {
+            self.gesture_start = Some(self.preset.clone());
             self.pointer = Some(EditorPointer::Resize {
                 id,
                 x,
@@ -533,6 +845,28 @@ impl Editor {
             } else {
                 index
             };
+        } else if let Some(index) = self
+            .layout
+            .controller_elements()
+            .filter(|i| {
+                let r = self.map(self.layout.element(*i));
+                let cx = r.x + r.w / 2.;
+                let cy = r.y + r.h / 2.;
+                (x - cx).abs() <= r.w.max(48.) / 2. && (y - cy).abs() <= r.h.max(48.) / 2.
+            })
+            .min_by(|a, b| {
+                let distance = |i| {
+                    let r = self.map(self.layout.element(i));
+                    (x - r.x - r.w / 2.).hypot(y - r.y - r.h / 2.)
+                };
+                distance(*a).total_cmp(&distance(*b))
+            })
+        {
+            self.selected = if self.group_actions && self.action_selected(index) {
+                self.layout.element_count() + 1
+            } else {
+                index
+            };
         } else if self.group_actions && self.map(self.layout.action_bounds()).contains(x, y) {
             self.selected = self.layout.element_count() + 1;
         } else if self.map(self.layout.game).contains(x, y) {
@@ -541,6 +875,7 @@ impl Editor {
             return;
         }
         self.guides = [None; 2];
+        self.gesture_start = Some(self.preset.clone());
         self.pointer = Some(EditorPointer::Move {
             id,
             x,
@@ -574,6 +909,10 @@ impl Editor {
                 return;
             }
             EditorPointer::Button { .. } => return,
+            EditorPointer::Spacing { .. } => {
+                self.spacing_motion(x);
+                return;
+            }
         };
         let dx = (x - previous_x) / scale;
         let dy = (y - previous_y) / scale;
@@ -587,9 +926,7 @@ impl Editor {
         } else {
             let mut full = self.preset.clone();
             full.game_scale = 1.;
-            let area = full
-                .layout_with_cutouts(self.width, self.height, &self.cutouts)
-                .game;
+            let area = self.layout_for(&full).game;
             let slack_x = area.w - self.layout.game.w;
             let slack_y = area.h - self.layout.game.h;
             let mut r = original;
@@ -603,13 +940,14 @@ impl Editor {
                 self.preset.game_offset[1] = ((r.y - area.y) / slack_y).clamp(0., 1.);
             }
         }
-        self.layout = self
-            .preset
-            .layout_with_cutouts(self.width, self.height, &self.cutouts);
+        self.layout = self.layout_for(&self.preset);
         // Keep the drag's unsnapped origin. Incrementing the snapped position
         // would trap slow finger movement at a guide.
     }
     fn snap_move(&mut self, mut r: Rect, area: Rect) -> Rect {
+        if !self.grid {
+            return r;
+        }
         let threshold = 6. / (self.preview().w / self.width);
         let defaults = self.defaults();
         let mut references = vec![if self.action_group_selected() {
@@ -636,7 +974,13 @@ impl Editor {
                 (r.y, r.h, area.y, area.h)
             };
             let mut best = threshold;
-            let mut position = start;
+            let origin = if axis == 0 {
+                self.width / 2. - extent / 2.
+            } else {
+                0.
+            };
+            let mut position = (origin + ((start - origin) / 8.).round() * 8.)
+                .clamp(low, (low + span - extent).max(low));
             let mut guide = None;
             let mut consider = |offset: f32, target: f32| {
                 let candidate = target - offset;
@@ -693,7 +1037,7 @@ impl Editor {
         let area = if game {
             let mut full = self.preset.clone();
             full.game_scale = 1.;
-            full.layout(self.width, self.height).game
+            self.layout_for(&full).game
         } else {
             Rect::new(0., 0., self.width, self.height)
         };
@@ -722,6 +1066,11 @@ impl Editor {
         let maximum = (available_w / original.w)
             .min(available_h / original.h)
             .max(minimum);
+        let requested = if self.grid {
+            (original.w * requested / 8.).round() * 8. / original.w
+        } else {
+            requested
+        };
         let ratio = requested.clamp(minimum, maximum);
         let resized = Rect::new(
             anchor_x - if left { original.w * ratio } else { 0. },
@@ -744,9 +1093,7 @@ impl Editor {
         } else {
             self.set_selected_bounds(original, resized);
         }
-        self.layout = self
-            .preset
-            .layout_with_cutouts(self.width, self.height, &self.cutouts);
+        self.layout = self.layout_for(&self.preset);
     }
     pub fn up(&mut self, id: i32, x: f32, y: f32) -> Option<EditResult> {
         let pointer = self.pointer?;
@@ -754,6 +1101,7 @@ impl Editor {
             return None;
         }
         self.pointer = None;
+        self.finish_gesture();
         self.guides = [None; 2];
         let EditorPointer::Button { button, .. } = pointer else {
             return None;
@@ -791,6 +1139,7 @@ impl Editor {
                 self.selected = self.layout.action_elements().next().unwrap_or(0);
             }
             EditorButton::Reset => {
+                let before = self.preset.clone();
                 if self.action_group_selected() {
                     let defaults = self.defaults();
                     let members: Vec<_> = self.layout.action_elements().collect();
@@ -806,9 +1155,22 @@ impl Editor {
                     self.preset.game_scale = 1.;
                     self.preset.game_offset = [0.5, 0.5];
                 }
-                self.layout =
-                    self.preset
-                        .layout_with_cutouts(self.width, self.height, &self.cutouts);
+                self.layout = self.layout_for(&self.preset);
+                self.remember(before);
+            }
+            EditorButton::Resize => self.resizing = !self.resizing,
+            EditorButton::Grid => self.grid = !self.grid,
+            EditorButton::Dock => self.tools_bottom = !self.tools_bottom,
+            EditorButton::Undo => {
+                if let Some(before) = self.undo.pop() {
+                    self.preset = before;
+                    self.layout = self.layout_for(&self.preset);
+                }
+            }
+            EditorButton::Mirror => {
+                let before = self.preset.clone();
+                self.mirror();
+                self.remember(before);
             }
             EditorButton::Cancel => return Some(EditResult::Cancel),
             EditorButton::Done => return Some(EditResult::Done),
@@ -817,6 +1179,7 @@ impl Editor {
     }
     pub fn cancel_touch(&mut self) {
         self.pointer = None;
+        self.finish_gesture();
         self.guides = [None; 2];
     }
 }
@@ -902,6 +1265,7 @@ mod editor_tests {
             .action_elements()
             .map(|i| (i, editor.layout.element(i)))
             .collect();
+        press(&mut editor, EditorButton::Resize);
         let (x, y) = editor.handles()[0];
         editor.down(1, x, y);
         editor.motion(1, x - 15., y - 10.);
@@ -1072,7 +1436,7 @@ mod editor_tests {
     }
 
     #[test]
-    fn small_preview_controls_can_move_from_the_center() {
+    fn small_controls_move_from_the_center_without_stealing_a_resize() {
         let mut editor = Editor::new(Preset::default(), 360., 740.);
         editor.selected = 1;
         let original = editor.layout.element(1);
@@ -1089,6 +1453,7 @@ mod editor_tests {
     fn corner_drags_anchor_the_opposite_corner_and_ignore_other_fingers() {
         for corner in 0..4 {
             let mut editor = Editor::new(Preset::default(), 852., 817.);
+            press(&mut editor, EditorButton::Resize);
             let original = editor.layout.dpad;
             let (x, y) = editor.handles()[corner];
             let dx = if matches!(corner, 0 | 3) { 20. } else { -20. };
@@ -1118,6 +1483,7 @@ mod editor_tests {
     fn resizing_picture_keeps_aspect_and_cancel_releases_the_gesture() {
         let mut editor = Editor::new(Preset::default(), 852., 817.);
         editor.selected = editor.layout.element_count();
+        press(&mut editor, EditorButton::Resize);
         let original = editor.layout.game;
         let (x, y) = editor.handles()[2];
         editor.down(1, x, y);
@@ -1132,6 +1498,230 @@ mod editor_tests {
         assert_eq!(editor.layout.game.w, resized.w);
         assert!((0..editor.layout.element_count())
             .all(|i| !editor.layout.game.overlaps(editor.layout.element(i))));
+    }
+
+    #[test]
+    fn live_canvas_matches_play_and_bar_reveal_preserves_the_draft() {
+        for analog in [false, true] {
+            let preset = Preset {
+                analog,
+                ..Preset::default()
+            };
+            let (w, h) = (852., 785.);
+            let camera = Rect::new(795., -66., 57., 66.);
+            let mut play = preset.layout_with_cutouts(w, h, &[camera]);
+            play.anchor_toolbar(w, h, 66., 0., &[camera]);
+            play.place_game_in(Rect::new(0., -66., w, h + 66.), false, 1., [0.5; 2]);
+            let mut editor = Editor::with_cutouts(preset, w, h, vec![camera]);
+            editor.set_viewport(66., 0.);
+            assert!(editor.preview().same_bounds(Rect::new(0., 0., w, h)));
+            assert!(editor.map(editor.layout.game).same_bounds(play.game));
+            assert!((0..play.element_count()).all(|i| editor
+                .map(editor.layout.element(i))
+                .same_bounds(play.element(i))));
+            let draft = editor.preset.clone();
+            editor.set_viewport(0., 32.);
+            assert!(editor.layout.playback.y >= 32.);
+            assert!(editor.preset == draft);
+            editor.set_viewport(66., 0.);
+            assert!(editor.layout.game.same_bounds(play.game));
+        }
+    }
+
+    #[test]
+    fn grid_can_be_disabled_and_tools_dock_away_from_a_control() {
+        let mut editor = Editor::new(Preset::default(), 852., 817.);
+        let original = Rect::new(283.3, 201.7, 64., 64.);
+        editor.selected = editor
+            .layout
+            .controller_elements()
+            .find(|i| editor.layout.element_name(*i) == "L1")
+            .unwrap();
+        let snapped = editor.snap_move(original, Rect::new(0., 0., 852., 817.));
+        assert!((snapped.x - original.x).abs() <= 6.);
+        assert!((snapped.y - original.y).abs() <= 6.);
+        assert!(!snapped.same_bounds(original));
+        press(&mut editor, EditorButton::Grid);
+        assert!(editor
+            .snap_move(original, Rect::new(0., 0., 852., 817.))
+            .same_bounds(original));
+        let upper = editor.tools();
+        press(&mut editor, EditorButton::Dock);
+        assert!(editor.tools().y > upper.y + 300.);
+        press(&mut editor, EditorButton::Dock);
+        assert!(editor.tools().same_bounds(upper));
+    }
+
+    #[test]
+    fn mirror_is_explicit_sizes_the_partner_and_undo_restores_everything() {
+        for name in [
+            "L1",
+            "L2",
+            "L3",
+            "Select",
+            "Left stick",
+            "Direction pad",
+            "Action buttons",
+        ] {
+            let mut editor = Editor::new(
+                Preset {
+                    analog: true,
+                    ..Preset::default()
+                },
+                852.,
+                817.,
+            );
+            if name == "Action buttons" {
+                editor.selected = editor.layout.element_count() + 1;
+            } else {
+                editor.selected = editor
+                    .layout
+                    .controller_elements()
+                    .find(|i| editor.layout.element_name(*i) == name)
+                    .unwrap();
+            }
+            let before = editor.preset.clone();
+            let bounds: Vec<_> = (0..editor.layout.element_count())
+                .map(|i| editor.layout.element(i))
+                .collect();
+            let source = editor.selected_bounds();
+            let target = editor.mirror_target().unwrap();
+            press(&mut editor, EditorButton::Mirror);
+            let reflected = if target == editor.layout.element_count() + 1 {
+                editor.layout.action_bounds()
+            } else {
+                editor.layout.element(target)
+            };
+            assert!(
+                reflected.same_bounds(Rect::new(
+                    852. - source.x - source.w,
+                    source.y,
+                    source.w,
+                    source.h
+                )),
+                "{name}"
+            );
+            for (i, r) in bounds.iter().enumerate() {
+                if i != target
+                    && !(target == editor.layout.element_count() + 1 && editor.action_selected(i))
+                {
+                    assert!(editor.layout.element(i).same_bounds(*r), "{name}: {i}");
+                }
+            }
+            press(&mut editor, EditorButton::Undo);
+            assert!(editor.preset == before);
+        }
+    }
+
+    #[test]
+    fn spacing_updates_live_without_resizing_buttons_and_one_undo_reverts_the_drag() {
+        let mut editor = Editor::new(
+            Preset {
+                analog: true,
+                ..Preset::default()
+            },
+            852.,
+            817.,
+        );
+        press(&mut editor, EditorButton::Next);
+        let before = editor.preset.clone();
+        let bounds: Vec<_> = (0..editor.layout.element_count())
+            .map(|i| editor.layout.element(i))
+            .collect();
+        let slider = editor.spacing_slider().unwrap();
+        let y = slider.y + 24.;
+        editor.down(1, slider.x, y);
+        let tight = editor.layout.action_bounds();
+        editor.motion(2, slider.x + slider.w, y);
+        assert!(editor.layout.action_bounds().same_bounds(tight));
+        editor.motion(1, slider.x + slider.w, y);
+        let wide = editor.layout.action_bounds();
+        assert!(wide.w > tight.w + 40.);
+        assert!(editor.spacing_slider().is_some());
+        let centers: Vec<_> = editor
+            .layout
+            .action_elements()
+            .map(|i| {
+                let r = editor.layout.element(i);
+                (
+                    editor.layout.element_name(i),
+                    [r.x + r.w / 2., r.y + r.h / 2.],
+                )
+            })
+            .collect();
+        let center = |name| centers.iter().find(|(n, _)| *n == name).unwrap().1;
+        let t = center("Triangle");
+        let x = center("Cross");
+        let s = center("Square");
+        let o = center("Circle");
+        assert!((t[0] - x[0]).abs() < 0.01 && (s[1] - o[1]).abs() < 0.01);
+        assert!((t[0] - (s[0] + o[0]) / 2.).abs() < 0.01);
+        assert!((s[1] - (t[1] + x[1]) / 2.).abs() < 0.01);
+        for (i, b) in bounds.iter().enumerate() {
+            let r = editor.layout.element(i);
+            assert!((r.w - b.w).abs() < 0.01 && (r.h - b.h).abs() < 0.01);
+            if !editor.action_selected(i) {
+                assert!(r.same_bounds(*b));
+            }
+        }
+        editor.up(1, slider.x + slider.w, y);
+        let restored: Preset =
+            serde_json::from_slice(&serde_json::to_vec(&editor.preset).unwrap()).unwrap();
+        assert!(restored
+            .layout(852., 817.)
+            .action_bounds()
+            .same_bounds(wide));
+        assert_eq!(editor.undo.len(), 1);
+        press(&mut editor, EditorButton::Undo);
+        assert!(editor.preset == before);
+    }
+
+    #[test]
+    fn tiny_input_selection_has_a_full_touch_target_and_drag_only_changes_it() {
+        let mut preset = Preset::default();
+        let mut layout = preset.layout(852., 817.);
+        let selected = layout
+            .controller_elements()
+            .find(|i| layout.element_name(*i) == "L1")
+            .unwrap();
+        layout.set_element(selected, Rect::new(290., 260., 24., 24.));
+        preset.capture(&layout, 852., 817.);
+        let mut editor = Editor::new(preset, 852., 817.);
+        let before: Vec<_> = (0..editor.layout.element_count())
+            .map(|i| editor.layout.element(i))
+            .collect();
+        editor.down(1, 282., 272.); // Outside the 24-point cap, inside its 48-point target.
+        assert_eq!(editor.selected, selected);
+        assert!(editor.buttons().is_empty());
+        editor.motion(1, 330., 310.);
+        editor.cancel_touch();
+        assert!(!editor
+            .layout
+            .element(selected)
+            .same_bounds(before[selected]));
+        assert!((0..before.len())
+            .filter(|i| *i != selected)
+            .all(|i| editor.layout.element(i).same_bounds(before[i])));
+        press(&mut editor, EditorButton::Undo);
+        assert!((0..before.len()).all(|i| editor.layout.element(i).same_bounds(before[i])));
+    }
+
+    #[test]
+    fn dragging_one_face_toward_a_camera_does_not_push_its_siblings() {
+        let camera = Rect::new(802., 200., 50., 100.);
+        let mut editor = Editor::with_cutouts(Preset::default(), 852., 817., vec![camera]);
+        editor.group_actions = false;
+        editor.selected = 1;
+        let before: Vec<_> = (0..editor.layout.element_count())
+            .map(|i| editor.layout.element(i))
+            .collect();
+        let target = Rect::new(790., 225., before[1].w, before[1].h);
+        editor.set_selected_bounds(before[1], target);
+        editor.layout = editor.layout_for(&editor.preset);
+        assert!(!editor.layout.element(1).overlaps(camera));
+        assert!((0..before.len())
+            .filter(|i| *i != 1)
+            .all(|i| editor.layout.element(i).same_bounds(before[i])));
     }
 }
 

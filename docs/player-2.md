@@ -73,6 +73,28 @@ screen-off were unverified. All clients/leases ended within the authorized
 extension and the owner was informed. No system/USB/radio/security setting or
 unrelated app was changed. There is no current device custody.
 
+The October 20 04:16–04:39 UTC window installed `697b723099c5` after a fresh
+full backup and a byte-verified actual installed APK backup. Automatic PS1
+restoration logged; early pause/time/game-switch checks were confounded by
+concurrent owner use until they explicitly yielded. Legend of Dragoon rendered.
+Blank paused preview also appeared before the update. The owner's latest
+clarification is horizontal centering with high placement, maximizing within
+that clear space. The next solver enforces that horizontal center without a
+vertical-centering step or any change to stored game-control rectangles.
+
+The actual installed patches archive matches its pinned hash and the missing
+resource warning is gone. Baldur formatting still fails. Bounded SIO2 records
+show present=1/eject=0, authentication/setup/specs/reads and terminator `5A`;
+format confirmation still produced no write/erase trace. This is evidence for
+the next protocol investigation, not an ordinary-save fix. Red Dead Revolver
+was transferred, hash-verified and selected through the normal scan/add flow:
+10 games, 15 discs. It was not booted. All eight PS1 cards, both PS2 cards and
+PS1 profiles remain byte-equal to the fresh initial backup. Final backup is
+readable; psx was closed and confirmed stopped. After sleep verification again
+showed awake/unlocked, the owner requested immediate release for personal use.
+All device work and the lease ended at 04:39:04 UTC; locking/screen-off remained
+unverified and was reported. No current custody or queued reconnect remains.
+
 ## Preserved baseline
 
 The source baseline is `a1bdd2810e67ede3377383613b397776f966748c`.
@@ -247,3 +269,23 @@ for Master acceptance.
 Carry #1's specific remaining checks from [verification.md](verification.md)
 without repeating unrelated qualification. Stock iOS, store licensing and
 16 KiB runtime/submission gates remain explicit in [distribution.md](distribution.md).
+
+## Live controller editing
+
+The owner's unsaved on-device arrangement was inspected without taps or
+navigation and retained only as a private visual reference. Its intended order
+puts primary sticks outside the inward digital clusters, with Start/Select
+above and shoulder pairs toward the middle. Accidental sizes and asymmetry
+are not accepted defaults. The unsaved draft was left open during handback;
+no installation or app close was performed in that inspection window.
+
+The editor now uses the real play surface with a live picture, full-size
+controls, forgiving selection and a distinct corner-resize mode. Its floating
+tools dock top/bottom and hide while moving/resizing. A visible optional grid,
+alignment guides, explicit Mirror, bounded gesture Undo and a separate live
+action-button spacing slider address precise placement without silently
+linking controls. Spacing retains cap sizes and balances the diamond; the
+existing per-display preset format persists its resulting positions. Draft
+changes still require Done, with Cancel and contextual Reset retained. This
+implementation needs its own actual Fold interaction check; host fixtures
+and shared-renderer previews do not establish that acceptance.

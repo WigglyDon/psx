@@ -693,6 +693,9 @@ impl Player {
             preset.game_scale,
             preset.game_offset,
         );
+        if let Some(editor) = &mut self.editor {
+            editor.set_viewport(reusable, covered);
+        }
         if let Some(menu) = &mut self.menu {
             menu.cutouts = cutouts;
             if menu.anchor.is_some() {
@@ -1439,6 +1442,8 @@ impl Player {
                     self.cutout_rects(),
                 ));
                 self.menu = None;
+                self.closing_menu = None;
+                self.resize(app)?;
                 self.dirty = true;
             }
             Action::SaveControls => {

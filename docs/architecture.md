@@ -180,9 +180,10 @@ width and 86% of available height to keep more content visible. Rendering, tap/s
 column counts share one Rust model. Its Add and Settings icons live in the app bar; primary actions stay distinct
 from back navigation. Controls occupy separate space by default;
 the largest clear 4:3 picture is computed from their rectangular targets.
-Maximum size takes priority over centering: use available screen edges and
-prefer the highest clear placement, leaving room below or beside it for controls.
-Horizontal centering is used only when it retains that same size and top edge.
+Center the picture horizontally, maximize its clear 4:3 size and keep its
+highest feasible position, leaving room below or beside it for controls.
+There is no vertical-centering step. If custom controls block the entire
+center column, retain a usable clear side region instead of an empty picture.
 The default layout compares arrangements at the actual window dimensions.
 On a sufficiently wide square display, shoulders and system buttons occupy
 the space between thumb clusters. Main thumb geometry sets the dock's minimum
@@ -200,8 +201,9 @@ bounds are local obstacles rather than full-height inset strips. System bars
 remain reserved; portrait keeps its top camera margin. The shared layout moves
 the whole face-button cluster together or shifts an obstructed control locally,
 then finds the largest clear 4:3 picture around controls and camera rectangles.
-The picture search includes actual camera bounds without adding a centering
-constraint or vertically centering a smaller picture in unused space.
+The picture search includes actual camera bounds while growing about the
+display's horizontal center. This prevents a corner camera from silently
+shifting the picture sideways; saved game-control rectangles remain unchanged.
 Camera avoidance is derived for the current window without overwriting saved
 control positions. The editor uses the same placement/defaults, and anchored
 volume/time panels slide clear of camera bounds. Shoulder caps have simple symmetric
@@ -251,7 +253,7 @@ change content coordinates or select another saved controller profile.
 Targets never cover the game.
 These app-chrome anchors supersede legacy toolbar rectangles; stored controller
 profiles remain intact. The controller editor edits game inputs and the picture,
-and its miniature scales the complete drawing. Android requests `fullUser`
+over the live game at the same size and coordinates used for play. Android requests `fullUser`
 orientation: all four rotations when
 the user permits rotation, respecting their rotation lock.
 [Android orientation contract](https://developer.android.com/guide/topics/manifest/activity-element#screen)
@@ -281,18 +283,35 @@ During audio-focus loss the toolbar stays inside safe content, covering
 persistent call indicators that can remain visible outside the reported
 system-bar insets. Focus transitions cancel touch and recalculate the layout.
 
-The controller editor selects elements by tap, moves them by dragging, and
-resizes them through corner grips, keeping the opposite corner anchored.
+The controller editor selects elements by tap and moves them by dragging at
+actual size. Selection targets remain at least 48 points even for a smaller
+custom cap. Resize mode exposes 48-point corner grips, keeping the opposite
+corner anchored; Move mode keeps those grips from stealing selection. The
+floating tools can dock above or below, and hide during a move/resize gesture.
+The live game remains visible and retains its existing pause intent; editor
+touches do not reach game input. Matching camera/status clearance keeps draft
+geometry consistent with play. No miniature or extra controller margin is used.
 The action buttons select as one group by default. Dragging keeps their relative
 positions; a corner scales their sizes and spacing together. Individual switches
-to per-button editing, and Group returns to the cluster. Group Reset restores
+to per-button editing through Single, and Group returns to the cluster. A live
+Button spacing slider redistributes the four centers into a balanced diamond
+without changing cap sizes. Its available spread is bounded by the surface;
+existing custom positions are untouched until that slider is used. Group Reset restores
 just those four buttons; individual Reset retains its existing scope. The D-pad
 remains one element. All edits use the existing per-display preset format.
-Dragging lightly snaps nearby edges/centers to peers, defaults, screen margins
-and mirrored horizontal centers. Visible guides explain each alignment. The
+Grid enables an eight-point grid centered about the display's horizontal
+midline, with nearby edge/center alignment to peers, defaults, screen margins
+and mirrored horizontal centers. It can be disabled for free placement. Visible
+guides explain alignment; resizing also snaps width while preserving aspect.
+Mirror explicitly copies the selected size and reflected position to its
+opposite partner: sticks, matching shoulders, Start/Select, stick clicks or
+D-pad/action-group bounds. It does not silently link later drags. Camera
+collisions stop the selected object instead of pushing unselected face buttons.
+The game alone still recomputes its available clear area as controls change. The
 unsnapped drag origin is retained so slow movement can escape a guide; no grid
-locks placement. These are draft changes until Done, with Cancel and Reset
-unchanged. Existing saved custom positions are preserved.
+locks placement. A bounded 32-step draft Undo records one entry per gesture,
+spacing adjustment, Mirror or Reset. These are draft changes until Done;
+Cancel discards the editor's draft. Existing saved custom positions are preserved.
 The game picture keeps its aspect ratio. Reset appears only for a changed
 selection and restores that element's draft until Done; Cancel discards it.
 Controller settings offer a whole-layout reset only for a changed profile.
