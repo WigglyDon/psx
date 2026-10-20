@@ -6,10 +6,13 @@ use std::collections::BTreeMap;
 // Mipmaps preserve that coverage when small labels are minified; four empty
 // texels separate glyphs to protect ordinary bilinear/trilinear downsampling.
 const SCALE: f32 = 72.;
-const CELL: usize = 96;
+const CELL: usize = 88;
 const PAD: usize = 4;
-const WIDTH: usize = CELL * 16;
-const HEIGHT: usize = CELL * 32;
+const COLUMNS: usize = 23;
+// The 464 supported characters fit 21 rows; neither texture dimension
+// exceeds the previous renderer's 2048-pixel bound.
+const WIDTH: usize = CELL * COLUMNS;
+const HEIGHT: usize = CELL * 21;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Glyph {
@@ -48,8 +51,8 @@ impl Text {
                 if w > CELL - PAD * 2 || h > CELL - PAD * 2 {
                     return Err("The bundled UI glyph exceeded its atlas cell.".into());
                 }
-                let x = i % 16 * CELL + PAD;
-                let y = i / 16 * CELL + PAD;
+                let x = i % COLUMNS * CELL + PAD;
+                let y = i / COLUMNS * CELL + PAD;
                 outline.draw(|dx, dy, coverage| {
                     bitmap[(y + dy as usize) * WIDTH + x + dx as usize] =
                         (coverage * 255.).round() as u8;
