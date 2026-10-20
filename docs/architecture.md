@@ -71,6 +71,12 @@ control shading are rendered in the existing UI batch; sheet clipping also
 contains scrolling content and opaque header/footer masks. This requires no multisampled
 game framebuffer or full-screen smoothing pass, and does not change native
 game resolution, game filtering, controller hit targets or saved layouts.
+Barlow Semi Condensed Medium supplies compact menu/control lettering, with
+Noto Sans fallback for supported characters absent from that face. Both are
+unmodified OFL fonts with pinned source/hash and exact notices. They share
+the single bounded atlas. Menu headings use capitals; game titles retain
+their spelling. The hourglass omits the normal 1× caption and uses a larger
+green caption for other rates, with short `0×` and `max` endpoint labels.
 
 The fixed renderer is SwanStation OpenGL ES 3.0 at 1x resolution. The host
 negotiates the exact context version, provides a persistent framebuffer,
@@ -169,15 +175,16 @@ Tapping outside a sheet dismisses it after lift, without passing that touch
 through to the game. Embedded navigation uses compact flat panels, restrained
 highlights and explicit switch positions. The library is an adaptive grid of
 game cards with local artwork, two-line titles, console/disc details and a
-separate 48-point options target. Rendering, tap/scroll geometry and responsive
+separate 48-point options target. Embedded sheets may use up to 720 points of
+width and 86% of available height to keep more content visible. Rendering, tap/scroll geometry and responsive
 column counts share one Rust model. Its Add and Settings icons live in the app bar; primary actions stay distinct
 from back navigation. Controls occupy separate space by default;
 the largest clear 4:3 picture is computed from their rectangular targets.
 The default layout compares arrangements at the actual window dimensions.
 On a sufficiently wide square display, shoulders and system buttons occupy
-the space between thumb clusters. The dock adjusts its height and face-cap size
-to recover a full-width picture where feasible, retaining at least 48-point
-targets and directional response. Thumb clusters leave 32 logical points below
+the space between thumb clusters. Main thumb geometry sets the dock's minimum
+height before maximizing the clear picture: square-display PS1 wells retain
+200 points of height and 84-point face targets. Thumb clusters leave 32 logical points below
 their lowest target before local camera avoidance. A 16-point gap separates Triangle and Cross;
 the largest clear picture is recomputed around those minimum touch bounds.
 Defaults now use larger thumb wells and action caps. Landscape wells grow into
@@ -232,7 +239,12 @@ including their system buttons, so a bottom row does not constrain picture
 height. Pause/time are anchored upper-left; sound/settings upper-right in every
 orientation. Each pair can move inward around a camera while retaining its side.
 A clear camera margin can host them only while OS decoration is absent; visible
-status bars push them below the actual bar. Targets never cover the game.
+status bars push them below the actual bar. App chrome uses 40-point targets,
+while game-button targets retain their 48-point minimum. Clear pixels below
+that smaller toolbar in the camera margin also become picture candidates;
+actual camera rectangles and every target remain excluded. This does not
+change content coordinates or select another saved controller profile.
+Targets never cover the game.
 These app-chrome anchors supersede legacy toolbar rectangles; stored controller
 profiles remain intact. The controller editor edits game inputs and the picture,
 and its miniature scales the complete drawing. Android requests `fullUser`
@@ -446,6 +458,9 @@ digital clusters inside and slightly above the primary sticks, with shoulders
 in the middle. It wins only when its clear 4:3 picture is larger. Narrower
 layouts keep stacked digital/stick bands; landscape retains full-height picture
 space between side rails.
+The compact inner-display candidate gives primary sticks up to 128 points and
+digital/action wells at least 160, fitting less-used shoulders into the clear
+middle. It does not shrink the main clusters to chase a full-width result.
 Generated button targets stay at least 48 points and sticks at least 104
 points on usable displays. The clear-picture solver excludes them all, and
 saved custom rectangles retain precedence. Transient tiny surfaces scale only

@@ -784,6 +784,7 @@ fn verify_apk() -> Result<()> {
         "assets/notices/swanstation/dep/openbios/LICENSE.txt",
         "assets/notices/openbios/LICENSE",
         "assets/notices/openbios/UPSTREAM.md",
+        "assets/notices/fonts/Barlow-OFL.txt",
     ] {
         if !entries.lines().any(|e| e == entry) {
             return Err(format!("Missing APK entry: {entry}").into());
@@ -902,6 +903,10 @@ fn notices() -> Result<()> {
     fs::copy(
         "assets/fonts/LICENSE",
         destination.join("fonts/NotoSans-LICENSE"),
+    )?;
+    fs::copy(
+        "assets/fonts/Barlow-OFL.txt",
+        destination.join("fonts/Barlow-OFL.txt"),
     )?;
     fs::copy(
         "assets/fonts/SOURCE.md",

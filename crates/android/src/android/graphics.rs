@@ -446,20 +446,32 @@ impl Graphics {
                 if visuals.muted { "MUTE" } else { "SOUND" },
                 0.,
             );
+            let mut time_icon = layout.speed;
+            if visuals.playback_speed == psx_player::settings::Speed::NORMAL && time_icon.h >= 40. {
+                time_icon.y += 9.; // Center the icon when no rate caption is needed.
+            }
             canvas.button(
-                layout.speed,
+                time_icon,
                 "TIME",
                 if visuals.timescale_enabled { 1. } else { 0. },
             );
-            let label = visuals.playback_speed.label();
-            if layout.speed.w >= 40. && layout.speed.h >= 40. {
-                let size = 9_f32.min((layout.speed.w - 4.) / canvas.font.measure(&label, 1.));
+            let label = if visuals.playback_speed == psx_player::settings::Speed::UNLIMITED {
+                "max".into()
+            } else if visuals.playback_speed.is_paused() {
+                "0×".into()
+            } else {
+                visuals.playback_speed.label()
+            };
+            if visuals.playback_speed != psx_player::settings::Speed::NORMAL
+                && layout.speed.w >= 40.
+            {
+                let size = 14_f32.min((layout.speed.w - 4.) / canvas.font.measure(&label, 1.));
                 canvas.text(
                     layout.speed.x + (layout.speed.w - canvas.font.measure(&label, size)) / 2.,
-                    layout.speed.y + layout.speed.h - 13.,
+                    layout.speed.y + layout.speed.h - 16.,
                     &label,
                     size,
-                    [0.75, 0.87, 0.9, 1.],
+                    [0.55, 0.95, 0.79, 1.],
                 );
             }
             if frame.is_none() && menu.is_none() {
@@ -1004,7 +1016,7 @@ impl Canvas<'_> {
             17.,
             &elide(
                 self.font,
-                &menu.title,
+                &menu.title.to_uppercase(),
                 column.w - if menu.home { 112. } else { 48. },
                 22.,
             ),
@@ -1545,7 +1557,7 @@ impl Canvas<'_> {
             return;
         }
         if label == "TIME" {
-            let y = y - if r.h >= 40. { 4. } else { 0. };
+            let y = y - if r.h >= 40. { 9. } else { 0. };
             let color = if strength > 0. {
                 [0.55, 0.95, 0.79, 1.]
             } else {

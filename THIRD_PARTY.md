@@ -62,9 +62,11 @@ The build retains Rust toolchain and NDK notices for linked runtime material.
 
 ## UI typography
 
-Noto Sans Regular is retained unchanged under SIL Open Font License 1.1,
-Copyright 2018 The Noto Project Authors. Its pinned source revision, file
-hash and exact upstream license are in [assets/fonts](assets/fonts/SOURCE.md).
+Barlow Semi Condensed Medium and fallback Noto Sans Regular are retained
+unchanged under SIL Open Font License 1.1, Copyright 2017 The Barlow Project
+Authors and Copyright 2018 The Noto Project Authors respectively. Their pinned
+source revisions, hashes and exact upstream licenses are in
+[assets/fonts](assets/fonts/SOURCE.md).
 The same license and source notice are packaged in the APK. The Rust
 `ab_glyph` rasterizer retains its own MIT/Apache notices through the Cargo
 dependency notice collection. These font assets are not original MIT work.

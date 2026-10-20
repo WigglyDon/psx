@@ -22,6 +22,25 @@ input and actual GLES previews are distinct from device acceptance. The ordinary
 PS2 card failure, gameplay/save/performance checks and Red Dead transfer remain
 pending under issue #2.
 
+The October 20 03:02–03:09 UTC window installed `f4ca71bb19e9` after a fresh
+170 MiB current-data backup (games excluded). Resident Evil's automatic restore
+was logged and resuming visibly returned to its intro. The sharp settings and
+three-column library rendered, including local save artwork and multi-disc
+details. Selecting Baldur's Gate reached the expected incompatible-checkpoint
+guard; USB loss prevented a verified Restart or PS2 boot. The same psx process
+survived reconnection. A bounded host kernel excerpt records actual USB
+disconnect/re-enumeration events, including events before the first admitted
+command; link/power/phone-stack cause remains undetermined. No server/USB reset
+or USB configuration change was issued. Access was released with close/lock/
+screen-off unverified, and the owner informed.
+
+Owner feedback rejected the shrunken primary controls. The correction restores
+larger thumb geometry, uses a smaller app toolbar and recovers clear pixels in
+the existing top camera margin without moving saved controls. Sheets are wider
+and taller. Compact OFL typography replaces the general-purpose UI face; normal
+1× has no rate caption and other rates use larger green labels. Actual device
+acceptance is still required for these subsequent corrections.
+
 ## Preserved baseline
 
 The source baseline is `a1bdd2810e67ede3377383613b397776f966748c`.

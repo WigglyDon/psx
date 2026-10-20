@@ -1,4 +1,25 @@
-# Noto Sans Regular
+# Native UI fonts
+
+## Barlow Semi Condensed Medium
+
+Unmodified `ofl/barlowsemicondensed/BarlowSemiCondensed-Medium.ttf` from
+[google/fonts](https://github.com/google/fonts/tree/3218ae2acc5bce7ccd97c477965b5b4094241fb0/ofl/barlowsemicondensed),
+revision `3218ae2acc5bce7ccd97c477965b5b4094241fb0`.
+
+Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow).
+SIL Open Font License 1.1; exact upstream license retained as
+[Barlow-OFL.txt](Barlow-OFL.txt) and in APK notices.
+
+Font SHA-256:
+`4998b693a190b76f2b11315844345a8546c1e2e6a320905507a9eed04edf8b48`.
+License SHA-256:
+`186d750eb496a4c17a76385f82be6aea2ac1cf2de074a811d63786cf374ea73f`.
+
+The compact medium face supplies the embedded menus and control labels.
+Noto Sans supplies supported atlas characters absent from Barlow. Both feed
+the existing single bounded atlas; no runtime font service is used.
+
+## Noto Sans Regular (fallback)
 
 Unmodified `hinted/ttf/NotoSans/NotoSans-Regular.ttf` from
 [notofonts/noto-fonts](https://github.com/notofonts/noto-fonts), revision

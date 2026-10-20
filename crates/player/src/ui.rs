@@ -1240,7 +1240,7 @@ impl Menu {
         if !self.over_game {
             return Rect::new(0., 0., width, height);
         }
-        let w = (width - 24.).clamp(0., 600.);
+        let w = (width - 24.).clamp(0., 720.);
         let header = 72.
             + if self.description_lines.is_empty() {
                 0.
@@ -1250,7 +1250,7 @@ impl Menu {
         let footer = if self.has_footer() { 76. } else { 24. };
         let h = (header + footer + self.content_height(w))
             .min((height - 24.).max(0.))
-            .min(height * 0.72);
+            .min(height * 0.86);
         Rect::new((width - w) / 2., (height - h) / 2., w, h)
     }
 

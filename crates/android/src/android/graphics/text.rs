@@ -33,18 +33,28 @@ pub(super) struct Text {
 impl Text {
     pub unsafe fn new(gl: &glow::Context) -> Result<Self, String> {
         let font = FontRef::try_from_slice(include_bytes!(
-            "../../../../../assets/fonts/NotoSans-Regular.ttf"
+            "../../../../../assets/fonts/BarlowSemiCondensed-Medium.ttf"
         ))
         .map_err(|e| format!("The bundled UI font could not be read: {e}"))?;
+        let fallback = FontRef::try_from_slice(include_bytes!(
+            "../../../../../assets/fonts/NotoSans-Regular.ttf"
+        ))
+        .map_err(|e| format!("The bundled fallback font could not be read: {e}"))?;
         let scaled = font.as_scaled(SCALE);
         let mut bitmap = vec![0u8; WIDTH * HEIGHT];
         let mut glyphs = BTreeMap::new();
         let characters = (32..=383).chain(0x2000..=0x206f).filter_map(char::from_u32);
         for (i, character) in characters.enumerate() {
+            let face = if font.glyph_id(character).0 == 0 {
+                &fallback
+            } else {
+                &font
+            };
+            let scaled = face.as_scaled(SCALE);
             let mut glyph = Glyph::default();
-            let id = font.glyph_id(character);
+            let id = face.glyph_id(character);
             glyph.advance = scaled.h_advance(id);
-            if let Some(outline) = font.outline_glyph(id.with_scale(SCALE)) {
+            if let Some(outline) = face.outline_glyph(id.with_scale(SCALE)) {
                 let bounds = outline.px_bounds();
                 let w = bounds.width() as usize;
                 let h = bounds.height() as usize;

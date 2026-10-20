@@ -687,9 +687,8 @@ impl Player {
         };
         self.layout
             .anchor_toolbar(w, h, reusable, covered, &cutouts);
-        self.layout.place_game(
-            w,
-            h,
+        self.layout.place_game_in(
+            Rect::new(0., -reusable, w, h + reusable),
             preset.allow_overlap,
             preset.game_scale,
             preset.game_offset,
