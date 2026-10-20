@@ -144,8 +144,18 @@ independent regular-file cards and revision/patch-bound 68 MiB checkpoints.
 It syncs cards after native flush and again after shutdown before sealing.
 Dual-analog/digital controls use the existing editor with independent PS2
 profiles. PS2 does not inherit PS1 background play. Native resolution,
-intended guest clocks and explicit 1×/2×/5× playback remain distinguishable
+intended guest clocks and explicit target time scales remain distinguishable
 from achieved native speed. The current PS2 JIT path requires 4 KiB pages.
+
+The owner refined the time control: hourglass tap toggles normal time versus
+the remembered scale; hold opens a live slider, with zero paused and maximum
+uncapped. Fractional rates keep stereo audio; uncapped audio uses bounded queue
+feedback. Manual pause/lifecycle gates stay independent. PS2 updates only its
+existing limiter deadline and coalesces rapid requests, without reloading all
+settings or pausing the VM for each rate change. Host checks cover preference
+migration, toggle memory, fractional audio phase, zero/uncapped bounds and pause
+gates. The signed candidate and actual Fold interaction/audio/performance still
+require their own qualification; the owner has not released the Fold again.
 
 The owner selected Baldur's Gate: Dark Alliance for first PS2 acceptance.
 Local PS1/PS2 games and firmware were consolidated privately, retaining local

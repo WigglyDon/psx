@@ -426,13 +426,20 @@ impl Graphics {
             );
             canvas.button(
                 layout.speed,
-                match visuals.playback_speed {
-                    2 => "2×",
-                    5 => "5×",
-                    _ => "1×",
-                },
-                0.,
+                "TIME",
+                if visuals.timescale_enabled { 1. } else { 0. },
             );
+            let label = visuals.playback_speed.label();
+            if layout.speed.w >= 40. && layout.speed.h >= 40. {
+                let size = 9_f32.min((layout.speed.w - 4.) / canvas.font.measure(&label, 1.));
+                canvas.text(
+                    layout.speed.x + (layout.speed.w - canvas.font.measure(&label, size)) / 2.,
+                    layout.speed.y + layout.speed.h - 13.,
+                    &label,
+                    size,
+                    [0.75, 0.87, 0.9, 1.],
+                );
+            }
             if frame.is_none() && menu.is_none() {
                 let (title, detail) = if visuals.audio_blocked {
                     ("Playback interrupted", "Tap play when audio is available.")
@@ -643,7 +650,7 @@ impl Canvas<'_> {
         }
         self.button(editor.map(editor.layout.pause), "MENU", 0.);
         self.button(editor.map(editor.layout.playback), "PAUSE", 0.);
-        self.button(editor.map(editor.layout.speed), "1×", 0.);
+        self.button(editor.map(editor.layout.speed), "TIME", 0.);
         self.button(editor.map(editor.layout.mute), "SOUND", 0.);
         let scale = preview.w / editor.width;
         if let Some(x) = editor.guides[0] {
@@ -786,7 +793,11 @@ impl Canvas<'_> {
                     }
                     let right = column.x + column.w - 16.;
                     let accessory = if row.slider.is_some() {
-                        72.
+                        if row.slider_label.is_some() {
+                            96.
+                        } else {
+                            72.
+                        }
                     } else if row.secondary {
                         48.
                     } else if row.toggle.is_some() {
@@ -824,7 +835,10 @@ impl Canvas<'_> {
                             [0.75, 0.87, 0.9, 1.],
                         );
                     } else if let Some(value) = row.slider {
-                        let label = format!("{value}%");
+                        let label = row
+                            .slider_label
+                            .clone()
+                            .unwrap_or_else(|| format!("{value}%"));
                         self.text(
                             right - self.font.measure(&label, 18.),
                             y + 14.,
@@ -1266,10 +1280,7 @@ impl Canvas<'_> {
         }
         let idle = [0.08, 0.11, 0.15, 0.9];
         let pressed = [0.10, 0.58, 0.51, 0.94];
-        let background = if matches!(
-            label,
-            "MENU" | "PAUSE" | "PLAY" | "SOUND" | "MUTE" | "1×" | "2×" | "5×"
-        ) {
+        let background = if matches!(label, "MENU" | "PAUSE" | "PLAY" | "SOUND" | "MUTE" | "TIME") {
             [0.; 4]
         } else {
             std::array::from_fn(|i| idle[i] + (pressed[i] - idle[i]) * strength)
@@ -1323,6 +1334,31 @@ impl Canvas<'_> {
         }
         if label == "MENU" {
             self.cog(x, y);
+            return;
+        }
+        if label == "TIME" {
+            let y = y - if r.h >= 40. { 4. } else { 0. };
+            let color = if strength > 0. {
+                [0.55, 0.95, 0.79, 1.]
+            } else {
+                [0.85, 0.92, 0.98, 1.]
+            };
+            self.line((x - 8., y - 10.), (x + 8., y - 10.), 2., color);
+            self.line((x - 8., y + 10.), (x + 8., y + 10.), 2., color);
+            let glass = [
+                (x - 6., y - 10.),
+                (x - 6., y - 5.),
+                (x + 6., y + 5.),
+                (x + 6., y + 10.),
+                (x - 6., y + 10.),
+                (x - 6., y + 5.),
+                (x + 6., y - 5.),
+                (x + 6., y - 10.),
+            ];
+            for i in 0..glass.len() - 1 {
+                self.line(glass[i], glass[i + 1], 1.6, color);
+            }
+            self.polygon(&[(x - 4., y + 8.), (x + 4., y + 8.), (x, y + 4.)], color);
             return;
         }
         if label == "PAUSE" {

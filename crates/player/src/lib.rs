@@ -18,6 +18,8 @@ pub mod ui;
 #[derive(Debug, Default)]
 pub struct Activity {
     pub user_paused: bool,
+    /// Zero time is a separate intent; changing it never clears manual pause.
+    pub time_paused: bool,
     pub foreground: bool,
     pub focused: bool,
     pub surface: bool,
@@ -31,6 +33,7 @@ pub struct Activity {
 impl Activity {
     pub fn can_run(&self) -> bool {
         !self.user_paused
+            && !self.time_paused
             && ((self.foreground && self.focused && self.surface) || self.background_playback)
             && self.audio_focus
             && !self.loading
@@ -58,6 +61,29 @@ mod tests {
         assert!(!activity.can_run());
         activity.user_paused = false;
         activity.surface = false;
+        assert!(!activity.can_run());
+    }
+    #[test]
+    fn zero_time_preserves_manual_pause_and_all_interruption_gates() {
+        let mut activity = Activity {
+            foreground: true,
+            focused: true,
+            surface: true,
+            audio_focus: true,
+            user_paused: true,
+            time_paused: true,
+            ..Activity::default()
+        };
+        assert!(!activity.can_run());
+        activity.time_paused = false;
+        assert!(!activity.can_run());
+        activity.user_paused = false;
+        assert!(activity.can_run());
+        activity.time_paused = true;
+        activity.background_playback = true;
+        assert!(!activity.can_run());
+        activity.time_paused = false;
+        activity.audio_focus = false;
         assert!(!activity.can_run());
     }
     #[test]

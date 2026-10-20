@@ -5,6 +5,7 @@ use crate::{
     retro::{AvInfo, CoreLease, Environment, Geometry, HostConfig, HwRender},
     saves::atomic_write,
     session::GameId,
+    settings::Speed,
 };
 use libloading::Library;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ use std::{
         atomic::{AtomicBool, AtomicI16, AtomicU16, Ordering},
         Arc, Mutex,
     },
+    time::{Duration, Instant},
 };
 type Result<T> = std::result::Result<T, String>;
 pub const REVISION: &str = "83fe4e293f71ab5587ef81b06143725bf8c6a30b";
@@ -261,7 +263,8 @@ pub struct Core {
     flush_fn: unsafe extern "C" fn() -> bool,
     ready_fn: unsafe extern "C" fn() -> bool,
     speed_fn: unsafe extern "C" fn(f32) -> bool,
-    speed: u8,
+    speed: Option<Speed>,
+    speed_changed: Instant,
     serialize_size: unsafe extern "C" fn() -> usize,
     serialize: unsafe extern "C" fn(*mut c_void, usize) -> bool,
     unserialize: unsafe extern "C" fn(*const c_void, usize) -> bool,
@@ -371,7 +374,8 @@ impl Core {
             flush_fn: symbol!("retro_psx_flush_cards", unsafe extern "C" fn() -> bool),
             ready_fn: symbol!("retro_psx_ready", unsafe extern "C" fn() -> bool),
             speed_fn: symbol!("retro_psx_set_speed", unsafe extern "C" fn(f32) -> bool),
-            speed: 0, // Apply Rust's requested speed before the first live tick.
+            speed: None, // Apply Rust's requested time scale before the first live tick.
+            speed_changed: Instant::now(),
             serialize_size: symbol!("retro_serialize_size", unsafe extern "C" fn() -> usize),
             serialize: symbol!(
                 "retro_serialize",
@@ -455,18 +459,25 @@ impl Core {
     pub fn ready(&self) -> bool {
         unsafe { (self.ready_fn)() }
     }
-    pub fn set_speed(&mut self, speed: u8) -> Result<()> {
-        if !matches!(speed, 1 | 2 | 5) {
-            return Err("Unsupported playback speed.".into());
+    pub fn set_speed(&mut self, speed: Speed) -> Result<Speed> {
+        if speed.is_paused() {
+            return Err("Zero time must pause the runtime.".into());
         }
-        if self.speed != speed {
-            self.pause(true)?;
-            if !unsafe { (self.speed_fn)(speed as f32) } {
+        if self.speed != Some(speed) {
+            // Coalesce a drag to at most 20 native deadline changes per second.
+            // Return the applied scale so audio/host pacing stay in agreement.
+            if let Some(applied) = self.speed {
+                if self.speed_changed.elapsed() < Duration::from_millis(50) {
+                    return Ok(applied);
+                }
+            }
+            if !unsafe { (self.speed_fn)(speed.multiplier().unwrap_or(0.) as f32) } {
                 return Err("The PS2 playback speed could not change.".into());
             }
-            self.speed = speed;
+            self.speed = Some(speed);
+            self.speed_changed = Instant::now();
         }
-        Ok(())
+        Ok(speed)
     }
     pub fn pause(&mut self, paused: bool) -> Result<()> {
         if self.paused != paused {

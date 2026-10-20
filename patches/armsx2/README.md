@@ -17,6 +17,15 @@ directory before binding a checkpoint to their digest. Folder-card durability
 is not supported by this host. Native thread scheduling, JIT and emulation
 internals are unchanged.
 
+Time-scale updates release the frame handoff before the blocking CPU callback
+and update only the existing nominal scalar/limiter deadline, without a full
+VM settings reload or pause/resume transition. Zero in this C ABI selects the
+donor's unlimited limiter; Rust handles zero-time pause separately through
+`retro_psx_set_paused`. Rust validates finite targets and coalesces slider
+changes to at most 20 per second, pacing audio/frontend calls at the applied
+rate. The native callback retains its current running/paused state and restores
+the frame handoff only when running. Guest CPU/device clocks are unchanged.
+
 The libretro checkpoint omits the unused thumbnail: psx restores and renders
 the machine directly. This avoids a GS readback and PNG encoding while the VM
 is stopped. Rust selects the existing uncompressed ZIP setting and retains

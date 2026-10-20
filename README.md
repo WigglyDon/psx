@@ -10,7 +10,7 @@ and play. Built by Machine Rhythm, starting with Android foldables.
 - A large, unstretched picture, separate from the controls by default.
 - A following D-pad, simultaneous touch input and press haptics.
 - Movable, resizable controls with separate saved display layouts.
-- Compact in-game settings, volume, pause and 1× / 2× / 5× playback.
+- Compact in-game settings, volume, pause and a tap/hold time control.
 - Durable memory cards and automatic session resume.
 
 No accounts, analytics, uploads or bundled games. Your games, firmware and

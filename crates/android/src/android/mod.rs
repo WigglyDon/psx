@@ -21,7 +21,7 @@ use psx_player::{
     retro::HostConfig,
     saves::MemoryCard,
     session::{GameId, Launch, Runtime, SavedSession, State as SessionState},
-    settings::{PlaybackSettings, Speed},
+    settings::PlaybackSettings,
     ui::{EditResult, Editor, HoldPress, Menu, PressAction, Row, Visuals},
     Activity,
 };
@@ -56,9 +56,11 @@ enum Action {
     Discs,
     Controllers,
     Sound,
+    Timescale,
     ToggleMute,
     SetVolume(u8),
-    CycleSpeed,
+    ToggleTimescale,
+    SetTimescale(u8),
     TogglePause,
     ToggleOverlap,
     ToggleFollowThumb,
@@ -93,6 +95,7 @@ enum Screen {
     License(&'static str),
     Controllers,
     Sound,
+    Timescale,
     Editing,
     Error,
 }
@@ -115,6 +118,7 @@ struct Player {
     activity: Activity,
     touches: Touches,
     speaker_press: HoldPress,
+    time_press: HoldPress,
     layout: Layout,
     density: f32,
     insets: [i32; 4],
@@ -175,7 +179,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     let playback = PlaybackSettings::load(&root).map_err(|e| e.to_string())?;
     let queue = Arc::new(AudioQueue::new(16384));
     queue.set_volume(playback.output_volume());
-    queue.set_speed(playback.speed.multiplier());
+    queue.set_speed(playback.effective_speed());
     let mut player = Player {
         library: Library::load(&root)
             .map_err(|e| format!("The saved library could not be read: {e}"))?,
@@ -193,6 +197,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         activity: Activity::default(),
         touches: Touches::default(),
         speaker_press: HoldPress::default(),
+        time_press: HoldPress::default(),
         layout: Layout::new(360., 800.),
         density: 1.,
         insets: [0; 4],
@@ -341,13 +346,22 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.fail(error);
             }
         }
+        if player.time_press.held(Instant::now()) {
+            player.platform.haptic(&app);
+            if let Err(error) = player.action(&app, Action::Timescale) {
+                player.fail(error);
+            }
+        }
+        player.activity.time_paused = player.playback.effective_speed().is_paused();
         player.sync_background(&app);
         if let Some(core) = &mut player.core {
             if let Err(error) = core.pause(!player.activity.can_run()) {
                 player.fail(error);
             }
         }
-        player.queue.set_paused(player.activity.user_paused);
+        player
+            .queue
+            .set_paused(player.activity.user_paused || player.activity.time_paused);
         player
             .queue
             .set_background(player.activity.background_playback && !player.activity.foreground);
@@ -420,7 +434,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             session.update(player.activity.can_run());
         }
         if !player.activity.can_run() {
-            if !(player.activity.user_paused
+            if !((player.activity.user_paused || player.activity.time_paused)
                 && player.activity.foreground
                 && player.activity.focused
                 && player.activity.surface
@@ -465,9 +479,11 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         player.visuals.has_game = player.core.is_some();
         player.visuals.axes = player.touches.axes();
         player.visuals.audio_blocked = !player.activity.audio_focus;
-        player.visuals.playback_paused =
-            player.activity.user_paused || !player.activity.audio_focus;
-        player.visuals.playback_speed = player.playback.speed.multiplier();
+        player.visuals.playback_paused = player.activity.user_paused
+            || player.activity.time_paused
+            || !player.activity.audio_focus;
+        player.visuals.playback_speed = player.playback.effective_speed();
+        player.visuals.timescale_enabled = player.playback.timescale_enabled;
         player.visuals.muted = player.playback.muted || player.playback.volume == 0;
         player.visual_animating = player.visuals.advance(
             (now - player.last_visual).as_secs_f32(),
@@ -489,7 +505,8 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 state.hw.map(|h| h.bottom_left).unwrap_or(true),
             ))
         });
-        let present_due = player.playback.speed == Speed::Normal || now >= player.next_present;
+        let present_due =
+            !player.playback.effective_speed().is_fast() || now >= player.next_present;
         if player.dirty && player.activity.surface && player.activity.foreground && present_due {
             player.next_present = now + Duration::from_secs_f64(1. / 60.);
             if let Err(error) = unsafe {
@@ -587,6 +604,7 @@ impl Player {
             }
             MainEvent::Pause | MainEvent::Stop => {
                 self.speaker_press.cancel();
+                self.time_press.cancel();
                 self.activity.foreground = false;
                 self.touches.cancel();
                 if !self.activity.background_playback {
@@ -613,6 +631,7 @@ impl Player {
     }
     fn resize(&mut self, app: &AndroidApp) -> Result<(), String> {
         self.speaker_press.cancel();
+        self.time_press.cancel();
         let previous_game = self.layout.game;
         let previous = (
             self.graphics.width,
@@ -730,10 +749,16 @@ impl Player {
                 let y = (pointer.y() - self.graphics.content.y) / self.density;
                 if motion.action() == MotionAction::Cancel {
                     self.speaker_press.cancel();
+                    self.time_press.cancel();
                 }
                 if motion.action() == MotionAction::Move {
                     for p in motion.pointers() {
                         self.speaker_press.motion(
+                            p.pointer_id(),
+                            (p.x() - self.graphics.content.x) / self.density,
+                            (p.y() - self.graphics.content.y) / self.density,
+                        );
+                        self.time_press.motion(
                             p.pointer_id(),
                             (p.x() - self.graphics.content.x) / self.density,
                             (p.y() - self.graphics.content.y) / self.density,
@@ -750,6 +775,21 @@ impl Player {
                         action = Some(match press {
                             PressAction::Tap => Action::ToggleMute,
                             PressAction::Hold => Action::Sound,
+                        });
+                        self.platform.haptic(app);
+                    }
+                    return InputStatus::Handled;
+                }
+                if matches!(motion.action(), MotionAction::Up | MotionAction::PointerUp)
+                    && self.time_press.owns(pointer.pointer_id())
+                {
+                    if let Some(press) =
+                        self.time_press
+                            .release(pointer.pointer_id(), x, y, Instant::now())
+                    {
+                        action = Some(match press {
+                            PressAction::Tap => Action::ToggleTimescale,
+                            PressAction::Hold => Action::Timescale,
                         });
                         self.platform.haptic(app);
                     }
@@ -774,7 +814,9 @@ impl Player {
                     } else if self.layout.playback.contains(x, y) {
                         Some(Action::TogglePause)
                     } else if self.layout.speed.contains(x, y) {
-                        Some(Action::CycleSpeed)
+                        self.time_press
+                            .begin(pointer.pointer_id(), x, y, Instant::now());
+                        return InputStatus::Handled;
                     } else if self.layout.mute.contains(x, y) {
                         self.speaker_press
                             .begin(pointer.pointer_id(), x, y, Instant::now());
@@ -860,7 +902,11 @@ impl Player {
                         _ => {}
                     }
                     if let Some((_, value)) = menu.take_slider_change() {
-                        action = Some(Action::SetVolume(value));
+                        action = Some(if self.screen == Screen::Timescale {
+                            Action::SetTimescale(value)
+                        } else {
+                            Action::SetVolume(value)
+                        });
                     }
                 } else {
                     match motion.action() {
@@ -875,7 +921,9 @@ impl Player {
                             )
                             .then(|| motion.pointer_at_index(motion.pointer_index()).pointer_id());
                             for pointer in motion.pointers() {
-                                if self.speaker_press.owns(pointer.pointer_id()) {
+                                if self.speaker_press.owns(pointer.pointer_id())
+                                    || self.time_press.owns(pointer.pointer_id())
+                                {
                                     continue;
                                 }
                                 let x = (pointer.x() - self.graphics.content.x) / self.density;
@@ -1063,6 +1111,7 @@ impl Player {
 
     fn navigate(&mut self, app: &AndroidApp, screen: Screen) {
         self.speaker_press.cancel();
+        self.time_press.cancel();
         self.closing_menu = None;
         self.screen = screen;
         self.touches.cancel();
@@ -1260,12 +1309,26 @@ impl Player {
                     self.navigate(app, Screen::Sound);
                 }
             }
+            Action::Timescale => {
+                if self.screen == Screen::Timescale && self.menu.is_some() {
+                    self.action(app, Action::Resume)?;
+                } else {
+                    self.navigate(app, Screen::Timescale);
+                }
+            }
             Action::TogglePause => {
                 self.frames = 0;
                 self.run_time = Duration::ZERO;
                 self.last_report = Instant::now();
-                if self.activity.user_paused || !self.activity.audio_focus {
+                if self.activity.user_paused
+                    || self.activity.time_paused
+                    || !self.activity.audio_focus
+                {
                     self.activity.user_paused = false;
+                    if self.activity.time_paused {
+                        self.playback.timescale_enabled = false;
+                        self.timescale_changed();
+                    }
                     if !self.activity.audio_focus {
                         self.platform.focus(app, true);
                     }
@@ -1274,7 +1337,8 @@ impl Player {
                     self.activity.user_paused = true;
                     self.cancel_input();
                 }
-                self.queue.set_paused(self.activity.user_paused);
+                self.queue
+                    .set_paused(self.activity.user_paused || self.activity.time_paused);
                 self.checkpoint_dirty = self.core.is_some();
                 self.checkpoint_after_present = true;
                 self.next_present = Instant::now();
@@ -1303,16 +1367,25 @@ impl Player {
                 }
                 self.dirty = true;
             }
-            Action::CycleSpeed => {
-                self.playback.speed = match self.playback.speed {
-                    Speed::Normal => Speed::Double,
-                    Speed::Double => Speed::Quintuple,
-                    Speed::Quintuple => Speed::Normal,
-                };
-                self.queue.set_speed(self.playback.speed.multiplier());
-                self.playback_changed = Some(Instant::now());
-                self.next_frame = Instant::now();
-                self.dirty = true;
+            Action::ToggleTimescale => {
+                self.playback.toggle_timescale();
+                self.timescale_changed();
+                if self.menu.is_some() {
+                    self.refresh_menu(app);
+                }
+            }
+            Action::SetTimescale(value) => {
+                self.playback.set_timescale(value);
+                self.timescale_changed();
+                // Retain the slider pointer, updating only its displayed value.
+                if let Some(menu) = &mut self.menu {
+                    if let Some(row) = menu.rows.get_mut(0) {
+                        row.slider_label = Some(self.playback.speed.label());
+                    }
+                    if let Some(row) = menu.rows.get_mut(1) {
+                        row.title = "Normal time".into();
+                    }
+                }
             }
             Action::ToggleFollowThumb => {
                 let (w, h) = self.dimensions();
@@ -1400,7 +1473,7 @@ impl Player {
                 Screen::License(_) => self.navigate(app, Screen::About),
                 Screen::Editing => return self.action(app, Action::CancelEdit),
                 Screen::Controllers => self.navigate(app, Screen::Settings),
-                Screen::Sound => return self.action(app, Action::Resume),
+                Screen::Sound | Screen::Timescale => return self.action(app, Action::Resume),
                 Screen::Settings if self.core.is_some() => return self.action(app, Action::Resume),
                 Screen::Home if self.core.is_none() => self.platform.finish(app),
                 _ if self.core.is_some() && self.menu.is_none() => {
@@ -1455,6 +1528,7 @@ impl Player {
             && self.game.as_ref().is_some_and(|g| g.system == System::Ps1)
             && self.core.is_some()
             && !self.activity.user_paused
+            && !self.activity.time_paused
             && !self.destroyed;
         if want != self.background_requested && (!want || self.activity.foreground) {
             self.background_requested = want;
@@ -1471,6 +1545,25 @@ impl Player {
         self.playback.save(&self.root).map_err(|e| e.to_string())?;
         self.playback_changed = None;
         Ok(())
+    }
+    fn timescale_changed(&mut self) {
+        let speed = self.playback.effective_speed();
+        let paused = speed.is_paused();
+        if paused != self.activity.time_paused {
+            self.activity.time_paused = paused;
+            self.touches.cancel();
+            if let Some(core) = &mut self.core {
+                core.input(0, [0; 4], false);
+            }
+            self.checkpoint_dirty = self.core.is_some();
+            self.checkpoint_after_present = self.core.is_some();
+        }
+        self.queue.set_speed(speed);
+        self.queue.set_paused(self.activity.user_paused || paused);
+        self.playback_changed = Some(Instant::now());
+        self.next_frame = Instant::now();
+        self.next_present = Instant::now();
+        self.dirty = true;
     }
 
     fn refresh_menu(&mut self, app: &AndroidApp) {
@@ -1578,7 +1671,7 @@ impl Player {
                 (
                     "Settings".into(),
                     if let Some(game) = &self.game {
-                        if self.activity.user_paused {
+                        if self.activity.user_paused || self.activity.time_paused {
                             format!("Paused · {}", game.title)
                         } else {
                             game.title.clone()
@@ -1615,6 +1708,24 @@ impl Player {
                     "Keep your chosen volume for later".into(),
                 );
                 ("Volume".into(), String::new(), "Back".into(), Action::Back)
+            }
+            Screen::Timescale => {
+                add(
+                    Action::SetTimescale(self.playback.speed.slider()),
+                    "Time scale".into(),
+                    "0 pauses · maximum is uncapped".into(),
+                );
+                add(
+                    Action::ToggleTimescale,
+                    if self.playback.timescale_enabled {
+                        "Normal time"
+                    } else {
+                        "Use chosen scale"
+                    }
+                    .into(),
+                    "Tap the hourglass to switch".into(),
+                );
+                ("Time".into(), String::new(), "Back".into(), Action::Back)
             }
             Screen::Access => {
                 if self.scan_available {
@@ -1955,6 +2066,12 @@ impl Player {
             menu.rows[0].slider = Some(self.playback.volume);
             menu.rows[0].height = 104.;
         }
+        if self.screen == Screen::Timescale {
+            menu.anchor = Some(self.layout.speed);
+            menu.rows[0].slider = Some(self.playback.speed.slider());
+            menu.rows[0].slider_label = Some(self.playback.speed.label());
+            menu.rows[0].height = 104.;
+        }
         let (w, h) = self.dimensions();
         let panel = menu.surface(w, h);
         menu.description_lines = self
@@ -2176,12 +2293,13 @@ impl Player {
         self.ensure_session_available()?;
         self.dirty = true;
         let core = self.core.as_mut().unwrap();
-        core.set_speed(self.playback.speed.multiplier())?;
+        let speed = core.set_speed(self.playback.effective_speed())?;
+        self.queue.set_speed(speed);
         core.pause(false)?;
         core.input(
             self.touches.frame_mask(),
             self.touches.axes(),
-            self.playback.speed != Speed::Normal,
+            speed.is_fast(),
         );
         let before = Instant::now();
         core.run();
@@ -2207,9 +2325,11 @@ impl Player {
         let target = self.queue.target_frames() as f64;
         let error = (self.queue.queued() as f64 - target) / target;
         let correction = 1. + (error * 0.003).clamp(-0.005, 0.005);
-        let period =
-            Duration::from_secs_f64(correction / fps / self.playback.speed.multiplier() as f64);
-        self.next_frame += period;
+        if let Some(multiplier) = speed.multiplier() {
+            self.next_frame += Duration::from_secs_f64(correction / fps / multiplier);
+        } else {
+            self.next_frame = Instant::now();
+        }
         if Instant::now().saturating_duration_since(self.next_frame) > Duration::from_millis(100) {
             self.next_frame = Instant::now();
         }
@@ -2238,11 +2358,11 @@ impl Player {
                 log::info!("PS2 native metrics: vps={fps:.2} speed={speed:.1}% frame_ms={average:.2} min_ms={minimum:.2} max_ms={maximum:.2}");
             }
             if self.game.as_ref().is_some_and(|g| g.system == System::Ps2) {
-                log::info!("PS2 frontend: calls_per_second={:.2} call_ms={:.2} hardware_frames={} software_frames={} audio_queued={} underruns={} dropped={} requested={}x", self.frames as f64/elapsed, self.run_time.as_secs_f64()*1000./self.frames as f64, core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed),self.playback.speed.multiplier());
+                log::info!("PS2 frontend: calls_per_second={:.2} call_ms={:.2} hardware_frames={} software_frames={} audio_queued={} underruns={} dropped={} requested={}", self.frames as f64/elapsed, self.run_time.as_secs_f64()*1000./self.frames as f64, core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed),self.playback.effective_speed().label());
             } else {
-                log::info!("playback fps={:.2} speed={:.1}% core_ms={:.2} hw_frames={} sw_frames={} audio_queued={} underruns={} dropped={} target={}x",
+                log::info!("playback fps={:.2} speed={:.1}% core_ms={:.2} hw_frames={} sw_frames={} audio_queued={} underruns={} dropped={} target={}",
                 self.frames as f64/elapsed,self.frames as f64/elapsed/fps*100.,self.run_time.as_secs_f64()*1000./self.frames as f64,
-                core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed), self.playback.speed.multiplier());
+                core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed), self.playback.effective_speed().label());
             }
             self.last_report = Instant::now();
             self.frames = 0;
@@ -2334,6 +2454,7 @@ impl Player {
     }
     fn cancel_input(&mut self) {
         self.speaker_press.cancel();
+        self.time_press.cancel();
         self.touches.cancel();
         if let Some(menu) = &mut self.menu {
             menu.cancel();
@@ -2380,6 +2501,7 @@ impl Player {
     }
     fn fail(&mut self, error: String) {
         self.speaker_press.cancel();
+        self.time_press.cancel();
         self.dirty = true;
         log::error!("{error}");
         self.message = error;

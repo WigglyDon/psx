@@ -1,5 +1,5 @@
 diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
-index 24210fb06..cbd6733ae 100644
+index 24210fb06..b6338bd1e 100644
 --- a/pcsx2-libretro/Main.cpp
 +++ b/pcsx2-libretro/Main.cpp
 @@ -77,6 +77,8 @@
@@ -24,7 +24,7 @@ index 24210fb06..cbd6733ae 100644
  }
  
  void Host::OnSaveStateLoading(const std::string_view filename)
-@@ -2357,6 +2365,64 @@ RETRO_API size_t retro_serialize_size(void)
+@@ -2357,6 +2365,85 @@ RETRO_API size_t retro_serialize_size(void)
  	return VMManager::HasValidVM() ? kSerializeSize : 0;
  }
  
@@ -74,22 +74,43 @@ index 24210fb06..cbd6733ae 100644
 +
 +extern "C" RETRO_API bool retro_psx_set_speed(float multiplier)
 +{
-+	if (!retro_psx_ready())
++	// Zero here means the native unlimited limiter; Rust owns actual pause.
++	if (!retro_psx_ready() || !std::isfinite(multiplier) || multiplier < 0.0f || multiplier > 5.0f)
 +		return false;
++#ifdef ENABLE_VULKAN
++	VKLibretro::SetPacing(false);
++#endif
++#ifdef ENABLE_OPENGL
++	GLLibretro::SetPacing(false);
++#endif
 +	Host::RunOnCPUThread([multiplier]() {
 +		{
 +			auto lock = Host::GetSettingsLock();
 +			s_base_settings->SetFloatValue("Framerate", "NominalScalar", multiplier);
 +		}
-+		VMManager::ApplySettings();
++		// Change only wall-time pacing. A slider must not repeatedly reload all
++		// VM/graphics settings or transition the VM through pause/resume.
++		EmuConfig.EmulationSpeed.NominalScalar = multiplier;
++		if (VMManager::GetLimiterMode() == LimiterModeType::Nominal)
++			VMManager::UpdateTargetSpeed();
++		else
++			VMManager::SetLimiterMode(LimiterModeType::Nominal);
 +	}, true);
++#ifdef ENABLE_VULKAN
++	if (VMManager::GetState() == VMState::Running && LibretroCore::s_context_ready.load(std::memory_order_acquire))
++		VKLibretro::SetPacing(true);
++#endif
++#ifdef ENABLE_OPENGL
++	if (VMManager::GetState() == VMState::Running && GLLibretro::Active && LibretroCore::s_context_ready.load(std::memory_order_acquire))
++		GLLibretro::SetPacing(true);
++#endif
 +	return true;
 +}
 +
  RETRO_API bool retro_serialize(void* data, size_t size)
  {
  	if (!VMManager::HasValidVM())
-@@ -2384,7 +2450,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
+@@ -2384,7 +2471,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
  			Console.ErrorFmt("retro_serialize: DownloadState failed: {}", error.GetDescription());
  			return;
  		}

@@ -301,16 +301,27 @@ flushed on interruption.
 The slider spans a perceptual -56 to 0 dB range, with zero silent. Migration
 from the initial linear slider preserves its approximate loudness.
 
-Tapping speed cycles 1x, 2x and 5x target emulation speed, without a menu.
-Faster modes retain pitched sound unless muted. The fixed-rate audio consumer
-averages source-frame groups at the selected multiplier, preserving stereo;
-the bounded FIFO uses a proportionate fill target. Speed changes are adopted
-at the next audio callback without reopening the device. Only the consumer
-trims excess old-speed backlog to the new fill target. The libretro fast-forward query reflects
-the selected mode, with video and audio still enabled. Emulation/rendering
-runs on the sole owner thread; no emulation internals change. Frontend
-presentation is bounded to 60 Hz above 1x. Achieved speed remains a measurement,
-not a guarantee from the selected multiplier.
+The hourglass toggles between normal time and the remembered time scale.
+Holding it opens an anchored slider: zero pauses, finite settings span roughly
+0.05x to 5x, and the maximum endpoint is uncapped. Moving the slider enables
+the chosen scale; toggling it off retains that choice. Existing Normal/Double/
+Quintuple preferences migrate without changing their active effect. The slider
+changes wall-time pacing, preserving guest clock ratios and device timing.
+Zero time is separate from manual pause and interruption gates. Restoring
+normal time does not clear a manual pause; Play from a zero-time pause returns
+to normal time. Background play cannot run at zero time.
+
+The fixed-rate audio consumer uses fractional weighted source-frame groups,
+preserving stereo and audible pitch changes without allocations or locks.
+Only the consumer advances its cursor or trims old-rate backlog. Uncapped
+audio adapts to bounded queue fill; its bounded resampling work does not cap
+guest execution. Presentation remains bounded to 60 Hz above 1x. PS2 coalesces
+requested rate changes to at most 20 per second and keeps audio/frontend pacing
+on the applied rate. The native CPU owner changes its existing limiter deadline
+without a full settings reload or a pause/resume transition. Zero-time pause
+uses the ordinary runtime pause path, rather than the native limiter's zero
+(which means unlimited). Actual achieved speed and Fold audio/UI quality remain
+separate device observations, not guarantees from a target setting.
 
 The FIFO has 16,384 source-frame slots. Foreground play targets about 25 ms
 of output; opt-in minimized playback targets 50 ms to tolerate background

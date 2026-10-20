@@ -1,3 +1,4 @@
+use crate::settings::Speed;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 /// One core-thread producer, one real-time consumer. Fixed storage; no locks,
@@ -8,6 +9,8 @@ pub struct AudioQueue {
     write: AtomicUsize,
     volume: AtomicU32,
     speed: AtomicUsize,
+    /// Fraction of the current source frame, owned only by the consumer.
+    phase: AtomicUsize,
     target: AtomicUsize,
     sample_rate: AtomicUsize,
     consumer_limit: AtomicUsize,
@@ -26,7 +29,8 @@ impl AudioQueue {
             read: AtomicUsize::new(0),
             write: AtomicUsize::new(0),
             volume: AtomicU32::new(65536),
-            speed: AtomicUsize::new(1),
+            speed: AtomicUsize::new(100),
+            phase: AtomicUsize::new(0),
             target: AtomicUsize::new(1100),
             sample_rate: AtomicUsize::new(44100),
             consumer_limit: AtomicUsize::new(1100),
@@ -56,10 +60,10 @@ impl AudioQueue {
     }
 
     /// The consumer adopts this at its next callback, without restarting the
-    /// device. Averaging groups retains the faster stream's pitch.
-    pub fn set_speed(&self, multiplier: u8) {
-        assert!(matches!(multiplier, 1 | 2 | 5));
-        self.speed.store(multiplier as usize, Ordering::Relaxed);
+    /// device. Fractional box resampling retains changes in playback pitch.
+    pub fn set_speed(&self, speed: Speed) {
+        self.speed
+            .store(speed.percent() as usize, Ordering::Relaxed);
     }
 
     /// Background scheduling needs more headroom than interactive play. The
@@ -79,7 +83,13 @@ impl AudioQueue {
         self.set_background(false);
     }
     pub fn target_frames(&self) -> usize {
-        self.target.load(Ordering::Relaxed) * self.speed.load(Ordering::Relaxed)
+        let speed = self.speed.load(Ordering::Relaxed);
+        let target = self.target.load(Ordering::Relaxed);
+        if speed == Speed::UNLIMITED.percent() as usize {
+            target
+        } else {
+            (target * speed).div_ceil(100).max(1)
+        }
     }
 
     /// Foreground pause keeps the device stream warm but silent. Only the
@@ -116,6 +126,7 @@ impl AudioQueue {
     pub fn pop(&self, output: &mut [i16]) {
         let paused = self.paused.load(Ordering::Acquire);
         let mut read = self.read.load(Ordering::Relaxed);
+        let mut phase = self.phase.load(Ordering::Relaxed);
         let mut available = self.write.load(Ordering::Acquire).wrapping_sub(read);
         if self.discard_pending.swap(false, Ordering::AcqRel) {
             let discard = self
@@ -125,37 +136,70 @@ impl AudioQueue {
             if discard <= available {
                 read = read.wrapping_add(discard);
                 available -= discard;
+                phase = 0;
             }
         }
         output.fill(0);
         if paused {
             self.read
                 .store(read.wrapping_add(available), Ordering::Release);
+            self.phase.store(0, Ordering::Relaxed);
             return;
         }
-        let speed = self.speed.load(Ordering::Relaxed);
-        let limit = self.target.load(Ordering::Relaxed) * speed;
+        let requested = self.speed.load(Ordering::Relaxed);
+        if requested == 0 {
+            self.read
+                .store(read.wrapping_add(available), Ordering::Release);
+            self.phase.store(0, Ordering::Relaxed);
+            return;
+        }
+        let target = self.target.load(Ordering::Relaxed);
+        let unlimited = requested == Speed::UNLIMITED.percent() as usize;
+        // In uncapped mode source production varies with actual achieved speed.
+        // Queue fill provides bounded feedback without clocks, locks or a second
+        // producer. The audio ratio is bounded; it never caps core execution.
+        let speed = if unlimited {
+            (available * 100 / target).clamp(100, 3200)
+        } else {
+            requested
+        };
+        let limit = if unlimited {
+            self.frames.len()
+        } else {
+            (target * speed).div_ceil(100).max(1)
+        };
         if self.consumer_limit.swap(limit, Ordering::Relaxed) != limit {
             // Only the consumer advances read. Discard excess old-speed
             // backlog, retaining at most the new mode's normal fill target.
             let skip = available.saturating_sub(limit);
             read = read.wrapping_add(skip);
             available -= skip;
+            if skip > 0 {
+                phase = 0;
+            }
         }
-        let count = (output.len() / 2).min(available / speed);
+        let count = (output.len() / 2).min((available * 100).saturating_sub(phase) / speed);
         let volume = self.volume.load(Ordering::Relaxed) as i32;
         for pair in output.chunks_exact_mut(2).take(count) {
             let mut left = 0;
             let mut right = 0;
-            for _ in 0..speed {
+            let mut remaining = speed;
+            while remaining > 0 {
                 let packed = self.frames[read % self.frames.len()].load(Ordering::Relaxed);
-                left += packed as i16 as i32;
-                right += (packed >> 16) as i16 as i32;
-                read = read.wrapping_add(1);
+                let weight = remaining.min(100 - phase);
+                left += packed as i16 as i32 * weight as i32;
+                right += (packed >> 16) as i16 as i32 * weight as i32;
+                remaining -= weight;
+                phase += weight;
+                if phase == 100 {
+                    read = read.wrapping_add(1);
+                    phase = 0;
+                }
             }
             pair[0] = (left / speed as i32 * volume / 65536) as i16;
             pair[1] = (right / speed as i32 * volume / 65536) as i16;
         }
+        self.phase.store(phase, Ordering::Relaxed);
         self.read.store(read, Ordering::Release);
         if count < output.len() / 2 {
             self.underruns.fetch_add(1, Ordering::Relaxed);
@@ -166,6 +210,7 @@ impl AudioQueue {
     pub fn clear_stopped(&self) {
         self.read.store(0, Ordering::Relaxed);
         self.write.store(0, Ordering::Relaxed);
+        self.phase.store(0, Ordering::Relaxed);
         self.discard_before.store(0, Ordering::Relaxed);
         self.discard_pending.store(false, Ordering::Relaxed);
     }
@@ -211,7 +256,7 @@ mod tests {
     fn returning_from_background_trims_extra_latency_without_restarting_sound() {
         let queue = AudioQueue::new(16384);
         queue.set_background(true);
-        queue.set_speed(5);
+        queue.set_speed(Speed::from_percent(500).unwrap());
         assert_eq!(queue.target_frames(), 11025);
         queue.push(&vec![1000; 24000]);
         let mut output = [0; 2];
@@ -233,7 +278,7 @@ mod tests {
         assert_eq!(queue.target_frames(), 1200);
         queue.set_background(true);
         assert_eq!(queue.target_frames(), 2400);
-        queue.set_speed(5);
+        queue.set_speed(Speed::from_percent(500).unwrap());
         assert_eq!(queue.target_frames(), 12000);
         queue.set_sample_rate(44100);
         assert_eq!(queue.target_frames(), 5500);
@@ -243,12 +288,12 @@ mod tests {
     #[test]
     fn live_speed_change_trims_backlog_without_stopping_or_resetting_the_fifo() {
         let queue = AudioQueue::new(8192);
-        queue.set_speed(5);
+        queue.set_speed(Speed::from_percent(500).unwrap());
         queue.push(&vec![1234; 11000]);
         let mut out = [0; 2];
         queue.pop(&mut out);
         assert_eq!(out, [1234; 2]);
-        queue.set_speed(1);
+        queue.set_speed(Speed::NORMAL);
         queue.pop(&mut out);
         assert_eq!(out, [1234; 2]);
         assert_eq!(queue.queued(), 1099);
@@ -278,17 +323,57 @@ mod tests {
     #[test]
     fn speed_resampling_preserves_stereo_order_and_consumes_the_faster_stream() {
         let queue = AudioQueue::new(16);
-        queue.set_speed(2);
+        queue.set_speed(Speed::DOUBLE);
         queue.push(&[100, -100, 300, -300, 500, -500, 700, -700]);
         let mut out = [0; 4];
         queue.pop(&mut out);
         assert_eq!(out, [200, -200, 600, -600]);
         assert_eq!(queue.queued(), 0);
-        queue.set_speed(5);
+        queue.set_speed(Speed::from_percent(500).unwrap());
         queue.push(&[i16::MIN; 10]);
         queue.pop(&mut out[..2]);
         assert_eq!(&out[..2], &[i16::MIN; 2]);
         assert_eq!(queue.queued(), 0);
+    }
+    #[test]
+    fn fractional_audio_keeps_its_phase_across_callbacks_and_slow_motion() {
+        let queue = AudioQueue::new(32);
+        queue.set_speed(Speed::from_percent(150).unwrap());
+        queue.push(&[
+            0, 0, 300, -300, 600, -600, 900, -900, 1200, -1200, 1500, -1500,
+        ]);
+        let mut frame = [0; 2];
+        for expected in [100, 500, 1000, 1400] {
+            queue.pop(&mut frame);
+            assert_eq!(frame, [expected, -expected]);
+        }
+        assert_eq!(queue.queued(), 0);
+        queue.set_speed(Speed::from_percent(50).unwrap());
+        queue.push(&[100, -100, 300, -300]);
+        for expected in [100, 100, 300, 300] {
+            queue.pop(&mut frame);
+            assert_eq!(frame, [expected, -expected]);
+        }
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.underruns.load(Ordering::Relaxed), 0);
+    }
+    #[test]
+    fn uncapped_audio_is_bounded_and_zero_is_silent_without_dividing_by_zero() {
+        let queue = AudioQueue::new(16384);
+        queue.set_speed(Speed::UNLIMITED);
+        queue.push(&vec![1234; 22000]);
+        let mut out = [0; 4];
+        queue.pop(&mut out);
+        assert_eq!(out, [1234; 4]);
+        assert_eq!(queue.queued(), 10980);
+        queue.set_speed(Speed::NORMAL);
+        queue.pop(&mut out);
+        assert_eq!(queue.queued(), 1098);
+        queue.set_speed(Speed::PAUSED);
+        queue.pop(&mut out);
+        assert_eq!(out, [0; 4]);
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.underruns.load(Ordering::Relaxed), 0);
     }
     #[test]
     fn queue_wraps_bounds_latency_and_fills_silence() {

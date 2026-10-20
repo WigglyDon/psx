@@ -1,6 +1,7 @@
 //! Small native menu model. No platform handles or emulation ownership.
 use crate::artwork::Artwork;
 use crate::input::{DpadFeedback, Layout, Preset, Rect};
+use crate::settings::Speed;
 use std::time::{Duration, Instant};
 
 pub const ROW_HEIGHT: f32 = 64.;
@@ -118,6 +119,7 @@ pub struct Row {
     pub artwork: Option<Artwork>,
     pub toggle: Option<bool>,
     pub slider: Option<u8>,
+    pub slider_label: Option<String>,
     pub secondary: bool,
 }
 
@@ -132,7 +134,8 @@ pub struct Visuals {
     pub has_game: bool,
     pub audio_blocked: bool,
     pub playback_paused: bool,
-    pub playback_speed: u8,
+    pub playback_speed: Speed,
+    pub timescale_enabled: bool,
     pub muted: bool,
     pub axes: [i16; 4],
     pub pause_overlay: f32,

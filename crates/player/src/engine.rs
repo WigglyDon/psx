@@ -4,6 +4,7 @@ use crate::{
     ps2,
     retro::{self, HostConfig},
     saves::MemoryCard,
+    settings::Speed,
 };
 use std::path::{Path, PathBuf};
 type Result<T> = std::result::Result<T, String>;
@@ -12,9 +13,12 @@ pub enum Core {
     Ps2(Box<ps2::Core>, PathBuf),
 }
 impl Core {
-    pub fn set_speed(&mut self, speed: u8) -> Result<()> {
+    pub fn set_speed(&mut self, speed: Speed) -> Result<Speed> {
+        if speed.is_paused() {
+            return Err("Zero time must pause the runtime.".into());
+        }
         match self {
-            Self::Ps1(_) => Ok(()),
+            Self::Ps1(_) => Ok(speed),
             Self::Ps2(core, _) => core.set_speed(speed),
         }
     }

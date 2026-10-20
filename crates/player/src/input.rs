@@ -492,7 +492,7 @@ impl Layout {
         } else if index == self.controls.len() + 2 {
             "Pause / play"
         } else if index == self.controls.len() + 3 {
-            "Emulation speed"
+            "Time scale"
         } else if index == self.controls.len() + 4 {
             "Mute"
         } else if index == self.controls.len() + 5 {
