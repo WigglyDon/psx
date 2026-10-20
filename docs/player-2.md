@@ -4,6 +4,24 @@ Active work: [issue #2](https://github.com/WigglyDon/psx/issues/2) and its
 [Master dispatch](https://github.com/WigglyDon/psx/issues/2#issuecomment-6272753838).
 The dispatch supersedes the old hold on issue #1's formal closure.
 
+## Current UI qualification
+
+The October 20 02:31–02:44 UTC window installed `a8e2a3d38c5f` after a fresh
+current-data/APK backup. Darkstone's paused PS1 title restored; the analytic
+controls, text, settings and time popover rendered on the Fold. Slider UI
+reached zero/Paused and maximum/Uncapped, then returned to normal 1× with 2×
+remembered. Manual pause remained independent; running-rate/audio acceptance
+does not follow. Repeated USB loss prevented PS2 testing and final lock/screen-off
+verification. Device access was released and the owner informed.
+
+The subsequent owner-directed UI increment prepares sharp flat sheets, adaptive
+game cards, fixed toolbar corner pairs, explicit visible-status-bar clearance
+and larger inner-display picture candidates. Saved game-control geometry takes
+precedence; generated targets stay at least 48 points, sticks 104 points. Host geometry,
+input and actual GLES previews are distinct from device acceptance. The ordinary
+PS2 card failure, gameplay/save/performance checks and Red Dead transfer remain
+pending under issue #2.
+
 ## Preserved baseline
 
 The source baseline is `a1bdd2810e67ede3377383613b397776f966748c`.

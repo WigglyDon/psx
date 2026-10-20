@@ -66,8 +66,8 @@ circles, rings, strokes and the molded D-pad cross. Screen derivatives keep
 edge smoothing at physical-pixel scale across densities and custom sizes;
 small polygon icons use an edge-only coverage fringe. A bounded 72-pixel
 font atlas with mipmaps supplies text, with sampler binding isolated from
-the donor. Charcoal sheets, restrained material shading and shared control
-edges are rendered in the existing UI batch; rounded sheet clipping also
+the donor. Flat charcoal sheets, small corners, fine boundaries and restrained
+control shading are rendered in the existing UI batch; sheet clipping also
 contains scrolling content and opaque header/footer masks. This requires no multisampled
 game framebuffer or full-screen smoothing pass, and does not change native
 game resolution, game filtering, controller hit targets or saved layouts.
@@ -166,17 +166,19 @@ The first screen offers saved games and Add games. During play the cog opens
 a native settings sheet over the running game; opening it releases input
 without changing pause intent. Pause/play and speed have separate controls.
 Tapping outside a sheet dismisses it after lift, without passing that touch
-through to the game. Embedded navigation uses compact console panels,
-framed highlights, small headers and explicit on/off indicators. The library's
-Add and Settings icons live in its app bar; primary actions stay distinct
+through to the game. Embedded navigation uses compact flat panels, restrained
+highlights and explicit switch positions. The library is an adaptive grid of
+game cards with local artwork, two-line titles, console/disc details and a
+separate 48-point options target. Rendering, tap/scroll geometry and responsive
+column counts share one Rust model. Its Add and Settings icons live in the app bar; primary actions stay distinct
 from back navigation. Controls occupy separate space by default;
 the largest clear 4:3 picture is computed from their rectangular targets.
 The default layout compares arrangements at the actual window dimensions.
 On a sufficiently wide square display, shoulders and system buttons occupy
-the space between thumb clusters. The dock adjusts its height while retaining
-face-button sizes and directional response. Thumb clusters leave 32 logical
-points below their lowest target before local camera avoidance. The compact band reduces vertical spread
-while retaining face-button size and a 16-point gap between Triangle and Cross;
+the space between thumb clusters. The dock adjusts its height and face-cap size
+to recover a full-width picture where feasible, retaining at least 48-point
+targets and directional response. Thumb clusters leave 32 logical points below
+their lowest target before local camera avoidance. A 16-point gap separates Triangle and Cross;
 the largest clear picture is recomputed around those minimum touch bounds.
 Defaults now use larger thumb wells and action caps. Landscape wells grow into
 spare rail width before taking height from a full-height picture. A side camera
@@ -191,9 +193,9 @@ then finds the largest clear 4:3 picture around controls and camera rectangles.
 The default picture centers on the full available display width when it fits.
 Camera avoidance is derived for the current window without overwriting saved
 control positions. The editor uses the same placement/defaults, and anchored
-volume panels slide clear of camera bounds. Shoulder caps have simple symmetric
-rounded faces. Landscape pairs sit level, with L1/R1 outside and L2/R2 inside;
-Start/Select have smaller pill faces inside their retained touch targets, at
+volume/time panels slide clear of camera bounds. Shoulder caps have simple symmetric
+faces with small corners. Landscape pairs sit level, with L1/R1 outside and L2/R2 inside;
+Start/Select have smaller faces inside their retained touch targets, at
 the inner ends of wide-display side rails. Rendering and hit areas remain distinct.
 
 On Android 12 and later, `BEHAVIOR_DEFAULT` requests hidden navigation with
@@ -215,21 +217,25 @@ cancel the timeout; a game without audio focus does not re-hide system UI.
 This keeps the gesture strip reserved and the first Home gesture available,
 without forcing device-wide settings or using a painted-over system handle.
 The owner checked folding and rotation and reported that return-to-fullscreen
-works. Revealed status bars now use a stable fullscreen layout: their temporary
-visibility does not reduce picture height or move the toolbar into the play
-area. Navigation's reserved strip, caption decoration and camera bounds remain
-excluded. Visible-bar layout is retained during document picking or a game's
-audio-focus interruption. Insets remain tagged to the actual drawable size.
+works. Fullscreen drawable dimensions remain independent of transient status
+decoration. A callback-only platform shim forwards applied-inset changes to
+Rust, which queries actual status visibility and its bounds ignoring visibility.
+This catches transient bars that report zero occupied insets. Toolbar clearance
+and the largest unobstructed picture are recomputed when decoration changes;
+hiding the bar restores the previous maximum. Navigation's reserved strip,
+caption decoration and camera bounds remain excluded. Visible-bar layout is
+retained during picking or audio-focus interruption. Insets remain tagged to
+the actual drawable size.
 
 The less-used system buttons keep their own separate row. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture
-height. The small pause/play, speed, volume and settings toolbar uses a clear
-part of an already excluded top margin when available, avoiding the actual
-camera cutout rectangles. Active fullscreen retains that placement through
-temporary status-bar reveals; outside fullscreen, visible decoration keeps
-the toolbar inside safe content. This recovers picture space without placing touch
-targets over the game. Devices without that space reserve it in the controller
-rails or above the picture. Custom toolbar placement is retained. Android requests `fullUser`
+height. Pause/time are anchored upper-left; sound/settings upper-right in every
+orientation. Each pair can move inward around a camera while retaining its side.
+A clear camera margin can host them only while OS decoration is absent; visible
+status bars push them below the actual bar. Targets never cover the game.
+These app-chrome anchors supersede legacy toolbar rectangles; stored controller
+profiles remain intact. The controller editor edits game inputs and the picture,
+and its miniature scales the complete drawing. Android requests `fullUser`
 orientation: all four rotations when
 the user permits rotation, respecting their rotation lock.
 [Android orientation contract](https://developer.android.com/guide/topics/manifest/activity-element#screen)
@@ -435,8 +441,11 @@ storage, retaining all existing PS1 profile names and element positions.
 PS2 defaults reuse the PS1 controls and cap styling, adding primary lower
 thumb sticks and secondary stick-click keys; they do not change PS1 defaults.
 The mirrored PS2 lower band shares height between each stick and an inner
-system/click column. Digital clusters sit above it, with matched bounds;
-shoulders use clear middle columns on square displays or the side rails.
+system/click column. On wide inner displays a compact candidate places secondary
+digital clusters inside and slightly above the primary sticks, with shoulders
+in the middle. It wins only when its clear 4:3 picture is larger. Narrower
+layouts keep stacked digital/stick bands; landscape retains full-height picture
+space between side rails.
 Generated button targets stay at least 48 points and sticks at least 104
 points on usable displays. The clear-picture solver excludes them all, and
 saved custom rectangles retain precedence. Transient tiny surfaces scale only

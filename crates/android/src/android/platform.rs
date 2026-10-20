@@ -29,11 +29,13 @@ pub enum Event {
     Error(String),
     Notice(String),
     LaunchError(String),
+    RefreshInsets,
     Insets {
         size: [i32; 2],
         density: f32,
         edges: [i32; 4],
         fullscreen_edges: Option<[i32; 4]>,
+        status_bar_top: i32,
         cutouts: Vec<[i32; 4]>,
         top_margin_available: bool,
         hidden_bars_visible: bool,
@@ -90,6 +92,14 @@ pub fn events() -> Vec<Event> {
         .lock()
         .map(|mut q| q.drain(..).collect())
         .unwrap_or_default()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_machinerhythm_psx_PsxActivity_insetsChanged(
+    _env: JNIEnv,
+    _this: JObject,
+) {
+    post(Event::RefreshInsets);
 }
 
 #[no_mangle]
@@ -435,6 +445,7 @@ impl Platform {
             // its top edge. Requested immersive flags alone do not establish
             // this: Android can keep a call indicator/status bar visible.
             let mut hidden_bars_visible = false;
+            let mut status_bar_top = 0;
             let top_margin_available = if sdk >= 30 {
                 let bars = env
                     .call_static_method("android/view/WindowInsets$Type", "systemBars", "()I", &[])?
@@ -453,6 +464,17 @@ impl Platform {
                 let status_visible = env
                     .call_method(&insets, "isVisible", "(I)Z", &[JValue::Int(status)])?
                     .z()?;
+                if status_visible {
+                    let bounds = env
+                        .call_method(
+                            &insets,
+                            "getInsetsIgnoringVisibility",
+                            "(I)Landroid/graphics/Insets;",
+                            &[JValue::Int(status)],
+                        )?
+                        .l()?;
+                    status_bar_top = env.get_field(bounds, "top", "I")?.i()?;
+                }
                 if sdk >= 31 {
                     let navigation = env
                         .call_static_method(
@@ -620,6 +642,7 @@ impl Platform {
                 density,
                 edges,
                 fullscreen_edges,
+                status_bar_top,
                 cutouts,
                 top_margin_available,
                 hidden_bars_visible,

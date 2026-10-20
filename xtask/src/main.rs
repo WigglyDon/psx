@@ -477,6 +477,14 @@ public final class PsxActivity extends android.app.NativeActivity implements
  private native void documentResult(int request, int result, android.content.Intent data);
  private native void audioFocusChanged(int focus);
  private native void gameIntent(android.content.Intent intent);
+ private native void insetsChanged();
+ @Override public void onCreate(android.os.Bundle state) {
+  super.onCreate(state);
+  getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
+   android.view.WindowInsets applied = view.onApplyWindowInsets(insets);
+   insetsChanged(); return applied;
+  });
+ }
  @Override protected void onNewIntent(android.content.Intent intent) {
   super.onNewIntent(intent); gameIntent(intent);
  }
@@ -710,6 +718,31 @@ fn verify_apk() -> Result<()> {
         }
         if headers.contains("libc++_shared.so") {
             return Err("The APK is missing a required C++ shared runtime.".into());
+        }
+        if name == "libpsx.so" {
+            let symbols = output(&mut command(&readelf, ["--dyn-syms", "--wide", &path]))?;
+            for callback in [
+                "documentResult",
+                "audioFocusChanged",
+                "gameIntent",
+                "insetsChanged",
+            ] {
+                let required = format!("Java_com_machinerhythm_psx_PsxActivity_{callback}");
+                if !symbols.lines().any(|line| {
+                    let fields: Vec<_> = line.split_whitespace().collect();
+                    fields.len() >= 8
+                        && fields[3] == "FUNC"
+                        && fields[4] == "GLOBAL"
+                        && fields[5] == "DEFAULT"
+                        && fields[6] != "UND"
+                        && fields[7] == required
+                }) {
+                    return Err(format!(
+                        "The Rust host lacks required callback export {required}."
+                    )
+                    .into());
+                }
+            }
         }
         if name == "libarmsx2.so" {
             let symbols = output(&mut command(&readelf, ["--dyn-syms", "--wide", &path]))?;

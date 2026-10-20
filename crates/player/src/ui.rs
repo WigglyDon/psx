@@ -522,7 +522,9 @@ impl Editor {
             });
             return;
         }
-        if let Some(index) = (0..self.layout.element_count())
+        if let Some(index) = self
+            .layout
+            .controller_elements()
             .rev()
             .find(|i| self.map(self.layout.element(*i)).contains(x, y))
         {
@@ -765,7 +767,10 @@ impl Editor {
         }
         match button {
             EditorButton::Next => {
-                let mut selections: Vec<_> = (0..=self.layout.element_count())
+                let mut selections: Vec<_> = self
+                    .layout
+                    .controller_elements()
+                    .chain(std::iter::once(self.layout.element_count()))
                     .filter(|i| !self.group_actions || !self.action_selected(*i))
                     .collect();
                 if self.group_actions {
@@ -1198,8 +1203,7 @@ impl Menu {
     pub fn surface(&self, width: f32, height: f32) -> Rect {
         if let Some(anchor) = self.anchor {
             let w = (width - 24.).clamp(0., 320.);
-            let h = (48. + 16. + self.rows.iter().map(|r| r.height).sum::<f32>())
-                .min((height - 24.).max(0.));
+            let h = (48. + 16. + self.content_height(w)).min((height - 24.).max(0.));
             let panel = Rect::new(
                 (anchor.x + anchor.w / 2. - w / 2.).clamp(12., (width - w - 12.).max(12.)),
                 (anchor.y + anchor.h + 8.).clamp(8., (height - h - 8.).max(8.)),
@@ -1244,10 +1248,69 @@ impl Menu {
                 12. + self.description_lines.len().min(4) as f32 * 20.
             };
         let footer = if self.has_footer() { 76. } else { 24. };
-        let h = (header + footer + self.rows.iter().map(|r| r.height).sum::<f32>())
+        let h = (header + footer + self.content_height(w))
             .min((height - 24.).max(0.))
             .min(height * 0.72);
         Rect::new((width - w) / 2., (height - h) / 2., w, h)
+    }
+
+    fn card_columns(width: f32) -> usize {
+        ((Self::column(width).w + 12.) / 168.).floor().clamp(1., 4.) as usize
+    }
+    pub fn content_height(&self, width: f32) -> f32 {
+        if self.home {
+            let lines = self.rows.len().div_ceil(Self::card_columns(width));
+            (lines as f32 * 176. - 12.).max(0.)
+        } else {
+            self.rows.iter().map(|r| r.height).sum()
+        }
+    }
+    pub fn row_rect(&self, index: usize, width: f32, height: f32) -> Rect {
+        let viewport = self.viewport(width, height);
+        if self.home {
+            let columns = Self::card_columns(width);
+            let card = (viewport.w - (columns - 1) as f32 * 12.) / columns as f32;
+            Rect::new(
+                viewport.x + (index % columns) as f32 * (card + 12.),
+                viewport.y - self.scroll + (index / columns) as f32 * 176.,
+                card,
+                164.,
+            )
+        } else {
+            Rect::new(
+                viewport.x,
+                viewport.y - self.scroll
+                    + self.rows.iter().take(index).map(|r| r.height).sum::<f32>(),
+                viewport.w,
+                self.rows.get(index).map_or(0., |r| r.height),
+            )
+        }
+    }
+    pub fn secondary_rect(&self, index: usize, width: f32, height: f32) -> Rect {
+        let r = self.row_rect(index, width, height);
+        Rect::new(r.x + r.w - 48., r.y, 48., if self.home { 48. } else { r.h })
+    }
+    fn row_at(&self, x: f32, y: f32, width: f32, height: f32) -> Option<usize> {
+        let viewport = self.viewport(width, height);
+        if !viewport.contains(x, y) {
+            return None;
+        }
+        if self.home {
+            let columns = Self::card_columns(width);
+            let span = (viewport.w + 12.) / columns as f32;
+            let col = ((x - viewport.x) / span) as usize;
+            let line = ((y - viewport.y + self.scroll).max(0.) / 176.) as usize;
+            let index = line * columns + col;
+            (index < self.rows.len() && self.row_rect(index, width, height).contains(x, y))
+                .then_some(index)
+        } else {
+            let target = y - viewport.y + self.scroll;
+            let mut offset = 0.;
+            self.rows.iter().position(|r| {
+                offset += r.height;
+                target < offset
+            })
+        }
     }
 
     pub fn viewport(&self, width: f32, height: f32) -> Rect {
@@ -1291,23 +1354,16 @@ impl Menu {
     pub fn clamp_scroll(&mut self, width: f32, height: f32) {
         self.scroll = self.scroll.clamp(
             0.,
-            (self.rows.iter().map(|r| r.height).sum::<f32>() - self.viewport(width, height).h)
-                .max(0.),
+            (self.content_height(width) - self.viewport(width, height).h).max(0.),
         );
     }
 
     pub fn pressed_row(&self, width: f32, height: f32) -> Option<usize> {
         let (_, x, y, moved) = self.pointer?;
-        let viewport = self.viewport(width, height);
-        if moved || !viewport.contains(x, y) {
+        if moved {
             return None;
         }
-        let target = y - viewport.y + self.scroll;
-        let mut offset = 0.;
-        self.rows.iter().position(|row| {
-            offset += row.height;
-            target < offset
-        })
+        self.row_at(x, y, width, height)
     }
 
     pub fn slider_rect(&self, index: usize, width: f32, height: f32) -> Rect {
@@ -1410,20 +1466,15 @@ impl Menu {
         if self.has_footer() && Self::back_rect(width, height).contains(x, y) {
             return Some(usize::MAX);
         }
-        let viewport = self.viewport(width, height);
-        if !viewport.contains(x, y) {
-            return None;
-        }
-        let target = y - viewport.y + self.scroll;
-        let mut offset = 0.;
-        for (index, row) in self.rows.iter().enumerate() {
-            offset += row.height;
-            if target < offset {
-                if row.secondary && x >= viewport.x + viewport.w - 48. {
-                    return Some(Self::SECONDARY + index);
-                }
-                return (row.enabled && row.slider.is_none()).then_some(index);
+        if let Some(index) = self.row_at(x, y, width, height) {
+            let row = &self.rows[index];
+            if row.enabled
+                && row.secondary
+                && self.secondary_rect(index, width, height).contains(x, y)
+            {
+                return Some(Self::SECONDARY + index);
             }
+            return (row.enabled && row.slider.is_none()).then_some(index);
         }
         None
     }
@@ -1438,6 +1489,55 @@ impl Menu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn game_cards_share_render_hit_scroll_and_options_geometry() {
+        for width in [360., 443., 600., 852.] {
+            let height = 380.;
+            let rows = (0..11)
+                .map(|i| {
+                    let mut r = Row::action(format!("Game {i}"), "PlayStation");
+                    r.secondary = true;
+                    r
+                })
+                .collect();
+            let mut menu = Menu::new("Games", "", rows, "Back");
+            menu.home = true;
+            let first = menu.row_rect(0, width, height);
+            let second = menu.row_rect(1, width, height);
+            assert_eq!(first.y, second.y);
+            assert!(first.x + first.w < second.x);
+            let (x, y) = (second.x + 12., second.y + 90.);
+            menu.down(1, x, y, width, height);
+            assert_eq!(menu.pressed_row(width, height), Some(1));
+            assert_eq!(menu.up(2, x, y, width, height), None);
+            assert_eq!(menu.up(1, x, y, width, height), Some(1));
+            let options = menu.secondary_rect(1, width, height);
+            menu.down(1, options.x + 24., options.y + 24., width, height);
+            assert_eq!(
+                menu.up(1, options.x + 24., options.y + 24., width, height),
+                Some(Menu::SECONDARY + 1)
+            );
+            assert!(menu
+                .row_at(first.x + first.w + 6., first.y + 80., width, height)
+                .is_none());
+            menu.scroll = 10000.;
+            menu.clamp_scroll(width, height);
+            let last = menu.row_rect(10, width, height);
+            assert!(
+                (last.y + last.h - menu.viewport(width, height).y - menu.viewport(width, height).h)
+                    .abs()
+                    < 0.01
+            );
+            assert_eq!(
+                menu.row_at(last.x + 12., last.y + 80., width, height),
+                Some(10)
+            );
+            menu.clamp_scroll(852., height);
+            assert!(
+                menu.scroll <= (menu.content_height(852.) - menu.viewport(852., height).h).max(0.)
+            );
+        }
+    }
     #[test]
     fn side_camera_moves_the_volume_panel_without_losing_live_slider_input() {
         let mut row = Row::action("Game volume", "");

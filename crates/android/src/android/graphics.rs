@@ -13,6 +13,7 @@ use text::Text;
 
 const API: egl::Instance<egl::Static> = egl::Instance::new(egl::Static);
 const VERTEX_FLOATS: usize = 16;
+const SHEET_RADIUS: f32 = 3.;
 pub struct Graphics {
     display: egl::Display,
     config: egl::Config,
@@ -496,18 +497,6 @@ impl Graphics {
             if menu.over_game && menu.anchor.is_none() {
                 canvas.polygon(&[(0., 0.), (w, 0.), (w, h), (0., h)], [0., 0., 0., 0.2]);
             }
-            if menu.over_game || menu.anchor.is_some() {
-                canvas.rounded_radius(
-                    Rect::new(panel.x - 3., panel.y + 3., panel.w + 6., panel.h + 3.),
-                    [0., 0., 0., 0.18],
-                    20.,
-                );
-                canvas.rounded_radius(
-                    Rect::new(panel.x - 1., panel.y + 2., panel.w + 2., panel.h),
-                    [0., 0., 0., 0.25],
-                    18.,
-                );
-            }
             menu_start = (canvas.vertices.len() / VERTEX_FLOATS) as i32;
             menu_clip = Some(panel);
             canvas.w = panel.w;
@@ -560,7 +549,10 @@ impl Graphics {
                     panel.w * density,
                     panel.h * density,
                 );
-                gl.uniform_1_f32(clip_radius.as_ref(), 18. * density);
+                gl.uniform_1_f32(
+                    clip_radius.as_ref(),
+                    SHEET_RADIUS.min(panel.w / 2.).min(panel.h / 2.) * density,
+                );
             }
             gl.enable(glow::SCISSOR_TEST);
             gl.scissor(
@@ -796,15 +788,22 @@ impl Canvas<'_> {
         let viewport = menu.viewport(self.w, self.h);
         let background = [0.055, 0.063, 0.075, 1.];
         let radius = if menu.over_game || menu.anchor.is_some() {
-            18.
+            SHEET_RADIUS
         } else {
             0.
         };
         self.rounded_radius(Rect::new(0., 0., self.w, self.h), background, radius);
-        let total = menu.rows.iter().map(|r| r.height).sum::<f32>();
+        let total = menu.content_height(self.w);
         let pressed = menu.pressed_row(self.w, self.h);
         let mut y = viewport.y - menu.scroll;
         for (index, row) in menu.rows.iter().enumerate() {
+            if menu.home {
+                let r = menu.row_rect(index, self.w, self.h);
+                if r.y + r.h > viewport.y && r.y < viewport.y + viewport.h {
+                    self.game_card(r, row, time, pressed == Some(index));
+                }
+                continue;
+            }
             if y + row.height > viewport.y && y < viewport.y + viewport.h {
                 if row.enabled {
                     if pressed == Some(index) {
@@ -926,13 +925,17 @@ impl Canvas<'_> {
                             } else {
                                 [0.22, 0.25, 0.28, 1.]
                             },
-                            13.,
+                            3.,
                         );
-                        self.disc(
-                            if on { right - 13. } else { right - 31. },
-                            y + 32.,
-                            10.,
+                        self.rounded_radius(
+                            Rect::new(
+                                if on { right - 23. } else { right - 41. },
+                                y + 22.,
+                                20.,
+                                20.,
+                            ),
                             [0.90, 0.94, 0.94, 1.],
+                            2.,
                         );
                     }
                     if index + 1 < menu.rows.len() {
@@ -1055,9 +1058,65 @@ impl Canvas<'_> {
         }
     }
     fn panel(&mut self, r: Rect, color: [f32; 4]) {
-        let radius = 10_f32.min(r.h / 2.);
-        self.shape(r, radius, 0., color, 0.12, 0.);
+        let radius = 3_f32.min(r.h / 2.);
+        self.shape(r, radius, 0., color, 0., 0.);
         self.shape(r, radius, self.pixel, [0.65, 0.73, 0.78, 0.16], 0., 0.);
+    }
+    fn game_card(&mut self, r: Rect, row: &Row, time: f64, pressed: bool) {
+        self.shape(
+            r,
+            2.,
+            0.,
+            if pressed {
+                [0.10, 0.19, 0.20, 1.]
+            } else {
+                [0.075, 0.087, 0.10, 1.]
+            },
+            0.,
+            0.,
+        );
+        self.shape(
+            r,
+            2.,
+            self.pixel,
+            if pressed {
+                [0.40, 0.78, 0.71, 1.]
+            } else {
+                [0.36, 0.42, 0.47, 0.28]
+            },
+            0.,
+            0.,
+        );
+        if let Some(art) = &row.artwork {
+            self.artwork(Rect::new(r.x + 12., r.y + 12., 56., 56.), art, time);
+        }
+        if row.secondary {
+            for y in [17., 23., 29.] {
+                self.disc(r.x + r.w - 24., r.y + y, 1.4, [0.64, 0.72, 0.77, 1.]);
+            }
+        }
+        let lines = wrap(self.font, &row.title, r.w - 24., 15.);
+        for (i, line) in lines.iter().take(2).enumerate() {
+            let line = if i == 1 && lines.len() > 2 {
+                elide(self.font, &format!("{line}…"), r.w - 24., 15.)
+            } else {
+                line.clone()
+            };
+            self.text(
+                r.x + 12.,
+                r.y + 80. + i as f32 * 20.,
+                &line,
+                15.,
+                [0.94, 0.96, 0.98, 1.],
+            );
+        }
+        self.text(
+            r.x + 12.,
+            r.y + r.h - 28.,
+            &elide(self.font, &row.detail, r.w - 24., 12.),
+            12.,
+            [0.58, 0.68, 0.74, 1.],
+        );
     }
     fn vertex(
         &mut self,
@@ -1271,7 +1330,7 @@ impl Canvas<'_> {
         );
     }
     fn rounded(&mut self, r: Rect, c: [f32; 4]) {
-        let radius = 12_f32.min(r.h / 2.).min(r.w / 2.);
+        let radius = 3_f32.min(r.h / 2.).min(r.w / 2.);
         self.rounded_radius(r, c, radius);
     }
     fn rounded_radius(&mut self, r: Rect, c: [f32; 4], radius: f32) {
@@ -1295,17 +1354,10 @@ impl Canvas<'_> {
             self.rounded_radius(
                 Rect::new(cap.x, cap.y + 2., cap.w, cap.h),
                 [0.015, 0.02, 0.025, 0.95],
-                cap.h / 2.,
+                3.,
             );
-            self.shape(cap, cap.h / 2., 0., body, 0.23, 0.);
-            self.shape(
-                cap,
-                cap.h / 2.,
-                self.pixel,
-                [0.52, 0.57, 0.61, 0.5],
-                0.35,
-                0.,
-            );
+            self.shape(cap, 3., 0., body, 0.08, 0.);
+            self.shape(cap, 3., self.pixel, [0.52, 0.57, 0.61, 0.5], 0.1, 0.);
         } else {
             let cap = Rect::new(
                 r.x + 1.,
@@ -1313,14 +1365,14 @@ impl Canvas<'_> {
                 r.w - 2.,
                 r.h * 5. / 6.,
             );
-            let radius = (cap.h * 0.2).min(8.);
+            let radius = 3.;
             self.rounded_radius(
                 Rect::new(cap.x, cap.y + 2., cap.w, cap.h),
                 [0.015, 0.02, 0.025, 0.95],
                 radius,
             );
-            self.shape(cap, radius, 0., body, 0.23, 0.);
-            self.shape(cap, radius, self.pixel, [0.52, 0.57, 0.61, 0.5], 0.35, 0.);
+            self.shape(cap, radius, 0., body, 0.08, 0.);
+            self.shape(cap, radius, self.pixel, [0.52, 0.57, 0.61, 0.5], 0.1, 0.);
         }
         let size = if matches!(label, "START" | "SELECT" | "L3" | "R3") {
             12_f32
@@ -1347,7 +1399,7 @@ impl Canvas<'_> {
         // The cross and marker stay inside the reserved well during drift.
         let arm = radius * 0.91;
         let cap = Rect::new(x - arm, y - arm, arm * 2., arm * 2.);
-        let corner = radius * 0.075;
+        let corner = radius * 0.035;
         self.primitive(
             Rect::new(cap.x, cap.y + 2., cap.w, cap.h),
             [corner, 0.],
@@ -1355,12 +1407,12 @@ impl Canvas<'_> {
             [2., 0.],
             0.,
         );
-        self.primitive(cap, [corner, 0.], [0.105, 0.125, 0.145, 1.], [2., 0.25], 0.);
+        self.primitive(cap, [corner, 0.], [0.105, 0.125, 0.145, 1.], [2., 0.08], 0.);
         self.primitive(
             cap,
             [corner, self.pixel],
             [0.49, 0.55, 0.59, 0.6],
-            [2., 0.35],
+            [2., 0.1],
             0.,
         );
         for (dx, dy, bit) in [(0., -1., 4), (-1., 0., 6), (1., 0., 7), (0., 1., 5)] {
@@ -1443,13 +1495,13 @@ impl Canvas<'_> {
                 0.145 + strength * 0.11,
                 background[3],
             ];
-            self.shape(cap, radius, 0., body, 0.25, 0.);
+            self.shape(cap, radius, 0., body, 0.10, 0.);
             self.shape(
                 cap,
                 radius,
                 1.,
                 [0.55, 0.61, 0.65, 0.48 + strength * 0.3],
-                0.35,
+                0.1,
                 0.,
             );
             let a = r.w * 0.20;

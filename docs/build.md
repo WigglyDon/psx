@@ -78,6 +78,10 @@ audio or emulation policy. All those decisions and SDK calls are Rust.
 Its static `System.loadLibrary("psx")` associates the native library with the
 class loader so Java can resolve those exported callbacks; NativeActivity's
 own native loading does not establish that JNI association.
+An applied-window-insets listener similarly delegates the platform's default
+handling and forwards only a change notification to Rust. NativeActivity does
+not expose that callback directly; Rust owns visibility/bounds queries, toolbar
+clearance, layout and re-hide decisions. The bounded polling fallback remains.
 This is the minimal platform callback exception allowed by `AGENTS.md`.
 
 Android also requires a Service subclass for optional background playback.

@@ -6,7 +6,7 @@ A native PlayStation player, with working PS1 playback and PS2 integration
 under development. Choose your games, make yourself comfortable,
 and play. Built by Machine Rhythm, starting with Android foldables.
 
-- A local game library with explicit storage scanning and multi-disc support.
+- A local game-card library with explicit storage scanning and multi-disc support.
 - A large, unstretched picture, separate from the controls by default.
 - A following D-pad, simultaneous touch input and press haptics.
 - Movable, resizable controls with separate saved display layouts.

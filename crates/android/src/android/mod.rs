@@ -123,6 +123,7 @@ struct Player {
     density: f32,
     insets: [i32; 4],
     fullscreen_insets: Option<[i32; 4]>,
+    status_bar_top: i32,
     inset_size: [i32; 2],
     last_insets_request: Instant,
     rehide_bars_at: Option<Instant>,
@@ -202,6 +203,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         density: 1.,
         insets: [0; 4],
         fullscreen_insets: None,
+        status_bar_top: 0,
         inset_size: [0; 2],
         last_insets_request: now,
         rehide_bars_at: None,
@@ -672,17 +674,19 @@ impl Player {
         let preset = self.controller_settings.preset(w, h);
         let cutouts = self.cutout_rects();
         self.layout = preset.layout_with_cutouts(w, h, &cutouts);
-        if self.inset_size == [self.graphics.width, self.graphics.height]
-            && (fullscreen.is_some() || self.top_margin_available)
-            && self.activity.audio_focus
-        {
-            self.layout.toolbar_in_top_margin(
-                w,
-                h,
-                self.graphics.content.y / self.density,
-                &cutouts,
-            );
-        }
+        let matching = self.inset_size == [self.graphics.width, self.graphics.height];
+        let reusable = if matching && self.top_margin_available && self.activity.audio_focus {
+            self.graphics.content.y / self.density
+        } else {
+            0.
+        };
+        let covered = if matching {
+            (self.status_bar_top as f32 - self.graphics.content.y).max(0.) / self.density
+        } else {
+            0.
+        };
+        self.layout
+            .anchor_toolbar(w, h, reusable, covered, &cutouts);
         self.layout.place_game(
             w,
             h,
@@ -693,7 +697,11 @@ impl Player {
         if let Some(menu) = &mut self.menu {
             menu.cutouts = cutouts;
             if menu.anchor.is_some() {
-                menu.anchor = Some(self.layout.mute);
+                menu.anchor = Some(if self.screen == Screen::Timescale {
+                    self.layout.speed
+                } else {
+                    self.layout.mute
+                });
             }
             let panel = menu.surface(w, h);
             menu.description_lines = self
@@ -977,6 +985,7 @@ impl Player {
     fn platform_event(&mut self, app: &AndroidApp, event: Event) {
         self.dirty = true;
         match event {
+            Event::RefreshInsets => self.platform.insets(app),
             Event::Documents(request, intent) => {
                 self.picker = false;
                 if request == PICK_STORAGE {
@@ -1071,6 +1080,7 @@ impl Player {
                 density,
                 edges,
                 fullscreen_edges,
+                status_bar_top,
                 cutouts,
                 top_margin_available,
                 hidden_bars_visible,
@@ -1087,6 +1097,7 @@ impl Player {
                 }
                 if edges != self.insets
                     || fullscreen_edges != self.fullscreen_insets
+                    || status_bar_top != self.status_bar_top
                     || size != self.inset_size
                     || density != self.density
                     || cutouts != self.cutouts
@@ -1094,6 +1105,7 @@ impl Player {
                 {
                     self.insets = edges;
                     self.fullscreen_insets = fullscreen_edges;
+                    self.status_bar_top = status_bar_top;
                     self.inset_size = size;
                     if (0.5..=6.).contains(&density) {
                         self.density = density;
@@ -1713,7 +1725,7 @@ impl Player {
                 add(
                     Action::SetTimescale(self.playback.speed.slider()),
                     "Time scale".into(),
-                    "0 pauses · maximum is uncapped".into(),
+                    "0 pauses · max uncapped".into(),
                 );
                 add(
                     Action::ToggleTimescale,
