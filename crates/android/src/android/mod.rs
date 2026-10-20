@@ -131,7 +131,6 @@ struct Player {
     rehide_bars_at: Option<Instant>,
     playback_changed: Option<Instant>,
     cutouts: Vec<[i32; 4]>,
-    top_margin_available: bool,
     screen: Screen,
     menu: Option<Menu>,
     closing_menu: Option<Menu>,
@@ -212,7 +211,6 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         rehide_bars_at: None,
         playback_changed: None,
         cutouts: Vec::new(),
-        top_margin_available: false,
         screen: Screen::Home,
         menu: None,
         closing_menu: None,
@@ -677,16 +675,6 @@ impl Player {
         let preset = self.controller_settings.preset(w, h);
         let cutouts = self.cutout_rects();
         let matching = self.inset_size == [self.graphics.width, self.graphics.height];
-        let reusable = if matching && self.top_margin_available && self.activity.audio_focus {
-            self.graphics.content.y / self.density
-        } else {
-            0.
-        };
-        let covered = if matching {
-            (self.status_bar_top as f32 - self.graphics.content.y).max(0.) / self.density
-        } else {
-            0.
-        };
         let picture = safe_content(
             [self.graphics.width, self.graphics.height],
             self.inset_size,
@@ -696,10 +684,16 @@ impl Player {
         );
         let picture = Rect::new(
             (picture.x - content.x) / self.density,
-            (picture.y - content.y) / self.density - reusable,
+            (picture.y - content.y) / self.density,
             picture.w / self.density,
-            picture.h / self.density + reusable,
+            picture.h / self.density,
         );
+        let reusable = (-picture.y).max(0.);
+        let covered = if matching {
+            ((self.status_bar_top as f32 - content.y) / self.density - picture.y).max(0.)
+        } else {
+            0.
+        };
         self.layout = PlayerViewport {
             controls: [w, h],
             picture,
@@ -1101,7 +1095,6 @@ impl Player {
                 picture_edges,
                 status_bar_top,
                 cutouts,
-                top_margin_available,
                 hidden_bars_visible,
             } => {
                 if hidden_bars_visible
@@ -1121,7 +1114,6 @@ impl Player {
                     || size != self.inset_size
                     || density != self.density
                     || cutouts != self.cutouts
-                    || top_margin_available != self.top_margin_available
                 {
                     self.insets = edges;
                     self.fullscreen_insets = fullscreen_edges;
@@ -1132,7 +1124,6 @@ impl Player {
                         self.density = density;
                     }
                     self.cutouts = cutouts;
-                    self.top_margin_available = top_margin_available;
                     self.touches.cancel();
                     if let Err(error) = self.resize(app) {
                         self.fail(error);

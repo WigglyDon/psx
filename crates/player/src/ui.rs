@@ -566,7 +566,7 @@ impl Editor {
             if self.tools_bottom {
                 (self.height - height - 6.).max(0.)
             } else {
-                self.covered_top.max(8.)
+                (self.covered_top - self.reusable_top).max(8.)
             },
             width,
             height,
@@ -1431,7 +1431,7 @@ mod editor_tests {
             let moved = editor.layout.element(i);
             assert!((moved.x - r.x - dx).abs() < 0.01);
             assert!((moved.y - r.y - dy).abs() < 0.01);
-            assert_eq!((moved.w, moved.h), (r.w, r.h));
+            assert!((moved.w - r.w).abs() < 0.001 && (moved.h - r.h).abs() < 0.001);
         }
         assert!(editor.layout.dpad.same_bounds(dpad));
         assert!(editor.layout.element(5).same_bounds(shoulder));
@@ -1707,9 +1707,13 @@ mod editor_tests {
             };
             let (w, h) = (852., 785.);
             let camera = Rect::new(795., -66., 57., 66.);
-            let mut play = preset.layout_with_cutouts(w, h, &[camera]);
-            play.anchor_toolbar(w, h, 66., 0., &[camera]);
-            play.place_game_in(Rect::new(0., -66., w, h + 66.), false, 1., [0.5; 2]);
+            let play = PlayerViewport {
+                controls: [w, h],
+                picture: Rect::new(0., -66., w, h + 66.),
+                reusable_top: 66.,
+                covered_top: 0.,
+            }
+            .layout(&preset, &[camera]);
             let mut editor = Editor::with_cutouts(preset, w, h, vec![camera]);
             editor.set_viewport(66., 0.);
             assert!(editor.preview().same_bounds(Rect::new(0., 0., w, h)));

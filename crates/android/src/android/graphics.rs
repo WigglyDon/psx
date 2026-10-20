@@ -450,7 +450,9 @@ impl Graphics {
             );
             let mut time_icon = layout.speed;
             if visuals.playback_speed != psx_player::settings::Speed::NORMAL {
-                time_icon.h = (time_icon.h - 16.).clamp(1., 16.);
+                time_icon.w = 14.;
+                time_icon.h = time_icon.h.min(16.);
+                time_icon.y += (layout.speed.h - time_icon.h) / 2.;
             }
             canvas.button(
                 time_icon,
@@ -467,10 +469,11 @@ impl Graphics {
             if visuals.playback_speed != psx_player::settings::Speed::NORMAL
                 && layout.speed.w >= 40.
             {
-                let size = 14_f32.min((layout.speed.w - 4.) / canvas.font.measure(&label, 1.));
+                let width = layout.speed.w - 18.;
+                let size = 14_f32.min(width / canvas.font.measure(&label, 1.));
                 canvas.text(
-                    layout.speed.x + (layout.speed.w - canvas.font.measure(&label, size)) / 2.,
-                    layout.speed.y + layout.speed.h - 16.,
+                    layout.speed.x + 16. + (width - canvas.font.measure(&label, size)) / 2.,
+                    layout.speed.y + (layout.speed.h - size) / 2.,
                     &label,
                     size,
                     [0.55, 0.95, 0.79, 1.],

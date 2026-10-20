@@ -7,6 +7,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const TOOLBAR_HEIGHT: f32 = 20.;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
     pub x: f32,
@@ -47,19 +49,26 @@ pub struct PlayerViewport {
     pub controls: [f32; 2],
     pub picture: Rect,
     pub reusable_top: f32,
+    /// Visible status-bar height from the picture's top edge, not an inset
+    /// relative to the controller surface (which can start below a camera).
     pub covered_top: f32,
 }
 impl PlayerViewport {
     pub fn layout(self, preset: &Preset, cutouts: &[Rect]) -> Layout {
         let [w, h] = self.controls;
         let mut layout = preset.layout_in(w, h, cutouts, self.picture);
-        layout.anchor_toolbar(w, h, self.reusable_top, self.covered_top, cutouts);
+        layout.anchor_toolbar(w, h, self.reusable_top, 0., cutouts);
         layout.place_game_in(
             self.picture,
             preset.allow_overlap,
             preset.game_scale,
             preset.game_offset,
         );
+        if self.covered_top > 0. {
+            // Transient OS decoration moves chrome over the stable picture,
+            // just as the OS bar itself does. Never resize the game for it.
+            layout.anchor_toolbar(w, h, self.reusable_top, self.covered_top, cutouts);
+        }
         layout
     }
 }
@@ -157,7 +166,7 @@ impl Layout {
                 rails = side;
             }
         }
-        if let Some(band) = Self::controller_band(w, h, false) {
+        if let Some(band) = Self::controller_band(w, h, false, picture) {
             if band.game.w > rails.game.w + 0.01 {
                 rails = band;
             }
@@ -446,36 +455,52 @@ impl Layout {
         }
         layout.anchor_toolbar(requested[0], requested[1], 0., 0., &[]);
         layout.place_game(requested[0], requested[1], false, 1., [0.5, 0.5]);
-        if let Some(compact) = Self::controller_band(requested[0], requested[1], true) {
+        if let Some(compact) = Self::controller_band(
+            requested[0],
+            requested[1],
+            true,
+            Rect::new(0., 0., requested[0], requested[1]),
+        ) {
             if compact.game.w > layout.game.w + 0.01 {
                 return compact;
             }
         }
         layout
     }
-    /// Adjacent thumb wells share a shallow band; auxiliary keys occupy its
-    /// center, outside both thumb pairs. Never crop or overlap for extra width.
-    fn controller_band(w: f32, h: f32, analog: bool) -> Option<Self> {
+    /// Fit adjacent thumb wells around the maximum picture. Spare height puts
+    /// shoulders above each pair; tighter displays use the clear middle.
+    /// The same measurements apply to digital and dual-stick controllers.
+    fn controller_band(w: f32, h: f32, analog: bool, picture: Rect) -> Option<Self> {
         if w < 800. || h < 600. || w > h * 1.35 {
             return None;
         }
         let outer = 8.;
         let bottom = 12.;
-        let maximum_stick = w / 2. - outer - 8. - 122. - 110.;
-        if maximum_stick < 128. {
+        let width_limit = (w - 2. * outer - 16. - 204.) / 4.;
+        if width_limit < 122. {
             return None;
         }
-        let stick = (h - w * 0.75 - bottom - 4.)
-            .clamp(128., 144.)
-            .min(maximum_stick);
-        let face = (w / 2. - outer - stick - 8. - 110.)
+        let available = h - bottom - (picture.y + TOOLBAR_HEIGHT + w * 0.75);
+        // A bridge needs a full 48-point shoulder and four-point clearance
+        // above a 128-point well. Otherwise keep auxiliaries in the middle;
+        // never quietly overlap the thumb areas to imitate a physical pad.
+        let bridge = available >= 128. + 52.;
+        let stick = (available - if bridge { 52. } else { 0. })
             .clamp(122., 160.)
-            .min(stick);
+            .min(width_limit);
+        let face = stick;
         let main_y = h - bottom - stick;
         let face_y = main_y + (stick - face) / 2.;
         let digital_x = if analog { outer + stick + 8. } else { outer };
-        let auxiliary_x = w / 2. - 102.;
         let click_y = h - bottom - 48.;
+        let auxiliary_x = w / 2. - 102.;
+        let inner_keys = (digital_x + face + 8.).min(auxiliary_x);
+        let shoulder_x = if bridge {
+            outer + stick + 4. - 50.
+        } else {
+            inner_keys
+        };
+        let shoulder_y = main_y - if bridge { 52. } else { 0. };
         let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
         let fx = w - digital_x - face / 2.;
@@ -488,17 +513,17 @@ impl Layout {
                 "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
                 "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
                 "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
-                "L1" => Rect::new(auxiliary_x, main_y, 48., 48.),
-                "L2" => Rect::new(auxiliary_x + 52., main_y, 48., 48.),
-                "R1" => Rect::new(w - auxiliary_x - 48., main_y, 48., 48.),
-                "R2" => Rect::new(w - auxiliary_x - 100., main_y, 48., 48.),
+                "L1" => Rect::new(shoulder_x, shoulder_y, 48., 48.),
+                "L2" => Rect::new(shoulder_x + 52., shoulder_y, 48., 48.),
+                "R1" => Rect::new(w - shoulder_x - 48., shoulder_y, 48., 48.),
+                "R2" => Rect::new(w - shoulder_x - 100., shoulder_y, 48., 48.),
                 "SELECT" => Rect::new(auxiliary_x + 52., click_y, 48., 48.),
                 "START" => Rect::new(auxiliary_x + 104., click_y, 48., 48.),
                 _ => continue,
             };
         }
         if analog {
-            for (x, label, id) in [(auxiliary_x, "L3", 14), (w - auxiliary_x - 48., "R3", 15)] {
+            for (x, label, id) in [(inner_keys, "L3", 14), (w - inner_keys - 48., "R3", 15)] {
                 layout.controls.push(Control {
                     bounds: Rect::new(x, click_y, 48., 48.),
                     label,
@@ -510,8 +535,8 @@ impl Layout {
                 Rect::new(w - outer - stick, main_y, stick, stick),
             ];
         }
-        layout.anchor_toolbar(w, h, 0., 0., &[]);
-        layout.place_game(w, h, false, 1., [0.5; 2]);
+        layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., &[]);
+        layout.place_game_in(picture, false, 1., [0.5; 2]);
         Some(layout)
     }
     /// Keep a side camera in the gap between the secondary digital cluster
@@ -572,7 +597,7 @@ impl Layout {
             Rect::new(outer, main_y, stick, stick),
             Rect::new(w - outer - stick, main_y, stick, stick),
         ];
-        layout.anchor_toolbar(w, h, 0., 0., cutouts);
+        layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., cutouts);
         if (0..layout.element_count())
             .any(|i| cutouts.iter().any(|c| layout.element(i).overlaps(*c)))
         {
@@ -620,25 +645,19 @@ impl Layout {
             .min(((w - 2. * padding - 3. * gap) / 4.).max(1.))
             .min(h)
             .min(w);
-        let height = size.min(24.);
-        let top = if reusable_top >= height && covered_top <= 0. {
-            -reusable_top + 4_f32.min((reusable_top - height) / 2.)
-        } else {
-            (covered_top + 4.).clamp(0., (h - height).max(0.))
-        };
+        let height = size.min(TOOLBAR_HEIGHT);
+        let time_width = size * if w >= 320. { 1.4 } else { 1. };
+        let top = (-reusable_top + covered_top).clamp(-reusable_top, (h - height).max(0.));
         let mut obstacles = cutouts.to_vec();
         if covered_top > 0. {
             // A revealed status bar can push chrome into a top digital well.
             // Move chrome around that well without moving stored game inputs.
             obstacles.extend(self.controller_elements().map(|i| self.element(i)));
-            // Transient chrome moves around the existing picture as well;
-            // revealing system bars must not narrow the game canvas.
-            obstacles.push(self.game);
         }
-        let pair = |mut x: f32, left: bool| {
+        let pair = |mut x: f32, left: bool, width: f32| {
             let mut y = top;
             for _ in 0..obstacles.len() + 1 {
-                let bar = Rect::new(x, y, 2. * size + gap, height);
+                let bar = Rect::new(x, y, width, height);
                 if let Some(c) = obstacles.iter().find(|c| bar.overlaps(**c)) {
                     let shifted = if left {
                         c.x + c.w + 8.
@@ -666,10 +685,10 @@ impl Layout {
             (x, y)
         };
         let right = w - padding - size;
-        let (left_x, left_y) = pair(padding, true);
-        let (right_x, right_y) = pair(right - size - gap, false);
+        let (left_x, left_y) = pair(padding, true, size + gap + time_width);
+        let (right_x, right_y) = pair(right - size - gap, false, 2. * size + gap);
         self.playback = Rect::new(left_x, left_y, size, height);
-        self.speed = Rect::new(left_x + size + gap, left_y, size, height);
+        self.speed = Rect::new(left_x + size + gap, left_y, time_width, height);
         self.mute = Rect::new(right_x, right_y, size, height);
         self.pause = Rect::new(right_x + size + gap, right_y, size, height);
     }
@@ -740,10 +759,12 @@ impl Layout {
     pub fn place_game(&mut self, w: f32, h: f32, overlap: bool, scale: f32, offset: [f32; 2]) {
         self.place_game_in(Rect::new(0., 0., w, h), overlap, scale, offset);
     }
-    /// Reuse clear pixels below corner chrome in an excluded camera margin
-    /// without changing controller coordinates or the saved display profile.
+    /// Maximize the complete picture around separate controls/chrome. Camera
+    /// pixels are usable by explicit product policy; touch targets avoid holes.
     pub fn place_game_in(&mut self, bounds: Rect, overlap: bool, scale: f32, offset: [f32; 2]) {
-        let mut obstacles = self.cutouts.clone();
+        // Picture uses the complete display, including camera pixels. Input
+        // still avoids the actual holes through avoid_cutouts/anchor_toolbar.
+        let mut obstacles = Vec::new();
         if !overlap {
             obstacles.extend((0..self.element_count()).map(|i| self.element(i)));
         }
@@ -1006,6 +1027,11 @@ impl Preset {
         } else {
             Layout::default_in(w, h, cutouts, picture)
         };
+        if self.elements.is_empty() && !self.allow_overlap {
+            if let Some(candidate) = Layout::controller_band(w, h, self.analog, picture) {
+                layout = candidate;
+            }
+        }
         if self.analog && self.elements.is_empty() && !self.allow_overlap {
             if let Some(candidate) = Layout::ps2_camera_rails(w, h, picture, cutouts) {
                 layout.avoid_cutouts(w, h, cutouts);
@@ -1039,7 +1065,7 @@ impl Preset {
             }
         }
         layout.avoid_cutouts(w, h, cutouts);
-        layout.anchor_toolbar(w, h, 0., 0., cutouts);
+        layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., cutouts);
         layout.place_game_in(
             picture,
             self.allow_overlap,
@@ -1477,16 +1503,20 @@ mod tests {
         let (w, h, top) = (2076. / density, 1914. / density, 160. / density);
         for camera_x in [0., 1940. / density] {
             let camera = Rect::new(camera_x, -top, 136. / density, top);
-            let layout = Preset {
+            let preset = Preset {
                 analog: true,
                 ..Preset::default()
+            };
+            let layout = PlayerViewport {
+                controls: [w, h],
+                picture: Rect::new(0., -top, w, h + top),
+                reusable_top: top,
+                covered_top: 0.,
             }
-            .layout_with_cutouts(w, h, &[camera]);
-            let mut layout = layout;
-            layout.anchor_toolbar(w, h, top, 0., &[camera]);
-            layout.place_game_in(Rect::new(0., -top, w, h + top), false, 1., [0.5; 2]);
+            .layout(&preset, &[camera]);
             assert!((layout.game.w * density - 2076.).abs() < 0.02);
-            assert!(layout.game.x.abs() < 0.01 && layout.game.y.abs() < 0.01);
+            assert!(layout.game.x.abs() < 0.01);
+            assert!((layout.game.y + top - 20.).abs() < 0.01);
             let digital = [layout.dpad, layout.action_bounds()];
             assert!(layout.sticks.iter().all(|s| s.w >= 128.));
             for c in layout.controls.iter().filter(|c| !c.is_face()) {
@@ -1520,12 +1550,18 @@ mod tests {
             for name in ["L1", "L2", "L3", "SELECT", "START", "R1", "R2", "R3"] {
                 let r = key(name);
                 assert!(!r.overlaps(gap));
-                assert!(r.x >= digital[0].x + digital[0].w);
-                assert!(r.x + r.w <= digital[1].x);
+            }
+            let bridge_center = (key("L1").x + key("L2").x + key("L2").w) / 2.;
+            let thumb_joint = layout.sticks[0].x + layout.sticks[0].w + 4.;
+            assert!((bridge_center - thumb_joint).abs() < 0.01);
+            assert!(key("L1").y + key("L1").h < layout.sticks[0].y);
+            for name in ["L3", "SELECT", "START", "R3"] {
+                assert!(key(name).x >= digital[0].x + digital[0].w);
+                assert!(key(name).x + key(name).w <= digital[1].x);
             }
             for bar in [layout.playback, layout.speed, layout.pause, layout.mute] {
                 assert!(bar.x >= 28. && bar.x + bar.w <= w - 28.);
-                assert_eq!(bar.h, 24.);
+                assert_eq!(bar.h, 20.);
             }
         }
     }
@@ -1573,17 +1609,98 @@ mod tests {
             ] {
                 assert!(a.same_bounds(b));
             }
-            if width == 2076. {
+            if width != 2342. {
                 assert!((ps1.game.w * density - width).abs() < 0.02);
+                assert!((ps1.game.y * density + top - 20. * density).abs() < 0.02);
+                // Owner explicitly permits the camera to occlude the corner
+                // of the picture. It must not reserve a broad top/side band.
+                assert!(ps1.game.overlaps(camera));
             }
             if width == 2342. {
                 assert!((ps1.game.h * density - height).abs() < 0.02);
             }
             for layout in [ps1, ps2] {
-                assert!(!layout.game.overlaps(camera));
+                assert!((0..layout.element_count()).all(|i| !layout.element(i).overlaps(camera)));
                 assert!(
                     (0..layout.element_count()).all(|i| !layout.element(i).overlaps(layout.game))
                 );
+            }
+        }
+    }
+    #[test]
+    fn full_display_bars_and_saved_controls_keep_the_same_picture_and_identity() {
+        let density = 2.4375;
+        for (width, height, top, bottom) in [
+            (2076., 2152., 160., 78.),
+            (2152., 2076., 136., 78.),
+            (1080., 2342., 182., 59.),
+            (2342., 1080., 0., 59.),
+        ] {
+            let (w, h) = (width / density, (height - top - bottom) / density);
+            let picture = Rect::new(0., -top / density, w, height / density);
+            for analog in [false, true] {
+                for right in [false, true] {
+                    let (cw, cy, ch) = if top > 0. {
+                        (136., -top, top)
+                    } else {
+                        (182., 484., 112.)
+                    };
+                    let camera = Rect::new(
+                        if right { (width - cw) / density } else { 0. },
+                        cy / density,
+                        cw / density,
+                        ch / density,
+                    );
+                    let viewport = PlayerViewport {
+                        controls: [w, h],
+                        picture,
+                        reusable_top: top / density,
+                        covered_top: 0.,
+                    };
+                    let mut preset = Preset {
+                        analog,
+                        ..Preset::default()
+                    };
+                    let normal = viewport.layout(&preset, &[camera]);
+                    preset.capture(&normal, w, h);
+                    let saved = serde_json::to_vec(&preset).unwrap();
+                    // Restoring a saved profile must keep input coordinates,
+                    // even when chrome occupies the newly reclaimed margin.
+                    let normal = viewport.layout(&preset, &[camera]);
+                    let revealed = PlayerViewport {
+                        covered_top: 42.,
+                        ..viewport
+                    }
+                    .layout(&preset, &[camera]);
+                    assert!(normal.game.same_bounds(revealed.game));
+                    for i in normal.controller_elements() {
+                        let input = normal.element(i);
+                        assert!(input.same_bounds(revealed.element(i)));
+                        assert!(!input.overlaps(camera));
+                        assert!(!input.overlaps(normal.game));
+                        assert!(input.y >= 0. && input.y + input.h <= h + 0.01);
+                    }
+                    for chrome in [
+                        revealed.playback,
+                        revealed.speed,
+                        revealed.mute,
+                        revealed.pause,
+                    ] {
+                        assert!(chrome.y + top / density >= 42.);
+                        assert!(!chrome.overlaps(camera));
+                    }
+                    assert!(viewport
+                        .layout(&preset, &[camera])
+                        .game
+                        .same_bounds(normal.game));
+                    assert_eq!(saved, serde_json::to_vec(&preset).unwrap());
+                    assert!((normal.game.w / normal.game.h - 4. / 3.).abs() < 0.001);
+                    if width == 2342. {
+                        assert!((normal.game.h * density - height).abs() < 0.02);
+                    } else {
+                        assert!((normal.game.w * density - width).abs() < 0.02);
+                    }
+                }
             }
         }
     }
@@ -2001,8 +2118,13 @@ mod tests {
                     .collect();
                 preset.capture(&layout, w, h);
                 let bytes = serde_json::to_vec(&preset).unwrap();
-                layout.anchor_toolbar(w, h, 0., 32., &[camera]);
-                layout.place_game_in(picture, false, 1., [0.5; 2]);
+                layout = PlayerViewport {
+                    controls: [w, h],
+                    picture,
+                    reusable_top: 0.,
+                    covered_top: 32.,
+                }
+                .layout(&preset, &[camera]);
                 assert!(layout.game.same_bounds(original));
                 for (i, r) in controls {
                     assert!(layout.element(i).same_bounds(r));
@@ -2244,7 +2366,7 @@ mod tests {
                     picture.y <= 0.,
                     "Picture should use clear top-margin space: {picture:?}"
                 );
-                assert!(!picture.overlaps(camera));
+                assert!(picture.overlaps(camera));
                 assert!((0..layout.element_count()).all(|i| !picture.overlaps(layout.element(i))));
                 // An independent pixel-size search must not find a larger
                 // centered picture at any vertical position in the viewport.
@@ -2256,11 +2378,8 @@ mod tests {
                         && candidate.y >= -top
                         && candidate.y + candidate.h <= h
                     {
-                        assert!(
-                            candidate.overlaps(camera)
-                                || (0..layout.element_count())
-                                    .any(|i| candidate.overlaps(layout.element(i)))
-                        );
+                        assert!((0..layout.element_count())
+                            .any(|i| candidate.overlaps(layout.element(i))));
                     }
                 }
                 layout.anchor_toolbar(w, h, 0., 32., &[camera]);
@@ -2323,7 +2442,9 @@ mod tests {
                     "{analog} {w}x{h}: {expanded:?}"
                 );
                 assert!(expanded.y >= -66. && expanded.y + expanded.h <= h);
-                assert!(!expanded.overlaps(camera));
+                assert!(layout
+                    .controller_elements()
+                    .all(|i| !layout.element(i).overlaps(camera)));
                 assert!((0..layout.element_count()).all(|i| !expanded.overlaps(layout.element(i))));
                 layout.anchor_toolbar(w, h, 0., 32., &[camera]);
                 layout.place_game(w, h, false, 1., [0.5; 2]);
@@ -2597,7 +2718,7 @@ mod tests {
                 assert!(bounds.x >= 0. && bounds.y >= 0.);
                 assert!(bounds.x + bounds.w <= w && bounds.y + bounds.h <= h);
             }
-            assert!(layout.pause.w >= 40. && layout.pause.h >= 24.);
+            assert!(layout.pause.w >= 40. && layout.pause.h == 20.);
             assert!(!layout.game.overlaps(layout.pause));
             for control in &layout.controls {
                 let x = control.bounds.x + control.bounds.w / 2.;

@@ -184,32 +184,26 @@ Center the picture horizontally, maximize its clear 4:3 size and keep its
 highest feasible position, leaving room below or beside it for controls.
 There is no vertical-centering step. If custom controls block the entire
 center column, retain a usable clear side region instead of an empty picture.
-The default layout compares arrangements at the actual window dimensions.
-On a sufficiently wide square display, shoulders and system buttons occupy
-the space between thumb clusters. Main thumb geometry sets the dock's minimum
-height before maximizing the clear picture: square-display PS1 wells retain
-200 points of height and 84-point face targets. Thumb clusters leave 32 logical points below
-their lowest target before local camera avoidance. A 16-point gap separates Triangle and Cross;
-the largest clear picture is recomputed around those minimum touch bounds.
-Defaults now use larger thumb wells and action caps. Landscape wells grow into
-spare rail width before taking height from a full-height picture. A side camera
-can compact the default well vertically and place it below the hole, using its
-bottom clearance when necessary. Saved custom rectangles still take precedence.
+Generated controllers share the actual player canvas and input-capability
+metrics. On inner displays, adjacent thumb wells use available headroom after
+the maximum 4:3 picture; circular action caps retain clear separation and at
+least 48-point targets. Spare height puts level shoulders above each thumb
+pair, with L1/R1 outside L2/R2. Tighter windows use the clear middle for
+auxiliary keys, keeping the route between thumb areas empty. Stick-click and
+system keys retain separate reachable targets; double-tap-and-hold remains
+available for stick clicks. The shallow band leaves 12 points plus the system
+gesture strip below it. Other display shapes compare clear docks/side rails.
+No input is overlapped merely to imitate a physical controller. Owner-created
+arrangements guide balance/order, not accidental sizing or asymmetry. Saved
+custom rectangles still take precedence.
 
-Phone landscape is a primary layout. On Android 11 and later, side camera
-bounds are local obstacles rather than full-height inset strips. System bars
-remain reserved; portrait keeps its top camera margin. The shared layout moves
-the whole face-button cluster together or shifts an obstructed control locally,
-then finds the largest clear 4:3 picture around controls and camera rectangles.
-The picture search includes actual camera bounds while growing about the
-display's horizontal center. This prevents a corner camera from silently
-shifting the picture sideways; saved game-control rectangles remain unchanged.
-Camera avoidance is derived for the current window without overwriting saved
-control positions. The editor uses the same placement/defaults, and anchored
-volume/time panels slide clear of camera bounds. Shoulder caps have simple symmetric
-faces with small corners. Landscape pairs sit level, with L2/R2 outside and L1/R1 inside;
-Stacked pairs put L1/R1 above L2/R2. Start/Select have smaller faces inside their retained touch targets, at
-the inner ends of wide-display side rails. Rendering and hit areas remain distinct.
+The owner explicitly chose game-picture use of the complete display, including
+camera pixels. A physical camera can occlude a corner of the image; it must not
+reserve a broad band or shift the picture. This policy does not authorize
+cropping the guest frame or stretching its aspect ratio. Controller targets,
+chrome and popovers still avoid actual holes locally, without changing stored
+input coordinates. A whole face-button cluster moves together when needed.
+The live editor and play use the same placement and canvas.
 
 On Android 12 and later, `BEHAVIOR_DEFAULT` requests hidden navigation with
 gesture navigation still available on the first swipe. Navigation's insets
@@ -233,24 +227,24 @@ The owner checked folding and rotation and reported that return-to-fullscreen
 works. Fullscreen drawable dimensions remain independent of transient status
 decoration. A callback-only platform shim forwards applied-inset changes to
 Rust, which queries actual status visibility and its bounds ignoring visibility.
-This catches transient bars that report zero occupied insets. Toolbar clearance
-and the largest unobstructed picture are recomputed when decoration changes;
-hiding the bar restores the previous maximum. Navigation's reserved strip,
-caption decoration and camera bounds remain excluded. Visible-bar layout is
-retained during picking or audio-focus interruption. Insets remain tagged to
-the actual drawable size.
+This catches transient bars that report zero occupied insets. Revealed status
+decoration moves the toolbar over the stable game picture; it does not resize
+the picture or controller geometry. Hiding it restores the normal thin strip.
+The full picture canvas excludes caption decoration, while controller input
+keeps its own gesture/camera-safe surface. Insets remain tagged to the actual
+drawable size. Picking and audio-focus interruption retain safe system UI.
 
 The less-used system buttons keep their own separate row. Wide phone layouts use side rails,
 including their system buttons, so a bottom row does not constrain picture
 height. Pause/time are anchored upper-left; sound/settings upper-right in every
 orientation. Each pair can move inward around a camera while retaining its side.
-A clear camera margin can host them only while OS decoration is absent; visible
-status bars push them below the actual bar. App chrome uses 40×32-point targets,
-while game-button targets retain their 48-point minimum. Clear pixels below
-that smaller toolbar in the camera margin also become picture candidates;
-actual camera rectangles and every target remain excluded. This does not
-change content coordinates or select another saved controller profile.
-Targets never cover the game.
+The toolbar uses a 20-point-high strip with no extra gap below it; ordinary
+targets remain 40 points wide, and time has room for a horizontal readable rate.
+Its normal position uses the display's top edge, moving a corner pair inward
+around a camera. Visible status bars push chrome below their actual bounds,
+temporarily over the stable picture. Game-button targets remain separate from
+the picture unless the owner enables overlap. This does not change controller
+coordinates or select another saved profile.
 These app-chrome anchors supersede legacy toolbar rectangles; stored controller
 profiles remain intact. The controller editor edits game inputs and the picture,
 over the live game at the same size and coordinates used for play. Android requests `fullUser`
@@ -565,7 +559,8 @@ It has no console identifier. The controller preset supplies input geometry and
 capabilities; it does not choose another presentation system. Android and the
 live editor compose through the same Rust `PlayerViewport` operation. The
 picture solver maximizes a complete, correctly proportioned image, places it
-high and honors real cutouts and explicit non-overlap obstacles. Gesture-safe
+high and honors explicit non-overlap inputs/chrome. Camera pixels are included
+by the owner's explicit choice; interactive elements still avoid holes. Gesture-safe
 controller bounds remain distinct from clear drawable pixels usable by the
 picture. Transient bars do not introduce a second canvas or a size preset.
 

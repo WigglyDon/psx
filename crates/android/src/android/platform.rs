@@ -38,7 +38,6 @@ pub enum Event {
         picture_edges: Option<[i32; 4]>,
         status_bar_top: i32,
         cutouts: Vec<[i32; 4]>,
-        top_margin_available: bool,
         hidden_bars_visible: bool,
     },
 }
@@ -442,23 +441,11 @@ impl Platform {
             let sdk = env
                 .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?
                 .i()?;
-            // A cutout margin is reusable only when no system decoration owns
-            // its top edge. Requested immersive flags alone do not establish
-            // this: Android can keep a call indicator/status bar visible.
+            // Observe actual decoration, not just requested immersive flags.
+            // A call indicator can keep status visible while playing.
             let mut hidden_bars_visible = false;
             let mut status_bar_top = 0;
-            let top_margin_available = if sdk >= 30 {
-                let bars = env
-                    .call_static_method("android/view/WindowInsets$Type", "systemBars", "()I", &[])?
-                    .i()?;
-                let occupied = env
-                    .call_method(
-                        &insets,
-                        "getInsets",
-                        "(I)Landroid/graphics/Insets;",
-                        &[JValue::Int(bars)],
-                    )?
-                    .l()?;
+            if sdk >= 30 {
                 let status = env
                     .call_static_method("android/view/WindowInsets$Type", "statusBars", "()I", &[])?
                     .i()?;
@@ -490,13 +477,7 @@ impl Platform {
                             .call_method(&insets, "isVisible", "(I)Z", &[JValue::Int(navigation)])?
                             .z()?;
                 }
-                // Transient bars can be visible without contributing layout
-                // insets. Query status-bar visibility separately as well.
-                !status_visible && env.get_field(occupied, "top", "I")?.i()? == 0
-            } else {
-                // API 28–29 keep the toolbar inside the safe content area.
-                false
-            };
+            }
             let mut edges = [0; 4];
             let mut decoration = [0; 4];
             let mut navigation_edges = [0; 4];
@@ -636,14 +617,9 @@ impl Platform {
             });
             // Navigation gestures still own their input strip. They do not
             // own the game canvas; transient bars overlay that stable canvas.
-            let picture_edges = (sdk >= 31).then(|| {
-                psx_player::input::safe_edges(
-                    picture_decoration,
-                    [0; 4],
-                    camera_edges,
-                    local_side_camera,
-                )
-            });
+            // Picture uses the full display, including camera pixels. Input
+            // retains its own camera/gesture-safe surface and local cutouts.
+            let picture_edges = (sdk >= 31).then_some(picture_decoration);
             let resources = env
                 .call_method(
                     &view,
@@ -669,7 +645,6 @@ impl Platform {
                 picture_edges,
                 status_bar_top,
                 cutouts,
-                top_margin_available,
                 hidden_bars_visible,
             });
             Ok(())
