@@ -313,6 +313,8 @@ to normal time. Background play cannot run at zero time.
 
 The fixed-rate audio consumer uses fractional weighted source-frame groups,
 preserving stereo and audible pitch changes without allocations or locks.
+Slow rates retain at least one guest-frame source burst when trimming, so
+their smaller output-fill target cannot discard most of a frame's sound.
 Only the consumer advances its cursor or trims old-rate backlog. Uncapped
 audio adapts to bounded queue fill; its bounded resampling work does not cap
 guest execution. Presentation remains bounded to 60 Hz above 1x. PS2 coalesces

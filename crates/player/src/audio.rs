@@ -166,7 +166,15 @@ impl AudioQueue {
         let limit = if unlimited {
             self.frames.len()
         } else {
-            (target * speed).div_ceil(100).max(1)
+            let target = (target * speed).div_ceil(100).max(1);
+            if speed < 100 {
+                // Sources arrive in whole guest-frame bursts. At slow rates
+                // a 25 ms output target can be smaller than one such burst;
+                // trimming it would discard most of that frame's sound.
+                target.max(self.sample_rate.load(Ordering::Relaxed).div_ceil(45))
+            } else {
+                target
+            }
         };
         if self.consumer_limit.swap(limit, Ordering::Relaxed) != limit {
             // Only the consumer advances read. Discard excess old-speed
@@ -353,6 +361,20 @@ mod tests {
         for expected in [100, 100, 300, 300] {
             queue.pop(&mut frame);
             assert_eq!(frame, [expected, -expected]);
+        }
+        assert_eq!(queue.queued(), 0);
+        assert_eq!(queue.underruns.load(Ordering::Relaxed), 0);
+    }
+    #[test]
+    fn slow_motion_keeps_the_source_frame_burst_when_adopting_its_rate() {
+        let queue = AudioQueue::new(16384);
+        queue.set_sample_rate(48000);
+        queue.set_speed(Speed::from_percent(5).unwrap());
+        queue.push(&vec![1234; 1600]);
+        let mut out = [0; 400];
+        for _ in 0..80 {
+            queue.pop(&mut out);
+            assert_eq!(out, [1234; 400]);
         }
         assert_eq!(queue.queued(), 0);
         assert_eq!(queue.underruns.load(Ordering::Relaxed), 0);
