@@ -330,3 +330,26 @@ four PS2 cards, both controller-profile files and the library compare byte-equal
 before/after. The session checkpoint was updated normally. Locking was confirmed
 before the window ended; Android reported Dozing, not fully asleep. Ordinary
 PS2 saving and the remaining gameplay/performance acceptance are unchanged.
+
+## Next ergonomics and graphics correction
+
+The owner reports Red Dead usable, PS1 behavior unchanged, and Baldur's Gate
+unplayable at its bad points. This is owner feedback, not a controlled speed
+or ordinary-save pass. The next Rust revision adds inward toolbar clearance,
+adjacent inner-display thumb areas, larger folded sticks, and immediate
+second-touch L3/R3 with a toggle and separate buttons retained. Custom control
+rectangles keep precedence. Fold checking is still required.
+
+Two rendering defects were found off-device. The captured GLSL enabled ARM but
+emitted EXT syntax; enabling EXT makes that complete shader compile on Mesa,
+while the missing-extension case fails. The PS2 core also fits its 640×448
+intermediate before the host fits it again. Filling the intermediate leaves
+final aspect fitting with Rust, removing redundant bars without cropping.
+The shader/warning-only native patch has an exact checkpoint compatibility
+transition; unknown builds/firmware and changed cards remain rejected. No PS2
+speed/save improvement is claimed before testing.
+
+The private host inventory has eleven PS1/PS2 titles. GTA: San Andreas is the
+remaining consolidated title absent from the last Fold library; transfer/add
+is pending a fresh safe device window. Other-console/PC downloads are not
+presented as PS1/PS2 games. Games and firmware remain private.

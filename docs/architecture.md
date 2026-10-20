@@ -475,23 +475,27 @@ Dual-analog/digital touch and normalized editor profiles have separate PS2
 storage, retaining all existing PS1 profile names and element positions.
 PS2 defaults reuse the PS1 controls and cap styling, adding primary lower
 thumb sticks and secondary stick-click keys; they do not overwrite PS1 profiles.
-The mirrored PS2 lower band shares height between each stick and an inner
-system/click column. On wide inner displays a compact candidate places secondary
-digital clusters inside and slightly above the primary sticks, with shoulders
-in the middle. It wins only when its clear 4:3 picture is larger. Narrower
+On wide inner displays a compact candidate puts digital clusters directly beside
+the primary sticks, without a system/click column between the thumb areas.
+Shoulder pairs occupy the middle above a row of system/click buttons. L1/R1
+are outside L2/R2; stacked fallbacks put 1 closer to the lower thumb areas.
+It wins only when its clear 4:3 picture is larger. Narrower
 layouts keep stacked digital/stick bands; landscape retains full-height picture
 space between side rails.
-The compact inner-display candidate gives primary sticks up to 128 points and
-digital/action wells at least 160, fitting less-used shoulders into the clear
-middle. It does not shrink the main clusters to chase a full-width result.
+The Fold's compact inner-display candidate gives primary sticks about 140–144
+points and digital wells about 138–152 points, with separated 54–61-point caps.
+It trades some secondary-cluster size for larger sticks and a shallower band.
+Toolbar pairs sit 28 points inward where space permits, protecting them from
+rounded display corners without adding a new row.
 Generated button targets stay at least 48 points and sticks at least 104
 points on usable displays. The clear-picture solver excludes them all, and
 saved custom rectangles retain precedence. Transient tiny surfaces scale only
 their presentation, without rewriting profiles.
 
 For a wide surface with sufficient rail width, a side-camera candidate places
-the digital clusters above the camera band, shoulders beside it, and primary
-sticks below it. Both rails are solved symmetrically before camera avoidance;
+the digital clusters above the camera band and primary sticks below it.
+Shoulders and a separate stick-click button sit beside each stick, with the
+first shoulder closer to its thumb center. Both rails are solved symmetrically before camera avoidance;
 the camera does not push one entire cluster into the centered picture. Selection
 compares the unscaled clear picture and applies only to generated non-overlap
 defaults, never saved custom rectangles. The measured 2342×1080 Fold with a
@@ -499,20 +503,45 @@ defaults, never saved custom rectangles. The measured 2342×1080 Fold with a
 1021-pixel-high 4:3 picture in the host fixture and in the installed Fold build
 `c27ce6f698c3`. The actual viewport was 1361.3×1021 at 490.3,0 in
 2342×1021 content. This measures the host viewport, not any black borders
-drawn inside a game's own frame. Primary sticks retain 104 points; separated action
-caps are about 58 points in that particular constrained camera layout, versus
-roughly 64–74 in the square PS2 wells. Every generated cap remains at least
+drawn inside a game's own frame. The next rail defaults increase sticks from
+104 to 128 points while retaining that full-height picture in the host fixture.
+Separated action caps remain about 58 points there. Every generated cap remains at least
 48 points. PS2 cap centers leave a four-point edge gap; sizing inside the well
 replaces the previous overlapping diamond. Narrow PS1 wells grow to 128 points
 to separate their minimum-size caps. Manual group spacing remains independent
 of cap resizing and does not rewrite existing profiles automatically.
+
+PS2 stick clicks also have an optional double-tap gesture, enabled by default:
+a short stationary tap followed within 280 ms by another nearby touch engages
+L3/R3 immediately on the second down. It stays pressed while that touch moves
+the stick and releases on lift. Movement, long holds and interruptions do not
+prime a click. Both sticks and separate buttons remain independent; no hold
+timer delays ordinary analog input. Older presets default to the gesture.
+
+The PS2 GS fills its intermediate 640×448 buffer. The Rust host alone applies
+the final 4:3 fit; fitting at both stages adds redundant side bars. This does
+not crop guest pixels or stretch the final picture. Game-drawn borders remain.
+Large separate controls and a camera can still prevent an edge-to-edge rectangle;
+the clear-picture solver keeps the largest high, centered picture around them.
+
+The retained GL header repair matches the donor's existing backend policy:
+non-Mali EXT syntax enables EXT even when ARM is also advertised. Previously
+ANGLE rejected its `inout` output because only ARM was enabled. The paired
+Rust setup removes our PowerVR copy workaround; Fold rendering/performance
+still needs checking. Libretro omits only the inapplicable manual-API-choice
+warning: its frontend negotiates the actual API. Other diagnostics remain.
 
 PS2 checkpoints use the donor's existing uncompressed ZIP option and omit its
 unused PNG thumbnail. Rust validates the native length prefix and stores only
 the archive extent, within the same 68 MiB cap. The native reader accepts that
 extent and the former padded buffers. This reduces synchronous preparation
 work; improved device timing remains a separate observation. Exact core/patch
-and firmware binding still applies before restoration.
+and firmware binding still applies before restoration. One explicit exception
+accepts the immediately preceding adapter's checkpoint into the exact reviewed
+shader/warning-only patch. It changes no emulated state or serialization. Both
+patch hashes are named in Rust; a future native edit disables the exception
+automatically. Firmware, discs, current card and payload integrity must still
+match; unknown and older incompatible bindings remain refused.
 
 Collection and platform links enter the same `OpenGame(GameId)` flow. Android
 initial intents precede automatic resume. Warm intents enter a bounded ordered

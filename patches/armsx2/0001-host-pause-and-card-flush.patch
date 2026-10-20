@@ -121,6 +121,24 @@ index 24210fb06..b6338bd1e 100644
  		if (!ok)
  			Console.ErrorFmt("retro_serialize: ZipToBuffer failed: {}", error.GetDescription());
  	}, true);
+diff --git a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+index 6e853f423..02c6bdd05 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+@@ -2440,7 +2440,12 @@ std::string GSDeviceOGL::GenGlslHeader(const std::string_view entry, GLenum type
+ 
+         if (m_features.framebuffer_fetch)
+         {
+-            if (GLAD_GL_ARM_shader_framebuffer_fetch)
++            // Match tfx_fs.glsl's backend: non-Mali prefers EXT even when
++            // ARM is advertised too. Enabling ARM alone leaves its inout
++            // output illegal on strict GLSL ES compilers such as ANGLE.
++            if (GLAD_GL_EXT_shader_framebuffer_fetch && !IsMaliGPUProfile())
++                header += "#extension GL_EXT_shader_framebuffer_fetch : require\n";
++            else if (GLAD_GL_ARM_shader_framebuffer_fetch)
+                 header += "#extension GL_ARM_shader_framebuffer_fetch : require\n";
+             else if (GLAD_GL_EXT_shader_framebuffer_fetch)
+                 header += "#extension GL_EXT_shader_framebuffer_fetch : require\n";
 diff --git a/pcsx2/SIO/Memcard/MemoryCardFile.cpp b/pcsx2/SIO/Memcard/MemoryCardFile.cpp
 index 3dc480eb0..e234d5212 100644
 --- a/pcsx2/SIO/Memcard/MemoryCardFile.cpp
@@ -250,3 +268,21 @@ index 349c503c0..339ecbc2d 100644
  
  	// Check if auto ejection is active. If so, set cmd stat to DISCONNECTED,
  	// and zero out the fifo to simulate dead air over the wire.
+diff --git a/pcsx2/VMManager.cpp b/pcsx2/VMManager.cpp
+index 417a53803..5cde10a6a 100644
+--- a/pcsx2/VMManager.cpp
++++ b/pcsx2/VMManager.cpp
+@@ -4440,9 +4440,11 @@ void VMManager::WarnAboutUnsafeSettings()
+ 			append(ICON_FA_TV,
+ 				TRANSLATE_SV("VMManager", "Integer scaling is enabled. This may shrink the image."));
+ 		}
+-#if !(defined(__APPLE__) && TARGET_OS_IPHONE)
++#if !defined(ENABLE_LIBRETRO) && !(defined(__APPLE__) && TARGET_OS_IPHONE)
+ 		// iOS always renders with Metal; "Automatic" is not a meaningful choice
+-		// there, so this desktop-only warning is a false positive and is omitted.
++		// there. Libretro likewise uses the API granted by its frontend's
++		// context negotiation, not an unsafe user override. Keep the actual
++		// renderer diagnostics, but omit this inapplicable settings warning.
+ 		static bool render_change_warn = false;
+ 		if (EmuConfig.GS.Renderer != GSRendererType::Auto && EmuConfig.GS.Renderer != GSRendererType::SW && !render_change_warn)
+ 		{

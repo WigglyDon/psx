@@ -64,6 +64,7 @@ enum Action {
     TogglePause,
     ToggleOverlap,
     ToggleFollowThumb,
+    ToggleStickClick,
     EditControls,
     ResetControls,
     SaveControls,
@@ -941,12 +942,14 @@ impl Player {
                                 if self.activity.can_run() {
                                     let pressed = if new_pointer == Some(pointer.pointer_id()) {
                                         let (w, h) = self.dimensions();
-                                        self.touches.down(
+                                        let preset = self.controller_settings.preset(w, h);
+                                        self.touches.down_with_stick_click(
                                             pointer.pointer_id(),
                                             x,
                                             y,
                                             &self.layout,
-                                            self.controller_settings.preset(w, h).follow_thumb,
+                                            preset.follow_thumb,
+                                            preset.stick_click_gesture,
                                         )
                                     } else {
                                         self.touches.motion(
@@ -1410,6 +1413,17 @@ impl Player {
                     .save(&self.controls_root())
                     .map_err(|e| e.to_string())?;
                 self.resize(app)?;
+                self.refresh_menu(app);
+            }
+            Action::ToggleStickClick => {
+                let (w, h) = self.dimensions();
+                let mut preset = self.controller_settings.preset(w, h);
+                preset.stick_click_gesture = !preset.stick_click_gesture;
+                self.controller_settings.set(w, h, preset);
+                self.controller_settings
+                    .save(&self.controls_root())
+                    .map_err(|e| e.to_string())?;
+                self.touches.cancel();
                 self.refresh_menu(app);
             }
             Action::ToggleOverlap => {
@@ -1896,6 +1910,13 @@ impl Player {
                         "The picture stays clear of every control".into()
                     },
                 );
+                if preset.analog {
+                    add(
+                        Action::ToggleStickClick,
+                        "Double-tap stick click".into(),
+                        "Tap, then hold the stick to press L3/R3; lift to release. Buttons remain available".into(),
+                    );
+                }
                 if !preset.is_default_with_cutouts(w, h, &self.cutout_rects()) {
                     add(
                         Action::ResetControls,
@@ -2068,6 +2089,11 @@ impl Player {
             }
             if let Some(row) = menu.rows.get_mut(2) {
                 row.toggle = Some(preset.allow_overlap);
+            }
+            for (row, action) in menu.rows.iter_mut().zip(&self.actions) {
+                if matches!(action, Action::ToggleStickClick) {
+                    row.toggle = Some(preset.stick_click_gesture);
+                }
             }
         }
         if self.screen == Screen::Settings {

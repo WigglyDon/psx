@@ -1,6 +1,11 @@
 use crate::saves::atomic_write;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, io, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs, io,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
@@ -164,10 +169,10 @@ impl Layout {
         let left_column = dpad.x + cluster + 8.;
         let right_column = w - 16. - cluster - 8. - shoulder_width;
         for (x, label, id) in [
-            (16., "L2", 12),
-            (24. + shoulder_width, "L1", 10),
-            (w - 16. - cluster, "R1", 11),
-            (w - 16. - shoulder_width, "R2", 13),
+            (16., "L1", 10),
+            (24. + shoulder_width, "L2", 12),
+            (w - 16. - cluster, "R2", 13),
+            (w - 16. - shoulder_width, "R1", 11),
         ] {
             let bounds = if compact {
                 Rect::new(
@@ -176,7 +181,7 @@ impl Layout {
                     } else {
                         right_column
                     },
-                    dpad.y + if label.ends_with('2') { 56. } else { 0. },
+                    dpad.y + if label.ends_with('1') { 56. } else { 0. },
                     shoulder_width,
                     48.,
                 )
@@ -259,10 +264,10 @@ impl Layout {
                 "O" => (fx + offset - size / 2., fy - size / 2., size, size),
                 "X" => (fx - size / 2., fy + vertical - size / 2., size, size),
                 "SQ" => (fx - offset - size / 2., fy - size / 2., size, size),
-                "L2" => (16., 64., shoulder, 48.),
-                "L1" => (24. + shoulder, 64., shoulder, 48.),
-                "R1" => (w - 16. - cluster, 64., shoulder, 48.),
-                "R2" => (w - 16. - shoulder, 64., shoulder, 48.),
+                "L1" => (16., 64., shoulder, 48.),
+                "L2" => (24. + shoulder, 64., shoulder, 48.),
+                "R2" => (w - 16. - cluster, 64., shoulder, 48.),
+                "R1" => (w - 16. - shoulder, 64., shoulder, 48.),
                 "SELECT" => (
                     if layout.dpad.y >= 200. {
                         16. + cluster - 88.
@@ -353,13 +358,13 @@ impl Layout {
                         let x = 16. + column + 8.;
                         (
                             if left_side { x } else { w - x - shoulder },
-                            face_y + if second { 56. } else { 0. },
+                            face_y + if second { 0. } else { 56. },
                             shoulder,
                             48.,
                         )
                     } else {
                         let outer = 16.;
-                        let x = outer + if second { 0. } else { shoulder + 8. };
+                        let x = outer + if second { shoulder + 8. } else { 0. };
                         (
                             if left_side { x } else { w - x - shoulder },
                             face_y - 56.,
@@ -413,20 +418,21 @@ impl Layout {
         }
         layout
     }
-    /// Wide inner displays can share a lower band horizontally instead of
-    /// stacking every digital cluster above a stick. Keep primary sticks low
-    /// and outside, their system/click column adjacent, and secondary digital
-    /// controls slightly higher/inside. Compare the actual clear picture.
+    /// Inner displays put the two thumb areas directly beside each other.
+    /// Less-used controls occupy the middle, never a column between a stick
+    /// and its secondary cluster. Keep one shallow band below the picture.
     fn ps2_shared_band(w: f32, h: f32) -> Option<Self> {
         if w < 800. || h < 600. || w > h * 1.35 {
             return None;
         }
         let mut layout = Self::new(w, h);
-        let stick = (w / 2. - 296.).clamp(104., 128.);
-        let digital_x = 16. + stick + 56.;
-        let face = (w / 2. - digital_x - 64.).clamp(160., 184.);
-        let main_y = h - 32. - stick;
-        let face_y = h - 32. - face;
+        let stick = (w / 2. - 268.).clamp(128., 144.);
+        let digital_x = 16. + stick + 12.;
+        let face = (w / 2. - digital_x - 102.).clamp(122., 160.);
+        let main_y = h - 24. - stick;
+        let face_y = h - 28. - face;
+        let middle = (w - 204.) / 2.;
+        let auxiliary_y = face_y + face - 48.;
         let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
         let fx = w - digital_x - face / 2.;
@@ -438,26 +444,26 @@ impl Layout {
                 "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
                 "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
                 "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
-                "SELECT" => Rect::new(24. + stick, main_y, 48., 48.),
-                "START" => Rect::new(w - 72. - stick, main_y, 48., 48.),
+                "SELECT" => Rect::new(middle + 52., auxiliary_y, 48., 48.),
+                "START" => Rect::new(middle + 104., auxiliary_y, 48., 48.),
                 label => {
-                    let x = digital_x + face + 8.;
+                    let x = middle + if label.ends_with('2') { 52. } else { 0. };
                     Rect::new(
                         if label.starts_with('L') {
                             x
                         } else {
                             w - x - 48.
                         },
-                        face_y + if label.ends_with('2') { 56. } else { 0. },
+                        face_y,
                         48.,
                         48.,
                     )
                 }
             };
         }
-        for (x, label, id) in [(24. + stick, "L3", 14), (w - 72. - stick, "R3", 15)] {
+        for (x, label, id) in [(middle, "L3", 14), (w - middle - 48., "R3", 15)] {
             layout.controls.push(Control {
-                bounds: Rect::new(x, main_y + 56., 48., 48.),
+                bounds: Rect::new(x, auxiliary_y, 48., 48.),
                 label,
                 mask: 1 << id,
             });
@@ -474,12 +480,13 @@ impl Layout {
     /// and primary stick, rather than moving a whole rail into the picture.
     /// Compare actual clear picture area before choosing this generated layout.
     fn ps2_camera_rails(w: f32, h: f32, cutouts: &[Rect]) -> Option<Self> {
-        if w <= h * 1.35 || h < 360. || cutouts.is_empty() {
+        if w <= h * 1.35 || h < 360. {
             return None;
         }
         let rail = (w - h * 4. / 3.) / 2.;
-        // A 104-point stick, separate system/click column and edge clearance.
-        if rail < 184. {
+        // A larger primary stick with shoulders beside it, clear of the
+        // route between the digital well and stick. Both sides share a rail.
+        if rail < 200. {
             return None;
         }
         let top = 44.; // 32-point toolbar and a real gap.
@@ -488,22 +495,26 @@ impl Layout {
             .filter(|c| c.y + c.h > top && (c.x < rail || c.x + c.w > w - rail))
             .map(|c| c.y)
             .fold(h, f32::min);
-        let face = (rail - 32.).min(184.).min(camera_top - top - 8.);
+        let stick = 128.;
+        let main_y = h - 24. - stick;
+        let face = (rail - 32.)
+            .min(184.)
+            .min(camera_top - top - 8.)
+            .min(main_y - top - 56.);
         if face < 122. {
             return None;
         }
-        let stick = 104.;
-        let main_y = h - 32. - stick;
-        let shoulder_y = top + face + 8.;
-        if shoulder_y + 56. > main_y {
+        let auxiliary_y = top + face + 8.;
+        let shoulder_y = h - 24. - 160.;
+        if auxiliary_y + 48. > main_y || shoulder_y < top + face + 8. {
             return None;
         }
         let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
         let fx = w - 16. - face / 2.;
         let fy = top + face / 2.;
-        let outer = rail - 112.;
-        let inner = outer + 56.;
+        let inner = 16. + stick + 8.;
+        let system_x = rail - 112.;
         let mut layout = Self::ps2(w, h);
         layout.dpad = Rect::new(16., top, face, face);
         for c in &mut layout.controls {
@@ -512,20 +523,20 @@ impl Layout {
                 "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
                 "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
                 "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
-                "L2" => Rect::new(outer, shoulder_y, 48., 48.),
-                "L1" => Rect::new(inner, shoulder_y, 48., 48.),
-                "R1" => Rect::new(w - inner - 48., shoulder_y, 48., 48.),
-                "R2" => Rect::new(w - outer - 48., shoulder_y, 48., 48.),
-                "SELECT" => Rect::new(128., main_y, 48., 48.),
-                "START" => Rect::new(w - 176., main_y, 48., 48.),
-                "L3" => Rect::new(128., main_y + 56., 48., 48.),
-                "R3" => Rect::new(w - 176., main_y + 56., 48., 48.),
+                "L2" => Rect::new(inner, shoulder_y, 48., 48.),
+                "L1" => Rect::new(inner, shoulder_y + 56., 48., 48.),
+                "R1" => Rect::new(w - inner - 48., shoulder_y + 56., 48., 48.),
+                "R2" => Rect::new(w - inner - 48., shoulder_y, 48., 48.),
+                "SELECT" => Rect::new(system_x, auxiliary_y, 48., 48.),
+                "START" => Rect::new(w - system_x - 48., auxiliary_y, 48., 48.),
+                "L3" => Rect::new(inner, shoulder_y + 112., 48., 48.),
+                "R3" => Rect::new(w - inner - 48., shoulder_y + 112., 48., 48.),
                 _ => continue,
             };
         }
         layout.sticks = vec![
             Rect::new(16., main_y, stick, stick),
-            Rect::new(w - 120., main_y, stick, stick),
+            Rect::new(w - 16. - stick, main_y, stick, stick),
         ];
         layout.anchor_toolbar(w, h, 0., 0., cutouts);
         if (0..layout.element_count())
@@ -569,7 +580,7 @@ impl Layout {
         covered_top: f32,
         cutouts: &[Rect],
     ) {
-        let padding = 16_f32.min(w * 0.025);
+        let padding = 28_f32.min(w * 0.055);
         let gap = 8_f32.min(w * 0.01);
         let size = 40_f32
             .min(((w - 2. * padding - 3. * gap) / 4.).max(1.))
@@ -904,6 +915,8 @@ pub struct Preset {
     pub allow_overlap: bool,
     #[serde(default = "enabled")]
     pub follow_thumb: bool,
+    #[serde(default = "enabled")]
+    pub stick_click_gesture: bool,
     pub elements: Vec<Rect>,
     pub game_scale: f32,
     pub game_offset: [f32; 2],
@@ -914,6 +927,7 @@ impl Default for Preset {
             analog: false,
             allow_overlap: false,
             follow_thumb: true,
+            stick_click_gesture: true,
             elements: Vec::new(),
             game_scale: 1.,
             game_offset: [0.5, 0.5],
@@ -933,6 +947,7 @@ impl Preset {
         .layout_with_cutouts(w, h, cutouts);
         !self.allow_overlap
             && self.follow_thumb
+            && (!self.analog || self.stick_click_gesture)
             && layout.game.same_bounds(defaults.game)
             && (0..layout.element_count())
                 .all(|i| layout.element(i).same_bounds(defaults.element(i)))
@@ -953,7 +968,10 @@ impl Preset {
             if let Some(candidate) = Layout::ps2_camera_rails(w, h, cutouts) {
                 layout.avoid_cutouts(w, h, cutouts);
                 layout.place_game(w, h, false, 1., [0.5; 2]);
-                if candidate.game.w > layout.game.w + 0.01 {
+                if candidate.game.w > layout.game.w + 0.01
+                    || ((candidate.game.w - layout.game.w).abs() <= 0.01
+                        && candidate.sticks[0].w > layout.sticks[0].w)
+                {
                     layout = candidate;
                 }
             }
@@ -1055,17 +1073,29 @@ pub struct Touches {
     pending: u16,
     dpad: Option<DpadGesture>,
     sticks: [Option<StickGesture>; 2],
+    stick_taps: [Option<StickTap>; 2],
 }
 
+struct StickTap {
+    released: Instant,
+    position: [f32; 2],
+}
 struct StickGesture {
     pointer: i32,
     origin: [f32; 2],
     radius: f32,
     axes: [i16; 2],
     follow: bool,
+    started: Instant,
+    press_position: [f32; 2],
+    tap_eligible: bool,
+    click: bool,
 }
 impl StickGesture {
     fn track(&mut self, x: f32, y: f32) {
+        if (x - self.press_position[0]).hypot(y - self.press_position[1]) > 12. {
+            self.tap_eligible = false;
+        }
         let mut delta = [x - self.origin[0], y - self.origin[1]];
         let distance = delta[0].hypot(delta[1]);
         if distance > self.radius {
@@ -1164,17 +1194,51 @@ impl DpadGesture {
 
 impl Touches {
     pub fn down(&mut self, id: i32, x: f32, y: f32, layout: &Layout, follow: bool) -> u16 {
+        self.down_with_stick_click(id, x, y, layout, follow, true)
+    }
+    pub fn down_with_stick_click(
+        &mut self,
+        id: i32,
+        x: f32,
+        y: f32,
+        layout: &Layout,
+        follow: bool,
+        click_enabled: bool,
+    ) -> u16 {
+        self.down_at(id, [x, y], layout, follow, click_enabled, Instant::now())
+    }
+    fn down_at(
+        &mut self,
+        id: i32,
+        [x, y]: [f32; 2],
+        layout: &Layout,
+        follow: bool,
+        click_enabled: bool,
+        now: Instant,
+    ) -> u16 {
         for (i, bounds) in layout.sticks.iter().enumerate() {
             if bounds.contains(x, y) && self.sticks[i].is_none() {
+                let click = click_enabled
+                    && self.stick_taps[i].take().is_some_and(|tap| {
+                        now.saturating_duration_since(tap.released) <= Duration::from_millis(280)
+                            && (x - tap.position[0]).hypot(y - tap.position[1]) <= 24.
+                    });
                 let mut gesture = StickGesture {
                     pointer: id,
                     origin: [bounds.x + bounds.w / 2., bounds.y + bounds.h / 2.],
                     radius: bounds.w.min(bounds.h) * 0.32,
                     axes: [0; 2],
                     follow,
+                    started: now,
+                    press_position: [x, y],
+                    tap_eligible: click_enabled,
+                    click,
                 };
                 gesture.track(x, y);
                 self.sticks[i] = Some(gesture);
+                if click {
+                    self.update(id, 1 << (14 + i));
+                }
                 return 1 << (14 + i);
             }
         }
@@ -1229,9 +1293,20 @@ impl Touches {
         pressed
     }
     pub fn release(&mut self, id: i32) {
-        for stick in &mut self.sticks {
+        self.release_at(id, Instant::now());
+    }
+    fn release_at(&mut self, id: i32, now: Instant) {
+        for (i, stick) in self.sticks.iter_mut().enumerate() {
             if stick.as_ref().is_some_and(|g| g.pointer == id) {
-                *stick = None;
+                let gesture = stick.take().unwrap();
+                self.stick_taps[i] = (gesture.tap_eligible
+                    && !gesture.click
+                    && now.saturating_duration_since(gesture.started)
+                        <= Duration::from_millis(180))
+                .then_some(StickTap {
+                    released: now,
+                    position: gesture.press_position,
+                });
             }
         }
         self.held.remove(&id);
@@ -1244,6 +1319,7 @@ impl Touches {
         self.pending = 0;
         self.dpad = None;
         self.sticks = [None, None];
+        self.stick_taps = [None, None];
     }
     pub fn mask(&self) -> u16 {
         self.held.values().fold(0, |a, b| a | b)
@@ -1263,6 +1339,120 @@ impl Touches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stick_click_has_no_first_touch_delay_and_stays_held_during_movement() {
+        let layout = Preset {
+            analog: true,
+            ..Preset::default()
+        }
+        .layout(852., 817.);
+        let now = Instant::now();
+        for side in 0..2 {
+            let r = layout.sticks[side];
+            let center = [r.x + r.w / 2., r.y + r.h / 2.];
+            let bit = 1 << (14 + side);
+            let mut touches = Touches::default();
+            touches.down_at(1, center, &layout, true, true, now);
+            assert_eq!(touches.mask(), 0); // first touch is normal analog input
+            touches.motion(1, center[0] + 8., center[1], &layout);
+            assert!(touches.axes()[side * 2] > 0);
+            touches.release_at(1, now + Duration::from_millis(80));
+            touches.down_at(
+                2,
+                center,
+                &layout,
+                true,
+                true,
+                now + Duration::from_millis(170),
+            );
+            assert_eq!(touches.mask(), bit); // second down: no hold timer
+            touches.motion(2, center[0] + 180., center[1] - 60., &layout);
+            assert_eq!(touches.mask(), bit);
+            assert!(touches.axes()[side * 2] > 0 && touches.axes()[side * 2 + 1] < 0);
+            let cross = layout.controls.iter().find(|c| c.mask == 1).unwrap().bounds;
+            touches.down_at(
+                3,
+                [cross.x + cross.w / 2., cross.y + cross.h / 2.],
+                &layout,
+                true,
+                true,
+                now,
+            );
+            assert_eq!(touches.frame_mask(), bit | 1);
+            touches.release_at(2, now + Duration::from_secs(2));
+            assert_eq!(touches.mask(), 1);
+            assert_eq!(touches.axes(), [0; 4]);
+            touches.cancel();
+            assert_eq!(touches.frame_mask(), 0);
+        }
+    }
+    #[test]
+    fn ordinary_stick_play_does_not_turn_into_clicks_and_cancel_clears_taps() {
+        let layout = Preset {
+            analog: true,
+            ..Preset::default()
+        }
+        .layout(852., 817.);
+        let r = layout.sticks[0];
+        let p = [r.x + r.w / 2., r.y + r.h / 2.];
+        let now = Instant::now();
+        for case in 0..5 {
+            let mut t = Touches::default();
+            t.down_at(1, p, &layout, true, true, now);
+            if case == 0 {
+                t.motion(1, p[0] + 30., p[1], &layout);
+            }
+            let release = now + Duration::from_millis(if case == 1 { 200 } else { 80 });
+            t.release_at(1, release);
+            if case == 2 {
+                t.cancel();
+            }
+            let next = release + Duration::from_millis(if case == 3 { 300 } else { 80 });
+            t.down_at(2, p, &layout, true, case != 4, next);
+            assert_eq!(t.mask(), 0, "case {case}");
+        }
+        // A separate button still works with the gesture disabled.
+        let l3 = layout
+            .controls
+            .iter()
+            .find(|c| c.label == "L3")
+            .unwrap()
+            .bounds;
+        let mut t = Touches::default();
+        t.down_at(1, [l3.x + 24., l3.y + 24.], &layout, true, false, now);
+        assert_eq!(t.frame_mask(), 1 << 14);
+        t.cancel();
+        assert_eq!(t.frame_mask(), 0);
+    }
+    #[test]
+    fn inner_thumb_areas_are_adjacent_and_auxiliaries_stay_in_the_middle() {
+        for (w, h) in [(852., 817.), (817., 852.)] {
+            let layout = Preset {
+                analog: true,
+                ..Preset::default()
+            }
+            .layout(w, h);
+            let digital = [layout.dpad, layout.action_bounds()];
+            assert!(layout.sticks.iter().all(|s| s.w >= 140.));
+            assert!((digital[0].x - layout.sticks[0].x - layout.sticks[0].w - 12.).abs() < 0.01);
+            for c in layout.controls.iter().filter(|c| !c.is_face()) {
+                assert!(c.bounds.x >= digital[0].x + digital[0].w);
+                assert!(c.bounds.x + c.bounds.w <= digital[1].x);
+                assert!(!c.bounds.overlaps(layout.game));
+                for other in layout.controls.iter().filter(|other| other.mask != c.mask) {
+                    assert!(
+                        !c.bounds.overlaps(other.bounds),
+                        "{} / {}",
+                        c.label,
+                        other.label
+                    );
+                }
+            }
+            for bar in [layout.playback, layout.speed, layout.pause, layout.mute] {
+                assert!(bar.x >= 28. && bar.x + bar.w <= w - 28.);
+            }
+        }
+    }
     #[test]
     fn saved_controls_survive_temporary_startup_and_replaced_surfaces() {
         for analog in [false, true] {
@@ -1461,7 +1651,7 @@ mod tests {
     }
 
     #[test]
-    fn default_action_caps_never_visually_overlap_and_shoulder_twos_are_outside_or_lower() {
+    fn default_caps_stay_separate_and_first_shoulders_are_outside_or_lower() {
         for analog in [false, true] {
             for (w, h) in [
                 (360., 800.),
@@ -1504,11 +1694,11 @@ mod tests {
                     let (one, two) = (rect(a), rect(b));
                     if (one.y - two.y).abs() < 0.01 {
                         assert!(
-                            (two.x + two.w / 2. - w / 2.).abs()
-                                > (one.x + one.w / 2. - w / 2.).abs()
+                            (one.x + one.w / 2. - w / 2.).abs()
+                                > (two.x + two.w / 2. - w / 2.).abs()
                         );
                     } else {
-                        assert!(two.y > one.y);
+                        assert!(one.y > two.y);
                     }
                 }
             }
@@ -1585,7 +1775,7 @@ mod tests {
         assert!(margin.sticks[0].same_bounds(layout.sticks[0]));
         margin.pause.x -= 20.;
         margin.anchor_toolbar(960., 420., 64., 0., &[]);
-        assert_eq!(margin.pause.x, 904.);
+        assert_eq!(margin.pause.x, 892.);
     }
     #[test]
     fn ps2_control_profiles_do_not_modify_legacy_ps1_profiles() {
@@ -1775,7 +1965,7 @@ mod tests {
             }
             layout.pause.x += 25.;
             layout.anchor_toolbar(w, h, 66., 0., &[]);
-            assert_eq!(layout.pause.x, w - 56.);
+            assert_eq!(layout.pause.x, w - 68.);
         }
     }
 
@@ -1925,8 +2115,8 @@ mod tests {
                     .map(|i| layout.element(i))
                     .collect();
                 if analog {
-                    assert!(layout.sticks.iter().all(|r| r.w >= 112.));
-                    assert!(layout.dpad.h >= 160.);
+                    assert!(layout.sticks.iter().all(|r| r.w >= 128.));
+                    assert!(layout.dpad.h >= 138.);
                 } else {
                     assert!(layout.dpad.h >= 200.);
                 }
@@ -1934,7 +2124,7 @@ mod tests {
                     .controls
                     .iter()
                     .filter(|c| c.is_face())
-                    .all(|c| c.bounds.w >= if analog { 60. } else { 72. }));
+                    .all(|c| c.bounds.w >= if analog { 54. } else { 72. }));
                 let normal = layout.game;
                 layout.anchor_toolbar(w, h, 66., 0., &[camera]);
                 layout.place_game_in(Rect::new(0., -66., w, h + 66.), false, 1., [0.5; 2]);
@@ -2028,8 +2218,8 @@ mod tests {
                 .unwrap()
                 .bounds
         };
-        assert!(bounds("L2").x < bounds("L1").x);
-        assert!(bounds("R2").x > bounds("R1").x);
+        assert!(bounds("L1").x < bounds("L2").x);
+        assert!(bounds("R1").x > bounds("R2").x);
         assert_eq!(bounds("L1").y, bounds("L2").y);
         assert_eq!(bounds("R1").y, bounds("R2").y);
         assert!(bounds("SELECT").x + bounds("SELECT").w / 2. > layout.dpad.x + layout.dpad.w / 2.);

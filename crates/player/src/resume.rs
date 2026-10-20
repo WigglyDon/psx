@@ -129,7 +129,11 @@ pub fn load(root: &Path, game: &Game, card: &[u8]) -> io::Result<Option<Checkpoi
         .iter()
         .map(|d| &d.id)
         .eq(game.disc_list().iter().map(|d| &d.id));
-    if metadata.core != core(root, game)?
+    let current_core = core(root, game)?;
+    let same_core = metadata.core == current_core
+        || (game.system == System::Ps2
+            && crate::ps2::compatible_checkpoint_binding(&metadata.core, &current_core));
+    if !same_core
         || metadata.game.system != game.system
         || metadata.game.id != game.id
         || !same_discs
@@ -174,6 +178,61 @@ pub fn seal_closed_cards(root: &Path, game: &Game, before: &[u8], after: &[u8]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shader_only_upgrade_loads_prior_snapshot_without_weakening_other_bindings() {
+        let root = std::env::temp_dir().join(format!("psx-fetch-upgrade-{}", std::process::id()));
+        let game = Game {
+            system: System::Ps2,
+            id: "def987".into(),
+            title: "Fixture".into(),
+            path: "fixture.iso".into(),
+            discs: vec![],
+            last_disc: 0,
+        };
+        fs::create_dir_all(root.join("ps2/def987")).unwrap();
+        let firmware = root.join("ps2/def987/firmware.json");
+        fs::write(
+            &firmware,
+            format!(r#"{{"file":"fixture.bin","sha256":"{}"}}"#, "a".repeat(64)),
+        )
+        .unwrap();
+        save(&root, &game, true, b"current card", b"complete machine").unwrap();
+        let state_path = path(&root, &game.id).unwrap();
+        let bytes = fs::read(&state_path).unwrap();
+        let size = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+        let mut metadata: Metadata = serde_json::from_slice(&bytes[12..12 + size]).unwrap();
+        let suffix = metadata.core.split_once("+firmware:").unwrap().1.to_owned();
+        let prior = format!(
+            "{}+878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6+firmware:{suffix}",
+            crate::ps2::REVISION,
+        );
+        for (binding, allowed) in [
+            (prior.clone(), true),
+            (prior.replacen("878bdd9e", "00000000", 1), false),
+            (prior.replace(&suffix, "other firmware"), false),
+        ] {
+            metadata.core = binding;
+            let header = serde_json::to_vec(&metadata).unwrap();
+            let mut old = MAGIC.to_vec();
+            old.extend_from_slice(&(header.len() as u32).to_le_bytes());
+            old.extend_from_slice(&header);
+            old.extend_from_slice(&bytes[12 + size..]);
+            fs::write(&state_path, &old).unwrap();
+            assert_eq!(load(&root, &game, b"current card").is_ok(), allowed);
+            assert_eq!(fs::read(&state_path).unwrap(), old);
+            if allowed {
+                let restored = load(&root, &game, b"current card").unwrap().unwrap();
+                assert!(restored.metadata.paused);
+                assert_eq!(restored.bytes, b"complete machine");
+                assert!(load(&root, &game, b"newer card").is_err());
+            }
+        }
+        assert!(!crate::ps2::compatible_checkpoint_binding(
+            &prior,
+            "unknown future build"
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn ps2_bound_and_close_sealing_keep_current_cards_and_retain_failed_checkpoints() {
         let root = std::env::temp_dir().join(format!("psx-ps2-resume-{}", std::process::id()));

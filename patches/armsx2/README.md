@@ -57,5 +57,21 @@ an incompatible checkpoint and current card; it never restores older cards.
 The PS2 checkpoint binding includes both upstream revision and this patch's
 SHA-256. Host policy and input/launch/session ownership remain Rust.
 
+The observed ANGLE failure enabled ARM in the GLSL header while the existing
+PowerVR shader path emitted EXT `inout` syntax. A small header repair enables
+EXT for that path, retaining Mali's ARM preference and the ARM-only fallback.
+The complete captured shader fails without EXT and compiles with EXT on Mesa;
+this compiler regression observation does not establish Fold performance.
+Rust removes its earlier copy workaround only for the affected ANGLE/PowerVR
+renderer. Device rendering/audio/speed validation remains necessary.
+
+Libretro omits the generic manual-API-choice warning: the frontend grants the
+specific context, so this is not an unsafe user override. Actual renderer and
+other unsafe-setting diagnostics remain. Neither change touches emulated state,
+card protocol or serialization. Rust permits only the exact prior `878bdd9e…`
+patch to resume into this exact `92542cb6…` patch, retaining other input/card/
+payload checks. A future native edit disables that explicit exception. New
+checkpoint writes always record the complete new patch identity.
+
 Original file licenses remain applicable to these modifications. No upstream
 acceptance or device gameplay result is implied by this patch.

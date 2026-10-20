@@ -36,6 +36,22 @@ pub fn revision() -> &'static str {
         )
     })
 }
+/// Only the reviewed shader-header repair is state-compatible with the
+/// preceding adapter. Future native edits must make their own decision;
+/// changing the patch bytes disables this exception automatically.
+pub fn compatible_checkpoint_binding(saved: &str, current: &str) -> bool {
+    const BEFORE: &str = "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6";
+    const AFTER: &str = "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c";
+    if revision() != format!("{REVISION}+{AFTER}") {
+        return false;
+    }
+    let before = format!("{REVISION}+{BEFORE}+firmware:");
+    let after = format!("{REVISION}+{AFTER}+firmware:");
+    saved
+        .strip_prefix(&before)
+        .zip(current.strip_prefix(&after))
+        .is_some_and(|(a, b)| !a.is_empty() && a == b)
+}
 pub const MAX_STATE_SIZE: usize = 68 * 1024 * 1024;
 #[derive(Clone, Default)]
 pub struct Output {
@@ -304,6 +320,9 @@ impl Core {
             ("armsx2_ee_cycle_skip", "disabled"),
             ("armsx2_fast_boot", "enabled"),
             ("armsx2_widescreen_patches", "disabled"),
+            // The GS presents into a 640x448 intermediate. The Rust host
+            // applies the final 4:3 fit; fitting here too creates nested bars.
+            ("armsx2_aspect_ratio", "Stretch"),
             ("armsx2_no_interlacing_patches", "disabled"),
             ("armsx2_hw_download_mode", "Accurate"),
         ] {
@@ -590,7 +609,7 @@ pub fn prepare(root: &Path, id: &GameId, renderer: &str) -> Result<PathBuf> {
     // Source-bound settings version. Retain donor defaults for unspecified
     // keys, and explicitly disable adaptive guest clocks for qualification.
     let previous = fs::read_to_string(&ini).unwrap_or_default();
-    let contents = qualification_settings(&previous, needs_fetch_copy(renderer));
+    let contents = qualification_settings(&previous, has_repaired_fetch_header(renderer));
     atomic_write(&ini, contents.as_bytes()).map_err(|e| e.to_string())?;
     Ok(system)
 }
@@ -711,12 +730,12 @@ fn has_rom_version(bytes: &[u8]) -> bool {
     }
     false
 }
-fn needs_fetch_copy(renderer: &str) -> bool {
-    // Observed ANGLE/PowerVR EXT framebuffer-fetch shader compilation failure.
-    // Use the donor's existing copy path; leave other drivers' defaults alone.
+fn has_repaired_fetch_header(renderer: &str) -> bool {
+    // The old header enabled ARM but emitted EXT syntax on this renderer.
+    // The paired native repair enables EXT; remove our earlier copy workaround.
     renderer.contains("ANGLE") && (renderer.contains("PowerVR") || renderer.contains("Imagination"))
 }
-fn qualification_settings(previous: &str, fetch_copy: bool) -> String {
+fn qualification_settings(previous: &str, repaired_fetch: bool) -> String {
     let mut overrides = vec![
         ("UI", "SettingsVersion", "1"),
         ("EmuCore", "AutoTune", "false"),
@@ -725,12 +744,14 @@ fn qualification_settings(previous: &str, fetch_copy: bool) -> String {
         // archive while the VM is stopped; the bounded storage worker owns
         // hashing/writing. Both compressed and stored ZIPs use the same reader.
         ("EmuCore", "SavestateCompressionType", "0"),
+        ("EmuCore/GS", "AspectRatio", "Stretch"),
+        ("EmuCore/GS", "IntegerScaling", "false"),
         ("EmuCore/Speedhacks", "EECycleRate", "0"),
         ("EmuCore/Speedhacks", "EECycleSkip", "0"),
         ("EmuCore/Speedhacks", "DynamicEECycleRate", "false"),
     ];
-    if fetch_copy {
-        overrides.push(("EmuCore/GS", "DisableFramebufferFetch", "true"));
+    if repaired_fetch {
+        overrides.push(("EmuCore/GS", "DisableFramebufferFetch", "false"));
     }
     let mut sections = BTreeMap::<&str, Vec<&str>>::new();
     let mut section = "";
@@ -958,15 +979,22 @@ mod tests {
         assert!(s.contains("Other=keep"));
         assert!(s.contains("AutoTune = false"));
         assert!(s.contains("SavestateCompressionType = 0"));
+        assert!(s.contains("AspectRatio = Stretch"));
+        assert!(s.contains("IntegerScaling = false"));
         assert_eq!(qualification_settings(&s, false), s);
         let renderer = "ANGLE (Imagination Technologies, PowerVR C-Series Vulkan Driver)";
-        assert!(needs_fetch_copy(renderer));
-        assert!(!needs_fetch_copy("Mali-G78"));
-        assert!(!needs_fetch_copy("ANGLE (Qualcomm Adreno)"));
-        let compatible = qualification_settings(&s, needs_fetch_copy(renderer));
-        assert!(compatible.contains("DisableFramebufferFetch = true"));
+        assert!(has_repaired_fetch_header(renderer));
+        assert!(!has_repaired_fetch_header("Mali-G78"));
+        assert!(!has_repaired_fetch_header("ANGLE (Qualcomm Adreno)"));
+        let compatible = qualification_settings(&s, has_repaired_fetch_header(renderer));
+        assert!(compatible.contains("DisableFramebufferFetch = false"));
         assert!(compatible.contains("AutoTune = false"));
         assert!(compatible.contains("EECycleRate = 0"));
         assert_eq!(qualification_settings(&compatible, true), compatible);
+        let old = "[EmuCore/GS]\nDisableFramebufferFetch = true\nOther = keep\n";
+        let repaired = qualification_settings(old, true);
+        assert!(!repaired.contains("DisableFramebufferFetch = true"));
+        assert!(repaired.contains("Other = keep"));
+        assert!(qualification_settings(old, false).contains("DisableFramebufferFetch = true"));
     }
 }
