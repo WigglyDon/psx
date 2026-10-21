@@ -38,15 +38,16 @@ pub fn revision() -> &'static str {
         )
     })
 }
-/// Reviewed shader, notification and capture/packaging changes retain the same
-/// complete state/archive fields. Future patch edits disable this exception.
+/// Reviewed shader, notification, capture/packaging and card-reply padding
+/// changes retain the state/archive fields. Future edits disable this exception.
 pub fn compatible_checkpoint_binding(saved: &str, current: &str) -> bool {
-    const BEFORE: [&str; 3] = [
+    const BEFORE: [&str; 4] = [
         "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
         "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
         "23a0b217e21a9442dde06b009aa6911f782c083a5ff5c37593b415d615309765",
+        "9f5bf1a2a6d6aa228d7789eb0e38bc7cb62c94c98ca12e6a88d36fd8899c01ac",
     ];
-    const AFTER: &str = "9f5bf1a2a6d6aa228d7789eb0e38bc7cb62c94c98ca12e6a88d36fd8899c01ac";
+    const AFTER: &str = "510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1";
     if revision() != format!("{REVISION}+{AFTER}") {
         return false;
     }

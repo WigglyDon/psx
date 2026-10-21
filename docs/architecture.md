@@ -124,6 +124,19 @@ The public [View haptic API](https://developer.android.com/develop/ui/views/hapt
 respects system touch-feedback settings and needs no vibration permission.
 Haptic strength and availability remain platform-owned.
 
+Optional phone-button assignments live in a separate per-game preference,
+keyed by the durable entry ID, independent of display/controller profiles and
+checkpoints. Only Volume Up/Down enter this adapter; power and system-navigation
+keys remain platform-owned. Unassigned keys and new presses in menus or outside
+foreground gameplay return to Android. Rust merges captured digital presses
+with touch masks before the existing engine input call, preserving independent
+release and short taps. Interruption clears logical input and pending taps;
+captured repeats still delivered to the app remain consumed until release and
+cannot rearm on return.
+No background listener, extra permission, runtime or managed callback is added.
+Platform delivery and physical simultaneous-touch behavior still need device
+validation; host tests establish the input/persistence contracts.
+
 ## iOS route
 
 Use the same Rust session, input and save policies behind thin iOS bindings.
@@ -566,9 +579,10 @@ the archive extent, within the same 68 MiB cap. The native reader accepts that
 extent and the former padded buffers. This reduces synchronous preparation
 work; improved device timing remains a separate observation. Exact core/patch
 and firmware binding still applies before restoration. One explicit exception
-accepts the two named preceding adapters into the exact reviewed shader and
-frame-notification patch. Neither repair changes emulated state or archive
-fields. All three patch hashes are named in Rust; a future edit disables this exception
+accepts four named preceding adapters into the exact reviewed capture/packaging
+and card-reply-padding patch. These repairs change no state or archive fields;
+the padding repair corrects queued card responses without changing card storage.
+All five patch hashes are named in Rust; a future edit disables this exception
 automatically. Firmware, discs, current card and payload integrity must still
 match; unknown and older incompatible bindings remain refused.
 

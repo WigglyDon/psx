@@ -222,6 +222,13 @@ mod tests {
                 ),
                 true,
             ),
+            (
+                prior.replace(
+                    "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
+                    "9f5bf1a2a6d6aa228d7789eb0e38bc7cb62c94c98ca12e6a88d36fd8899c01ac",
+                ),
+                true,
+            ),
             (prior.replacen("878bdd9e", "00000000", 1), false),
             (prior.replace(&suffix, "other firmware"), false),
         ] {

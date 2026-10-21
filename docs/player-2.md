@@ -83,8 +83,8 @@ Capture, card verification and worker packaging have separate timings. See
 The PowerVR shader repair enables the EXT framebuffer-fetch language contract
 when its backend emits EXT `inout`, preserving the donor's Mali/ARM preference
 and ARM-only fallback. Actual GTA/Red Dead scenes rendered with EXT fetch
-active. Checkpoints from the three named prior adapters can enter the exact
-capture/packaging build, which changes no emulated state or archive
+active. Checkpoints from four named prior adapters can enter the exact
+capture/packaging and card-reply-padding build, which changes no state or archive
 fields. This transition is guarded by complete patch identities; future edits
 disable that exception automatically. No serializer/card-protocol change is
 implied by a host layout edit.
@@ -208,6 +208,15 @@ auth operations, but no write/erase at failed format. A temporary IOP-interprete
 comparison reproduced the same error and was restored exactly. No protocol
 cause or card repair is established; severe hitches remain. Ordinary PS2
 save→fresh process→load is still required, independently of automatic resume.
+
+Off-device investigation subsequently reproduced a queued card-reply defect:
+the donor padded against the complete output FIFO, truncating some replies
+when older packets awaited output DMA. A small retained-source repair counts
+the current reply instead. The Rust-driven actual-helper fixture fails before
+the change and verifies packet lengths/terminator offsets after it. Whether
+this contributes to the selected game's format failure remains unverified;
+there is no ordinary save/load or fresh-boot formatting pass from that fixture.
+Card files, authentication and the snapshot format are unchanged.
 
 Still required: controlled simultaneous analog/digital/action gameplay with
 audible sound, physical L3/R3, remaining fold/status/lifecycle cases, missing-file

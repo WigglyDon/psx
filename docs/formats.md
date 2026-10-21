@@ -151,3 +151,20 @@ explicit restart route. PS1 retains its existing 64 MiB state bound and card
 restore behavior. Verified relinking compares stable disc identities rather
 than old filesystem paths. Ordinary PS2 saves and automatic resume still
 require separate device acceptance observations.
+
+## Phone buttons
+
+While a game is open, **Settings → Controller settings → Phone buttons** can
+assign Volume Up and Volume Down to digital controller inputs for that game.
+Holding a key holds its assigned input; releasing it lets go. Both start
+unassigned. Menus and unassigned keys retain system volume, and the in-game
+speaker control remains available when both physical keys are assigned.
+The power button is not offered. PS2 also offers L3/R3; these bindings do not
+simulate analog axes. Full external-controller support remains separate work.
+
+Assignments are atomic local preferences in `phone-buttons.json`, keyed by the
+existing game ID. They survive orientation changes, title edits and relinking;
+resetting a display layout does not reset them. **Reset phone buttons** restores
+system volume for this game without altering touch layouts, cards or sessions.
+The first implementation has host/Android build validation; physical key
+delivery, repeat behavior and system-volume fallback require a device check.

@@ -17,6 +17,7 @@ use psx_player::{
     files::{Game, System},
     input::{safe_content, ControllerSettings, Layout, PlayerViewport, Rect, Touches},
     library::{self, Library},
+    phone_buttons::{Bindings, Button, PhoneInput, PhoneKey, Settings as PhoneButtonSettings},
     resume,
     retro::HostConfig,
     saves::MemoryCard,
@@ -55,6 +56,10 @@ enum Action {
     Home,
     Discs,
     Controllers,
+    PhoneButtons,
+    BindPhoneKey(PhoneKey),
+    SetPhoneKey(PhoneKey, Option<Button>),
+    ResetPhoneKeys,
     Sound,
     Timescale,
     ToggleMute,
@@ -95,6 +100,8 @@ enum Screen {
     About,
     License(&'static str),
     Controllers,
+    PhoneButtons,
+    PhoneBinding(PhoneKey),
     Sound,
     Timescale,
     Editing,
@@ -114,6 +121,9 @@ struct Player {
     game: Option<Game>,
     library: Library,
     controller_settings: ControllerSettings,
+    phone_button_settings: PhoneButtonSettings,
+    phone_bindings: Bindings,
+    phone_input: PhoneInput,
     playback: PlaybackSettings,
     queue: Arc<AudioQueue>,
     sound: Option<Sound>,
@@ -191,6 +201,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         library: Library::load(&root)
             .map_err(|e| format!("The saved library could not be read: {e}"))?,
         controller_settings: ControllerSettings::load(&root).map_err(|e| e.to_string())?,
+        phone_button_settings: PhoneButtonSettings::load(&root).map_err(|e| e.to_string())?,
+        phone_bindings: Bindings::default(),
+        phone_input: PhoneInput::default(),
         playback,
         root,
         platform,
@@ -302,6 +315,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.fail(error);
             } else if before != [player.graphics.width, player.graphics.height] {
                 player.touches.cancel();
+                player.phone_input.cancel();
                 if let Err(error) = player.resize(&app) {
                     player.fail(error);
                 }
@@ -520,7 +534,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         player.visuals.muted = player.playback.muted || player.playback.volume == 0;
         player.visual_animating = player.visuals.advance(
             (now - player.last_visual).as_secs_f32(),
-            player.touches.mask(),
+            player.touches.mask() | player.phone_input.mask(),
             player.menu.is_some() || player.editor.is_some(),
             animated_icons,
             player.touches.dpad_feedback(),
@@ -611,6 +625,7 @@ impl Player {
             | MainEvent::InsetsChanged { .. } => {
                 let surface_size = [self.graphics.width, self.graphics.height];
                 self.touches.cancel();
+                self.phone_input.cancel();
                 self.resize(app)?;
                 self.platform.insets(app);
                 // Bar reveals can send resize callbacks without changing the
@@ -648,6 +663,7 @@ impl Player {
                 self.time_press.cancel();
                 self.activity.foreground = false;
                 self.touches.cancel();
+                self.phone_input.cancel();
                 if !self.activity.background_playback {
                     self.activity.audio_focus = false;
                     self.interrupt()?;
@@ -1004,6 +1020,7 @@ impl Player {
                                             &self.layout,
                                         )
                                     };
+                                    let pressed = pressed & !self.phone_input.mask();
                                     self.visuals.trigger(pressed);
                                     feedback |= pressed != 0;
                                 }
@@ -1022,6 +1039,50 @@ impl Player {
                     action = Some(Action::Back);
                 }
                 InputStatus::Handled
+            }
+            InputEvent::KeyEvent(key) => {
+                let phone_key = match key.key_code() {
+                    Keycode::VolumeUp => PhoneKey::VolumeUp,
+                    Keycode::VolumeDown => PhoneKey::VolumeDown,
+                    _ => return InputStatus::Unhandled,
+                };
+                let handled = match key.action() {
+                    KeyAction::Down => {
+                        let playing = self.core.is_some()
+                            && self.activity.can_run()
+                            && self.activity.foreground
+                            && self.activity.focused
+                            && self.menu.is_none()
+                            && self.editor.is_none()
+                            && !self.picker
+                            && self.import.is_none()
+                            && self.work.is_none();
+                        self.phone_input
+                            .down(
+                                key.device_id(),
+                                phone_key,
+                                key.repeat_count() != 0,
+                                self.phone_bindings,
+                                playing,
+                            )
+                            .map(|pressed| {
+                                let pressed = pressed & !self.touches.mask();
+                                self.visuals.trigger(pressed);
+                                if pressed != 0 {
+                                    self.platform.haptic(app);
+                                }
+                            })
+                            .is_some()
+                    }
+                    // Multiple/unknown actions release our own source too.
+                    _ => self.phone_input.up(key.device_id(), phone_key),
+                };
+                if handled {
+                    self.dirty = true;
+                    InputStatus::Handled
+                } else {
+                    InputStatus::Unhandled
+                }
             }
             _ => InputStatus::Unhandled,
         }) {}
@@ -1177,6 +1238,7 @@ impl Player {
         self.closing_menu = None;
         self.screen = screen;
         self.touches.cancel();
+        self.phone_input.cancel();
         if let Some(core) = &mut self.core {
             core.input(0, [0; 4], false);
         }
@@ -1364,6 +1426,32 @@ impl Player {
                 }
             }
             Action::Controllers => self.navigate(app, Screen::Controllers),
+            Action::PhoneButtons => self.navigate(app, Screen::PhoneButtons),
+            Action::BindPhoneKey(key) => self.navigate(app, Screen::PhoneBinding(key)),
+            Action::SetPhoneKey(key, button) => {
+                let game = self
+                    .game
+                    .as_ref()
+                    .ok_or("Open a game to set its phone buttons.")?;
+                let mut bindings = self.phone_bindings;
+                bindings.set(key, button);
+                self.phone_button_settings
+                    .set(&self.root, &GameId::parse(&game.id)?, bindings)
+                    .map_err(|e| format!("Phone buttons could not be saved: {e}"))?;
+                self.phone_bindings = bindings;
+                self.navigate(app, Screen::PhoneButtons);
+            }
+            Action::ResetPhoneKeys => {
+                let game = self
+                    .game
+                    .as_ref()
+                    .ok_or("Open a game to set its phone buttons.")?;
+                self.phone_button_settings
+                    .set(&self.root, &GameId::parse(&game.id)?, Bindings::default())
+                    .map_err(|e| format!("Phone buttons could not be saved: {e}"))?;
+                self.phone_bindings = Bindings::default();
+                self.navigate(app, Screen::PhoneButtons);
+            }
             Action::Sound => {
                 if self.screen == Screen::Sound && self.menu.is_some() {
                     self.action(app, Action::Resume)?;
@@ -1548,6 +1636,8 @@ impl Player {
                 Screen::License(_) => self.navigate(app, Screen::About),
                 Screen::Editing => return self.action(app, Action::CancelEdit),
                 Screen::Controllers => self.navigate(app, Screen::Settings),
+                Screen::PhoneButtons => self.navigate(app, Screen::Controllers),
+                Screen::PhoneBinding(_) => self.navigate(app, Screen::PhoneButtons),
                 Screen::Sound | Screen::Timescale => return self.action(app, Action::Resume),
                 Screen::Settings if self.core.is_some() => return self.action(app, Action::Resume),
                 Screen::Home if self.core.is_none() => self.platform.finish(app),
@@ -1627,6 +1717,7 @@ impl Player {
         if paused != self.activity.time_paused {
             self.activity.time_paused = paused;
             self.touches.cancel();
+            self.phone_input.cancel();
             if let Some(core) = &mut self.core {
                 core.input(0, [0; 4], false);
             }
@@ -1962,6 +2053,13 @@ impl Player {
                         "Tap, then hold the stick to press L3/R3; lift to release. Buttons remain available".into(),
                     );
                 }
+                if self.game.is_some() {
+                    add(
+                        Action::PhoneButtons,
+                        "Phone buttons".into(),
+                        "Assign volume keys for this game".into(),
+                    );
+                }
                 if !preset.is_default_with_cutouts(w, h, &self.cutout_rects()) {
                     add(
                         Action::ResetControls,
@@ -1976,6 +2074,56 @@ impl Player {
                         ControllerSettings::profile(w, h)
                     ),
                     "Done".into(),
+                    Action::Back,
+                )
+            }
+            Screen::PhoneButtons => {
+                for key in [PhoneKey::VolumeUp, PhoneKey::VolumeDown] {
+                    add(
+                        Action::BindPhoneKey(key),
+                        key.label().into(),
+                        self.phone_bindings
+                            .get(key)
+                            .map_or("System volume", Button::label)
+                            .into(),
+                    );
+                }
+                if self.phone_bindings != Bindings::default() {
+                    add(
+                        Action::ResetPhoneKeys,
+                        "Reset phone buttons".into(),
+                        "Use both keys for system volume again".into(),
+                    );
+                }
+                (
+                    "Phone buttons".into(),
+                    format!(
+                        "{} · Assignments apply only during play. In menus, the keys adjust system volume. Power stays with Android.",
+                        self.game.as_ref().map_or("Current game", |game| game.title.as_str())
+                    ),
+                    "Back".into(),
+                    Action::Back,
+                )
+            }
+            Screen::PhoneBinding(key) => {
+                add(
+                    Action::SetPhoneKey(key, None),
+                    "System volume".into(),
+                    "Leave this key unassigned".into(),
+                );
+                for button in Button::ALL {
+                    if !button.requires_sticks() || self.controller_settings.analog() {
+                        add(
+                            Action::SetPhoneKey(key, Some(button)),
+                            button.label().into(),
+                            String::new(),
+                        );
+                    }
+                }
+                (
+                    key.label().into(),
+                    "Hold the phone key to hold its controller button; release to let go.".into(),
+                    "Back".into(),
                     Action::Back,
                 )
             }
@@ -2104,6 +2252,13 @@ impl Player {
         if self.screen == Screen::Results {
             for (row, (_, checked)) in rows.iter_mut().skip(1).zip(&self.scan_games) {
                 row.checked = Some(*checked);
+            }
+        }
+        if let Screen::PhoneBinding(key) = self.screen {
+            for (row, action) in rows.iter_mut().zip(&actions) {
+                if let Action::SetPhoneKey(_, button) = action {
+                    row.checked = Some(*button == self.phone_bindings.get(key));
+                }
             }
         }
         if self.screen == Screen::Home {
@@ -2332,6 +2487,7 @@ impl Player {
         self.session.as_mut().unwrap().state = SessionState::Unavailable;
         self.card = card;
         self.game = Some(game.clone());
+        self.phone_bindings = self.phone_button_settings.get(&id);
         self.controller_settings = if game.system == System::Ps2 {
             ControllerSettings::load_ps2(&self.root.join("ps2-controls"))
         } else {
@@ -2389,7 +2545,7 @@ impl Player {
         self.queue.set_speed(speed);
         core.pause(false)?;
         core.input(
-            self.touches.frame_mask(),
+            self.touches.frame_mask() | self.phone_input.frame_mask(),
             self.touches.axes(),
             speed.is_fast(),
         );
@@ -2577,6 +2733,7 @@ impl Player {
         self.speaker_press.cancel();
         self.time_press.cancel();
         self.touches.cancel();
+        self.phone_input.cancel();
         if let Some(menu) = &mut self.menu {
             menu.cancel();
         }
@@ -2614,6 +2771,7 @@ impl Player {
         self.session.take();
         self.card = None;
         self.game = None;
+        self.phone_bindings = Bindings::default();
         self.queue.clear_stopped();
         if had_game && clear_active {
             resume::clear_active(&self.root).map_err(|e| e.to_string())?;
@@ -2632,6 +2790,7 @@ impl Player {
         self.editor = None;
         self.activity.user_paused = true;
         self.touches.cancel();
+        self.phone_input.cancel();
         self.stop_sound();
     }
 }

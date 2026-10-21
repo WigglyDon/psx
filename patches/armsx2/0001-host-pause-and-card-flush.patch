@@ -317,10 +317,21 @@ index bafc4ca74..d65039cbb 100644
 \ No newline at end of file
 +bool FileMcd_DeleteCard(const std::string_view name);
 diff --git a/pcsx2/SIO/Memcard/MemoryCardProtocol.cpp b/pcsx2/SIO/Memcard/MemoryCardProtocol.cpp
-index bfa67e63a..d3c0474a2 100644
+index bfa67e63a..938e06abd 100644
 --- a/pcsx2/SIO/Memcard/MemoryCardProtocol.cpp
 +++ b/pcsx2/SIO/Memcard/MemoryCardProtocol.cpp
-@@ -226,6 +226,15 @@ void MemoryCardProtocol::WriteData()
+@@ -41,7 +41,9 @@ bool MemoryCardProtocol::PS1Fail()
+ // then end with 0x2b and terminator bytes. This function is a shortcut for that.
+ void MemoryCardProtocol::The2bTerminator(size_t length)
+ {
+-	while (g_Sio2FifoOut.size() < length - 2)
++	// Sio2::Memcard has appended this reply's two header bytes. Earlier
++	// replies may still await DMA12, so the FIFO's total is not our length.
++	for (size_t responseBytes = 2; responseBytes < length - 2; responseBytes++)
+ 	{
+ 		g_Sio2FifoOut.push_back(0x00);
+ 	}
+@@ -226,6 +228,15 @@ void MemoryCardProtocol::WriteData()
  		g_Sio2FifoOut.push_back(0x00);
  	}
  
@@ -336,7 +347,7 @@ index bfa67e63a..d3c0474a2 100644
  	mcd->Write(buf.data(), buf.size());
  	g_Sio2FifoOut.push_back(checksum);
  	g_Sio2FifoOut.push_back(mcd->term);
-@@ -419,6 +428,13 @@ void MemoryCardProtocol::EraseBlock()
+@@ -419,6 +430,13 @@ void MemoryCardProtocol::EraseBlock()
  {
  	MC_LOG.WriteLn("%s", __FUNCTION__);
  	PS1_FAIL();

@@ -67,8 +67,18 @@ appeared, the next diagnostic records at most four occurrences of each SIO2
 card opcode per process: port/slot, presence, auto-eject counter, terminator
 and transfer lengths. It records no guest/authentication bytes. This distinguishes
 probe/auth/setup failure from file writes without an unbounded protocol log.
-Changing this native patch changes its strict checkpoint binding; an older PS2
-snapshot is retained behind the explicit restart guard, with current cards kept.
+
+A separate off-device reproduction found that `The2bTerminator` incorrectly
+uses the total output FIFO length when padding one reply. The retained DMA11
+input loop can enqueue several responses before DMA12 drains them. After a
+144-byte earlier response, 5/9/14-byte replies contain only four bytes and their
+acknowledgement/terminator moves. Count this reply's two existing header bytes
+instead; prior queued bytes remain untouched. A Rust-driven fixture applies the
+tracked patch and compiles the actual helper with mechanical FIFO/card types.
+It fails before the repair and checks reply extents, zero padding and both
+terminators after zero, one and two queued DMA blocks. It does not execute guest
+firmware or prove the cause/repair of the observed game-format error. No card
+preformatting, successful-response stub, auth bypass or state field is added.
 
 Its existing `OnPerformanceMetricsUpdated` callback also forwards a five-float
 completed sample (VPS, speed percent, average/minimum/maximum frame time) via
@@ -93,12 +103,13 @@ renderer. Device rendering/audio/speed validation remains necessary.
 
 Libretro omits the generic manual-API-choice warning: the frontend grants the
 specific context, so this is not an unsafe user override. Actual renderer and
-other unsafe-setting diagnostics remain. Neither change touches emulated state,
-card protocol or serialization. The frame-notification and capture/packaging additions change
-no emulated state or archive fields. Rust permits only the exact prior
-`878bdd9e…`, `92542cb6…` and `23a0b217…` patches to resume into this exact `9f5bf1a2…`
-patch, retaining other input/card/
-payload checks. A future native edit disables that explicit exception. New
+other unsafe-setting diagnostics remain. Those rendering repairs, frame
+notification, capture/packaging and the reply-padding correction change no
+emulated state or archive fields. The reply correction does change card wire
+behavior. Rust permits only the exact prior `878bdd9e…`, `92542cb6…`,
+`23a0b217…` and `9f5bf1a2…` patches to resume into this exact `510a3f5e…`
+patch, retaining other input/card/payload checks. A future native edit disables
+that explicit exception. New
 checkpoint writes always record the complete new patch identity.
 
 Original file licenses remain applicable to these modifications. No upstream
