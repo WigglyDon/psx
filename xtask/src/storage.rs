@@ -90,10 +90,11 @@ pub struct Space {
     pub available: u64,
     pub metadata: Option<(u64, u64)>,
     pub unallocated: Option<u64>,
+    pub global_reserve: Option<(u64, u64)>,
 }
 impl Space {
     fn value(&self) -> Value {
-        json!({"availableBytes":self.available,"metadataAllocatedUsed":self.metadata,"deviceUnallocatedBytes":self.unallocated})
+        json!({"availableBytes":self.available,"metadataAllocatedUsed":self.metadata,"deviceUnallocatedBytes":self.unallocated,"globalReservedUsed":self.global_reserve})
     }
     pub fn require(&self, planned: u64) -> Result<()> {
         let needed = RESERVE
@@ -102,12 +103,25 @@ impl Space {
         if self.available < needed {
             return Err(format!("Storage pressure: {:.2} GiB available; {:.2} GiB needed including the provisional 12 GiB shared-host reserve. Run cargo xtask storage; keep unfinished work.", self.available as f64/GIB as f64, needed as f64/GIB as f64).into());
         }
-        if self
-            .metadata
-            .is_some_and(|(total, used)| total.saturating_sub(used) < 512 * 1024 * 1024)
-            || self.unallocated.is_some_and(|n| n < GIB)
-        {
-            return Err("Btrfs allocation pressure: retain at least 512 MiB logical metadata slack and 1 GiB device-unallocated; ask the host custodian to review allocation. No automatic balance/repair.".into());
+        if let Some((total, used)) = self.metadata {
+            let (reserved, emergency_used) = self
+                .global_reserve
+                .ok_or("Missing Btrfs emergency-reserve measurement; no growth authorized")?;
+            let unallocated = self
+                .unallocated
+                .ok_or("Missing Btrfs allocation measurement; no growth authorized")?;
+            // Unused metadata is already allocated workspace. Unallocated device
+            // bytes are needed for expansion, not every ordinary write. Exclude
+            // the emergency reserve, and retain twice the ordinary margin when
+            // no complete new chunk is available. Never spend emergency space.
+            let margin = if unallocated < GIB { GIB } else { GIB / 2 };
+            if used > total
+                || reserved > total.saturating_sub(used)
+                || emergency_used != 0
+                || total - used - reserved < margin
+            {
+                return Err("Btrfs metadata pressure: retain 512 MiB outside the unused emergency reserve, or 1 GiB when device-unallocated space is low. No automatic balance/repair.".into());
+            }
         }
         Ok(())
     }
@@ -158,6 +172,10 @@ fn parse_btrfs(text: &str, available: u64) -> Result<Space> {
         available,
         metadata: Some((total, used)),
         unallocated: Some(number_after(text, "Device unallocated:")?),
+        global_reserve: Some((
+            number_after(text, "Global reserve:")?,
+            number_after(text, "(used:")?,
+        )),
     })
 }
 pub fn space(root: &Path) -> Result<Space> {
@@ -175,6 +193,7 @@ pub fn space(root: &Path) -> Result<Space> {
             available,
             metadata: None,
             unallocated: None,
+            global_reserve: None,
         });
     }
     let mut btrfs = cmd("btrfs", &["filesystem", "usage", "-b"]);
@@ -924,18 +943,35 @@ mod tests {
             available: RESERVE + 3 * GIB,
             metadata: None,
             unallocated: None,
+            global_reserve: None,
         };
         assert!(s.require(3 * GIB).is_ok());
         assert!(s.require(4 * GIB).is_err());
         assert!(s.require(u64::MAX).is_err());
         s.metadata = Some((5 * GIB, 5 * GIB - 128 * 1024 * 1024));
+        s.global_reserve = Some((GIB / 2, 0));
+        s.unallocated = Some(2 * GIB);
         assert!(s.require(0).is_err());
         s.metadata = Some((5 * GIB, 3 * GIB));
         s.unallocated = Some(1024 * 1024);
+        assert!(s.require(0).is_ok()); // Already allocated usable metadata remains.
+        s.metadata = Some((5 * GIB, 4 * GIB));
+        assert!(s.require(0).is_err()); // Emergency reserve is never counted free.
+        s.unallocated = Some(2 * GIB);
+        assert!(s.require(0).is_ok());
+        s.global_reserve = Some((GIB / 2, 1));
         assert!(s.require(0).is_err());
-        let parsed=parse_btrfs("Device unallocated: 2148532224\nMetadata,DUP: Size:5368709120, Used:3611951104 (67.28%)\n",s.available).unwrap();
+        s.global_reserve = None;
+        assert!(s.require(0).is_err());
+        let parsed=parse_btrfs("Device unallocated: 2148532224\nMetadata,DUP: Size:5368709120, Used:3611951104 (67.28%)\nGlobal reserve: 536870912 (used: 0)\n",s.available).unwrap();
         assert_eq!(parsed.metadata, Some((5368709120, 3611951104)));
         assert!(parsed.require(0).is_ok());
+        assert_eq!(parsed.global_reserve, Some((536870912, 0)));
+        assert!(parse_btrfs(
+            "Device unallocated: 2148532224\nMetadata,DUP: Size:5368709120, Used:3611951104\n",
+            s.available
+        )
+        .is_err());
         assert!(parse_btrfs("Device unallocated: 0", s.available).is_err());
     }
 }

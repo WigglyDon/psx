@@ -29,11 +29,21 @@ unrecognized, incomplete or differing trees and explains why.
 The initial local guard reserves 12 GiB of available filesystem space plus
 the operation's estimated growth: 8 GiB for an APK or standalone PS2 build,
 3 GiB for corresponding source, 1 GiB for firmware reproduction and 64 MiB
-for notices. On Btrfs it additionally requires 512 MiB of logical metadata
-slack and 1 GiB of device-unallocated space. Missing allocation readings fail
-closed for growth. These conservative starting values are not a validated
+for notices. On Btrfs it additionally requires 512 MiB of usable logical metadata
+outside the unused global emergency reserve. When device-unallocated space is
+below 1 GiB, retain 1 GiB of usable metadata instead. Already allocated unused
+metadata can serve ordinary writes; low unallocated space alone does not mean
+ENOSPC. Any emergency-reserve use or missing allocation/reserve readings refuses
+growth. These conservative starting values are not a validated
 host quota or a claim that simultaneous workloads fit; the host custodian
 owns changes to shared capacity policy.
+
+The metadata distinction follows the [Btrfs filesystem accounting](https://btrfs.readthedocs.io/en/latest/btrfs-filesystem.html):
+the global reserve is part of metadata, while device-unallocated space is needed
+to expand block groups. The project initially required an unallocated chunk
+unconditionally; this rejected a host with ample allocated metadata even after
+bounded data compaction. The revised guard keeps a larger existing metadata
+reserve in that condition, without automatic privileged filesystem operations.
 
 Writing xtask operations hold one descriptor-owned project lock. Capacity is
 checked before large jobs and between subprocess stages; existing caches
