@@ -1,6 +1,7 @@
 pub mod artwork;
 pub mod audio;
 pub mod content;
+pub mod controller_profiles;
 pub mod engine;
 pub mod files;
 mod firmware;

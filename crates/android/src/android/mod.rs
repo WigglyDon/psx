@@ -13,11 +13,12 @@ use platform::{Event, Platform, PICK_FIRMWARE, PICK_GAME, PICK_PS2_FIRMWARE, PIC
 use psx_player::{
     artwork::Artwork,
     audio::AudioQueue,
+    controller_profiles::Settings as ControllerProfiles,
     engine::Core,
     files::{Game, System},
-    input::{safe_content, ControllerSettings, Layout, PlayerViewport, Rect, Touches},
+    input::{safe_content, ControllerSettings, Layout, PlayerViewport, Preset, Rect, Touches},
     library::{self, Library},
-    phone_buttons::{Bindings, Button, PhoneInput, PhoneKey, Settings as PhoneButtonSettings},
+    phone_buttons::{Bindings, Button, PhoneInput, PhoneKey},
     resume,
     retro::HostConfig,
     saves::MemoryCard,
@@ -56,6 +57,7 @@ enum Action {
     Home,
     Discs,
     Controllers,
+    ToggleGameController,
     PhoneButtons,
     BindPhoneKey(PhoneKey),
     SetPhoneKey(PhoneKey, Option<Button>),
@@ -121,7 +123,7 @@ struct Player {
     game: Option<Game>,
     library: Library,
     controller_settings: ControllerSettings,
-    phone_button_settings: PhoneButtonSettings,
+    controller_profiles: ControllerProfiles,
     phone_bindings: Bindings,
     phone_input: PhoneInput,
     playback: PlaybackSettings,
@@ -193,6 +195,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     let graphics = unsafe { Graphics::new()? };
     let now = Instant::now();
     let playback = PlaybackSettings::load(&root).map_err(|e| e.to_string())?;
+    let controller_profiles = ControllerProfiles::load(&root).map_err(|e| e.to_string())?;
     let queue = Arc::new(AudioQueue::new(16384));
     queue.set_volume(playback.output_volume());
     queue.set_speed(playback.effective_speed());
@@ -200,9 +203,11 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         frame_waker: platform::frame_waker(&app),
         library: Library::load(&root)
             .map_err(|e| format!("The saved library could not be read: {e}"))?,
-        controller_settings: ControllerSettings::load(&root).map_err(|e| e.to_string())?,
-        phone_button_settings: PhoneButtonSettings::load(&root).map_err(|e| e.to_string())?,
-        phone_bindings: Bindings::default(),
+        controller_settings: controller_profiles
+            .controls(&root, None, false)
+            .map_err(|e| e.to_string())?,
+        phone_bindings: controller_profiles.bindings(None, false),
+        controller_profiles,
         phone_input: PhoneInput::default(),
         playback,
         root,
@@ -1426,28 +1431,37 @@ impl Player {
                 }
             }
             Action::Controllers => self.navigate(app, Screen::Controllers),
+            Action::ToggleGameController => {
+                let id = self
+                    .controller_id()?
+                    .ok_or("Open a game to customize its controller.")?;
+                self.controller_profiles
+                    .set_custom(
+                        &self.root,
+                        &id,
+                        !self.controller_profiles.custom(&id),
+                        &self.controller_settings,
+                    )
+                    .map_err(|e| format!("Controller profile could not be saved: {e}"))?;
+                self.reload_controls(app)?;
+                self.refresh_menu(app);
+            }
             Action::PhoneButtons => self.navigate(app, Screen::PhoneButtons),
             Action::BindPhoneKey(key) => self.navigate(app, Screen::PhoneBinding(key)),
             Action::SetPhoneKey(key, button) => {
-                let game = self
-                    .game
-                    .as_ref()
-                    .ok_or("Open a game to set its phone buttons.")?;
-                let mut bindings = self.phone_bindings;
-                bindings.set(key, button);
-                self.phone_button_settings
-                    .set(&self.root, &GameId::parse(&game.id)?, bindings)
+                let id = self.controller_id()?;
+                self.controller_profiles
+                    .assign(&self.root, id.as_ref(), key, button)
                     .map_err(|e| format!("Phone buttons could not be saved: {e}"))?;
-                self.phone_bindings = bindings;
+                self.phone_bindings = self
+                    .controller_profiles
+                    .bindings(id.as_ref(), self.controller_settings.analog());
                 self.navigate(app, Screen::PhoneButtons);
             }
             Action::ResetPhoneKeys => {
-                let game = self
-                    .game
-                    .as_ref()
-                    .ok_or("Open a game to set its phone buttons.")?;
-                self.phone_button_settings
-                    .set(&self.root, &GameId::parse(&game.id)?, Bindings::default())
+                let id = self.controller_id()?;
+                self.controller_profiles
+                    .set_bindings(&self.root, id.as_ref(), Bindings::default())
                     .map_err(|e| format!("Phone buttons could not be saved: {e}"))?;
                 self.phone_bindings = Bindings::default();
                 self.navigate(app, Screen::PhoneButtons);
@@ -1541,10 +1555,7 @@ impl Player {
                 let (w, h) = self.dimensions();
                 let mut preset = self.controller_settings.preset(w, h);
                 preset.follow_thumb = !preset.follow_thumb;
-                self.controller_settings.set(w, h, preset);
-                self.controller_settings
-                    .save(&self.controls_root())
-                    .map_err(|e| e.to_string())?;
+                self.save_control_preset(w, h, preset)?;
                 self.resize(app)?;
                 self.refresh_menu(app);
             }
@@ -1552,10 +1563,7 @@ impl Player {
                 let (w, h) = self.dimensions();
                 let mut preset = self.controller_settings.preset(w, h);
                 preset.stick_click_gesture = !preset.stick_click_gesture;
-                self.controller_settings.set(w, h, preset);
-                self.controller_settings
-                    .save(&self.controls_root())
-                    .map_err(|e| e.to_string())?;
+                self.save_control_preset(w, h, preset)?;
                 self.touches.cancel();
                 self.refresh_menu(app);
             }
@@ -1563,19 +1571,13 @@ impl Player {
                 let (w, h) = self.dimensions();
                 let mut preset = self.controller_settings.preset(w, h);
                 preset.allow_overlap = !preset.allow_overlap;
-                self.controller_settings.set(w, h, preset);
-                self.controller_settings
-                    .save(&self.controls_root())
-                    .map_err(|e| e.to_string())?;
+                self.save_control_preset(w, h, preset)?;
                 self.resize(app)?;
                 self.refresh_menu(app);
             }
             Action::ResetControls => {
                 let (w, h) = self.dimensions();
-                self.controller_settings.set(w, h, Default::default());
-                self.controller_settings
-                    .save(&self.controls_root())
-                    .map_err(|e| e.to_string())?;
+                self.save_control_preset(w, h, Default::default())?;
                 self.resize(app)?;
                 self.refresh_menu(app);
             }
@@ -1594,12 +1596,13 @@ impl Player {
                 self.dirty = true;
             }
             Action::SaveControls => {
-                if let Some(editor) = self.editor.take() {
-                    self.controller_settings
-                        .set(editor.width, editor.height, editor.preset);
-                    self.controller_settings
-                        .save(&self.controls_root())
-                        .map_err(|e| e.to_string())?;
+                if let Some((w, h, preset)) = self
+                    .editor
+                    .as_ref()
+                    .map(|e| (e.width, e.height, e.preset.clone()))
+                {
+                    self.save_control_preset(w, h, preset)?;
+                    self.editor = None;
                     self.resize(app)?;
                 }
                 self.navigate(app, Screen::Controllers);
@@ -1663,12 +1666,39 @@ impl Player {
         menu.over_game = self.core.is_some();
         Menu::column(menu.surface(w, h).w).w - 8.
     }
-    fn controls_root(&self) -> PathBuf {
-        if self.controller_settings.analog() {
-            self.root.join("ps2-controls")
-        } else {
-            self.root.clone()
-        }
+    fn controller_id(&self) -> Result<Option<GameId>, String> {
+        self.game
+            .as_ref()
+            .map(|g| GameId::parse(&g.id))
+            .transpose()
+            .map_err(|e| e.to_string())
+    }
+    fn custom_controller(&self) -> bool {
+        self.controller_id()
+            .ok()
+            .flatten()
+            .is_some_and(|id| self.controller_profiles.custom(&id))
+    }
+    fn reload_controls(&mut self, app: &AndroidApp) -> Result<(), String> {
+        let id = self.controller_id()?;
+        let analog = self.controller_settings.analog();
+        self.controller_settings = self
+            .controller_profiles
+            .controls(&self.root, id.as_ref(), analog)
+            .map_err(|e| e.to_string())?;
+        self.phone_bindings = self.controller_profiles.bindings(id.as_ref(), analog);
+        self.cancel_input();
+        self.resize(app)
+    }
+    fn save_control_preset(&mut self, w: f32, h: f32, preset: Preset) -> Result<(), String> {
+        let id = self.controller_id()?;
+        let mut controls = self.controller_settings.clone();
+        controls.set(w, h, preset);
+        self.controller_profiles
+            .save_controls(&self.root, id.as_ref(), &controls)
+            .map_err(|e| format!("Controller layout could not be saved: {e}"))?;
+        self.controller_settings = controls;
+        Ok(())
     }
 
     fn cutout_rects(&self) -> Vec<Rect> {
@@ -2022,9 +2052,21 @@ impl Player {
             Screen::Controllers | Screen::Editing => {
                 let (w, h) = self.dimensions();
                 let preset = self.controller_settings.preset(w, h);
+                if self.game.is_some() {
+                    add(
+                        Action::ToggleGameController,
+                        "Custom controller for this game".into(),
+                        if self.custom_controller() {
+                            "On · layout and bindings apply only to this game"
+                        } else {
+                            "Off · use the app default controller"
+                        }
+                        .into(),
+                    );
+                }
                 add(
                     Action::EditControls,
-                    "Edit layout".into(),
+                    if self.custom_controller() { "Edit this game's layout" } else { "Edit default layout" }.into(),
                     "Edit live; move, resize or mirror groups. Shapes have spacing; Single edits one button"
                         .into(),
                 );
@@ -2053,13 +2095,16 @@ impl Player {
                         "Tap, then hold the stick to press L3/R3; lift to release. Buttons remain available".into(),
                     );
                 }
-                if self.game.is_some() {
-                    add(
-                        Action::PhoneButtons,
-                        "Phone buttons".into(),
-                        "Assign volume keys for this game".into(),
-                    );
-                }
+                add(
+                    Action::PhoneButtons,
+                    "Phone buttons".into(),
+                    if self.custom_controller() {
+                        "Volume-key assignments for this game"
+                    } else {
+                        "Default volume-key assignments"
+                    }
+                    .into(),
+                );
                 if !preset.is_default_with_cutouts(w, h, &self.cutout_rects()) {
                     add(
                         Action::ResetControls,
@@ -2070,7 +2115,12 @@ impl Player {
                 (
                     "Controllers".into(),
                     format!(
-                        "{}. Layouts are saved separately for tall, square and wide displays.",
+                        "{} · {}. Layouts are saved separately for tall, square and wide displays.",
+                        if self.custom_controller() {
+                            "This game"
+                        } else {
+                            "App default"
+                        },
                         ControllerSettings::profile(w, h)
                     ),
                     "Done".into(),
@@ -2098,8 +2148,12 @@ impl Player {
                 (
                     "Phone buttons".into(),
                     format!(
-                        "{} · Assignments apply only during play. In menus, the keys adjust system volume. Power stays with Android.",
-                        self.game.as_ref().map_or("Current game", |game| game.title.as_str())
+                        "{} · During play only; menus use system volume. Power stays with Android.",
+                        if self.custom_controller() {
+                            self.game.as_ref().unwrap().title.as_str()
+                        } else {
+                            "App default for games without a custom controller"
+                        }
                     ),
                     "Back".into(),
                     Action::Back,
@@ -2284,16 +2338,14 @@ impl Player {
         if self.screen == Screen::Controllers {
             let (w, h) = self.dimensions();
             let preset = self.controller_settings.preset(w, h);
-            if let Some(row) = menu.rows.get_mut(1) {
-                row.toggle = Some(preset.follow_thumb);
-            }
-            if let Some(row) = menu.rows.get_mut(2) {
-                row.toggle = Some(preset.allow_overlap);
-            }
             for (row, action) in menu.rows.iter_mut().zip(&self.actions) {
-                if matches!(action, Action::ToggleStickClick) {
-                    row.toggle = Some(preset.stick_click_gesture);
-                }
+                row.toggle = match action {
+                    Action::ToggleGameController => Some(self.custom_controller()),
+                    Action::ToggleFollowThumb => Some(preset.follow_thumb),
+                    Action::ToggleOverlap => Some(preset.allow_overlap),
+                    Action::ToggleStickClick => Some(preset.stick_click_gesture),
+                    _ => None,
+                };
             }
         }
         if self.screen == Screen::Settings {
@@ -2487,13 +2539,12 @@ impl Player {
         self.session.as_mut().unwrap().state = SessionState::Unavailable;
         self.card = card;
         self.game = Some(game.clone());
-        self.phone_bindings = self.phone_button_settings.get(&id);
-        self.controller_settings = if game.system == System::Ps2 {
-            ControllerSettings::load_ps2(&self.root.join("ps2-controls"))
-        } else {
-            ControllerSettings::load(&self.root)
-        }
-        .map_err(|e| e.to_string())?;
+        let analog = game.system == System::Ps2;
+        self.phone_bindings = self.controller_profiles.bindings(Some(&id), analog);
+        self.controller_settings = self
+            .controller_profiles
+            .controls(&self.root, Some(&id), analog)
+            .map_err(|e| e.to_string())?;
         self.library.put(game.clone());
         self.library.save(&self.root).map_err(|e| e.to_string())?;
         self.activity.user_paused = false;
@@ -2771,7 +2822,12 @@ impl Player {
         self.session.take();
         self.card = None;
         self.game = None;
-        self.phone_bindings = Bindings::default();
+        let analog = self.controller_settings.analog();
+        self.phone_bindings = self.controller_profiles.bindings(None, analog);
+        self.controller_settings = self
+            .controller_profiles
+            .controls(&self.root, None, analog)
+            .map_err(|e| e.to_string())?;
         self.queue.clear_stopped();
         if had_game && clear_active {
             resume::clear_active(&self.root).map_err(|e| e.to_string())?;

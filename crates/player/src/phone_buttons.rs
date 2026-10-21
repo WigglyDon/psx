@@ -61,16 +61,16 @@ impl Button {
     }
     pub fn label(self) -> &'static str {
         match self {
-            Self::Cross => "Cross ×",
-            Self::Square => "Square □",
+            Self::Cross => "Cross",
+            Self::Square => "Square",
             Self::Select => "Select",
             Self::Start => "Start",
             Self::Up => "D-pad up",
             Self::Down => "D-pad down",
             Self::Left => "D-pad left",
             Self::Right => "D-pad right",
-            Self::Circle => "Circle ○",
-            Self::Triangle => "Triangle △",
+            Self::Circle => "Circle",
+            Self::Triangle => "Triangle",
             Self::L1 => "L1",
             Self::R1 => "R1",
             Self::L2 => "L2",
@@ -91,6 +91,13 @@ pub struct Bindings {
     volume_down: Option<Button>,
 }
 impl Bindings {
+    pub fn for_sticks(mut self, analog: bool) -> Self {
+        if !analog {
+            self.volume_up = self.volume_up.filter(|b| !b.requires_sticks());
+            self.volume_down = self.volume_down.filter(|b| !b.requires_sticks());
+        }
+        self
+    }
     pub fn get(self, key: PhoneKey) -> Option<Button> {
         match key {
             PhoneKey::VolumeUp => self.volume_up,
@@ -110,6 +117,11 @@ pub struct Settings {
     games: BTreeMap<String, Bindings>,
 }
 impl Settings {
+    pub(crate) fn legacy_assignments(&self) -> impl Iterator<Item = (&str, Bindings)> {
+        self.games
+            .iter()
+            .map(|(id, bindings)| (id.as_str(), *bindings))
+    }
     pub fn load(root: &Path) -> io::Result<Self> {
         match fs::read(root.join("phone-buttons.json")) {
             Ok(bytes) => {

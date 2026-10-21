@@ -124,14 +124,25 @@ The public [View haptic API](https://developer.android.com/develop/ui/views/hapt
 respects system touch-feedback settings and needs no vibration permission.
 Haptic strength and availability remain platform-owned.
 
-Optional phone-button assignments live in a separate per-game preference,
-keyed by the durable entry ID, independent of display/controller profiles and
-checkpoints. Only Volume Up/Down enter this adapter; power and system-navigation
+Controller profiles distinguish app defaults from explicitly enabled per-game
+overrides, keyed by the durable entry ID and independent of cards/checkpoints.
+Legacy default display files remain in place for digital and analog capabilities.
+Enabling a game's custom controller copies all current display profiles and
+default phone bindings; subsequent edits affect that game only. Disabling it
+inherits current app defaults while retaining its custom arrangement for later
+re-enabling. Tall/square/wide profiles remain separate within either scope.
+Versioned metadata is written atomically before publishing live preferences.
+Existing per-game phone assignments migrate as enabled phone-only overrides,
+inheriting existing display layouts until customized. The old file remains
+untouched and is not re-imported after new metadata has been published.
+
+Only Volume Up/Down enter the phone-key adapter; power and system-navigation
 keys remain platform-owned. Unassigned keys and new presses in menus or outside
 foreground gameplay return to Android. Rust merges captured digital presses
 with touch masks before the existing engine input call, preserving independent
-release and short taps. Interruption clears logical input and pending taps;
-captured repeats still delivered to the app remain consumed until release and
+release and short taps at the host input-update boundary. Interruption clears
+logical input and pending taps; captured repeats still delivered to the app
+remain consumed until release and
 cannot rearm on return.
 No background listener, extra permission, runtime or managed callback is added.
 Platform delivery and physical simultaneous-touch behavior still need device

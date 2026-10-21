@@ -123,6 +123,16 @@ control styling/metrics. Future physical-controller routing should withdraw
 the touch overlay while retaining this presentation; that routing is not yet
 implemented.
 
+Controller settings use the app defaults for every game until **Custom
+controller for this game** is enabled. This creates an independent copy of
+all display profiles and phone-button bindings, keyed by its existing durable
+ID. Turning it off uses current app defaults and retains the inactive custom
+profile. Edits clearly name their scope; contextual display/input resets remain
+within that scope. Previous default layout files are preserved. Legacy per-game
+phone bindings migrate without changing their existing display layouts or saves.
+This feature has focused host persistence/isolation checks; the new toggle and
+profile migration require validation on the actual Android candidate.
+
 The owner explicitly chose picture use of the complete display, including
 camera pixels. Keep the complete unstretched 4:3 frame, maximize the centered
 clear picture and place it high. The physical camera may hide a corner; it

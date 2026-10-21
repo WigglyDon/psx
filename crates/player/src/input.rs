@@ -1126,7 +1126,7 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ControllerSettings {
     presets: BTreeMap<String, Preset>,
     #[serde(skip)]
@@ -1169,6 +1169,14 @@ impl ControllerSettings {
     }
     pub fn analog(&self) -> bool {
         self.analog
+    }
+    /// Capabilities belong to the opened game, including after deserialization.
+    pub fn with_analog(mut self, analog: bool) -> Self {
+        self.analog = analog;
+        for preset in self.presets.values_mut() {
+            preset.analog = analog;
+        }
+        self
     }
     pub fn save(&self, root: &Path) -> io::Result<()> {
         atomic_write(&root.join("controls.json"), &serde_json::to_vec(self)?)
