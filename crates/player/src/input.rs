@@ -458,46 +458,48 @@ impl Layout {
         }
         layout
     }
-    /// Budget controls after a full-width picture, using the same thumb-well
-    /// size and mirrored geometry for either controller capability. Additional
-    /// inputs use spare center space instead of taking a row from the wells.
+    /// Budget mirrored controls after a full-width picture. Sticks remain the
+    /// primary thumb areas; additional inputs use the remaining controller
+    /// space without reserving a row above the picture.
     fn controller_band(w: f32, h: f32, analog: bool, picture: Rect) -> Option<Self> {
         if w < 800. || h < 600. || w > h * 1.35 {
             return None;
         }
-        let outer = 28.;
         let bottom = 4.;
         let headroom = h - (picture.y + TOOLBAR_HEIGHT + w * 0.75);
         let available = headroom - bottom;
-        // A deeper center dock keeps the main controls large in a taller
-        // window. A shallower one fits rotations with less vertical headroom.
-        // Rectangles can share an edge; molded caps leave their own visual gap.
+        // Large outside sticks, raised inside digital wells, then auxiliary
+        // keys below the digital wells. Use headroom after the full picture;
+        // the controller must not reserve another row above that picture.
         let deep = analog && headroom >= 192.;
-        let auxiliary_width = if deep { 104. } else { 204. };
-        let width_limit = if analog {
-            (w - 2. * outer - 16. - auxiliary_width) / 4.
+        let outer = if deep { 8. } else { 28. };
+        let face = if deep {
+            128.
         } else {
-            (w - 2. * outer - 288.) / 2.
+            let width_limit = if analog {
+                (w - 2. * outer - 16. - 204.) / 4.
+            } else {
+                (w - 2. * outer - 288.) / 2.
+            };
+            available.min(width_limit).min(184.)
         };
-        let face = available.min(width_limit).min(184.);
         if face < 122. {
             return None;
         }
-        let main_y = h - bottom - face;
-        let digital_x = if analog { outer + face + 8. } else { outer };
+        let stick = if deep { 176. } else { face };
+        let digital_gap = (available - face - 48.).clamp(8., 16.);
+        let main_y = if deep {
+            h - bottom - 48. - digital_gap - face
+        } else {
+            h - bottom - face
+        };
+        let digital_x = if analog { outer + stick + 8. } else { outer };
         let cap = (face - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
         let step = (face - cap) / 2.;
         let fx = w - digital_x - face / 2.;
         let fy = main_y + face / 2.;
-        let auxiliary_x = (w - auxiliary_width) / 2.;
-        // Center keys may use the last few safe points before the gesture
-        // strip. A small toolbar change must not collapse all four wells.
-        let auxiliary_bottom = if deep {
-            bottom.min(headroom - 192.)
-        } else {
-            bottom
-        };
-        let auxiliary_y = h - auxiliary_bottom - if deep { 192. } else { 100. };
+        let auxiliary_x = (w - 204.) / 2.;
+        let auxiliary_y = h - bottom - 100.;
         let key = |label| {
             if !analog {
                 let shoulder_x = outer + face + 8.;
@@ -511,34 +513,35 @@ impl Layout {
                     _ => Rect::default(),
                 };
             }
-            let (column, row) = if deep {
-                match label {
-                    "L2" => (0, 0),
-                    "R2" => (1, 0),
-                    "L1" => (0, 1),
-                    "R1" => (1, 1),
-                    "SELECT" => (0, 2),
-                    "START" => (1, 2),
-                    "L3" => (0, 3),
-                    "R3" => (1, 3),
+            if deep {
+                let row_y = h - bottom - 48.;
+                let (x, y) = match label {
+                    "L1" => (digital_x, row_y),
+                    "L2" => (digital_x + 56., row_y),
+                    "L3" => (digital_x + 112., row_y),
+                    "R1" => (w - digital_x - 48., row_y),
+                    "R2" => (w - digital_x - 104., row_y),
+                    "R3" => (w - digital_x - 160., row_y),
+                    "SELECT" => (w / 2. - 52., row_y - 48.),
+                    "START" => (w / 2. + 4., row_y - 48.),
                     _ => unreachable!(),
-                }
-            } else {
-                match label {
-                    "L1" => (0, 0),
-                    "L2" => (1, 0),
-                    "R2" => (2, 0),
-                    "R1" => (3, 0),
-                    "L3" => (0, 1),
-                    "SELECT" => (1, 1),
-                    "START" => (2, 1),
-                    "R3" => (3, 1),
-                    _ => unreachable!(),
-                }
+                };
+                return Rect::new(x, y, 48., 48.);
+            }
+            let (column, row) = match label {
+                "L1" => (0, 0),
+                "L2" => (1, 0),
+                "R2" => (2, 0),
+                "R1" => (3, 0),
+                "L3" => (0, 1),
+                "SELECT" => (1, 1),
+                "START" => (2, 1),
+                "R3" => (3, 1),
+                _ => unreachable!(),
             };
             Rect::new(
-                auxiliary_x + column as f32 * if deep { 56. } else { 52. },
-                auxiliary_y + row as f32 * if deep { 48. } else { 52. },
+                auxiliary_x + column as f32 * 52.,
+                auxiliary_y + row as f32 * 52.,
                 48.,
                 48.,
             )
@@ -563,8 +566,8 @@ impl Layout {
                 });
             }
             layout.sticks = vec![
-                Rect::new(outer, main_y, face, face),
-                Rect::new(w - outer - face, main_y, face, face),
+                Rect::new(outer, h - bottom - stick, stick, stick),
+                Rect::new(w - outer - stick, h - bottom - stick, stick, stick),
             ];
         }
         layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., &[]);
@@ -1583,12 +1586,21 @@ mod tests {
                 let r = key(name);
                 assert!(!r.overlaps(gap));
             }
-            // The extra keys fit into center space. Do not shrink the four
-            // thumb wells to reserve an additional full-width shoulder row.
-            assert!(key("L1").y > key("L2").y);
-            for name in ["L1", "L2", "L3", "SELECT", "START", "R1", "R2", "R3"] {
-                assert!(key(name).x >= digital[0].x + digital[0].w);
-                assert!(key(name).x + key(name).w <= digital[1].x + 0.01);
+            // Primary sticks stay larger than the raised secondary wells.
+            // Auxiliary keys sit beneath those wells, outside thumb travel.
+            assert!(layout.sticks[0].w > digital[0].w);
+            assert!(digital[0].y < layout.sticks[0].y);
+            assert!(digital[0].y + digital[0].h <= key("L1").y - 8.);
+            assert!(key("L1").x < key("L2").x && key("L2").x < key("L3").x);
+            assert!(key("R1").x > key("R2").x && key("R2").x > key("R3").x);
+            for name in ["L2", "L3", "R1", "R2", "R3"] {
+                assert!((key(name).y - key("L1").y).abs() < 0.01);
+            }
+            for name in ["SELECT", "START"] {
+                let r = key(name);
+                assert!(r.x >= digital[0].x + digital[0].w);
+                assert!(r.x + r.w <= digital[1].x);
+                assert!((r.y + r.h - key("L1").y).abs() < 0.01);
             }
             for bar in [layout.playback, layout.speed, layout.pause, layout.mute] {
                 assert!(bar.x >= 28. && bar.x + bar.w <= w - 28.);
@@ -1652,7 +1664,7 @@ mod tests {
                     .controls
                     .iter()
                     .filter(|c| c.is_face())
-                    .all(|c| c.bounds.w >= 67.));
+                    .all(|c| c.bounds.w >= 48.));
             }
             for layout in [&ps1, &ps2] {
                 let reflected = |a: Rect, b: Rect| {

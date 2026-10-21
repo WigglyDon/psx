@@ -143,10 +143,13 @@ actual canvas, cutouts and status state.
 Inner defaults budget after a maximum picture, with mirrored adjacent thumb
 wells and separated circular caps of at least 48 points. The digital controller
 targets 184-point thumb areas, 64-point shoulders and 80-point system keys.
-The analog controller uses the same thumb-area ceiling for four wells, limited
-by actual headroom and width. Auxiliary keys occupy clear center space in two
-columns or two rows as space permits; they do not occupy the route between
-primary and secondary thumb areas. First shoulders are outside or below second.
+When at least 192 points remain below the maximum picture, analog defaults use
+176-point outside sticks and raised 128-point digital wells with separated
+51-point caps. Shoulder pairs and stick clicks sit below the digital wells;
+Start/Select sit centrally one key height above them. Shallower surfaces retain
+equal-sized adjacent wells and two compact center rows, limited by actual
+headroom and width. No auxiliary keys occupy the route between primary and
+secondary thumb areas. First shoulders are outside or below second.
 Separate stick-click and system keys remain available. Thumb wells leave four
 points plus the OS gesture strip beneath them; center keys use the available
 gesture-safe height. Wide digital controls use equal square wells around either

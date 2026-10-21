@@ -519,14 +519,15 @@ PS2 defaults reuse the PS1 controls and cap styling, adding primary lower
 thumb sticks and secondary stick-click keys; they do not overwrite PS1 profiles.
 On wide inner displays a compact candidate puts digital clusters directly beside
 the primary sticks, without a system/click column between the thumb areas.
-Shoulder pairs occupy the middle above a row of system/click buttons. L1/R1
-are outside L2/R2; stacked fallbacks put 1 closer to the lower thumb areas.
+With sufficient headroom below the maximum picture, 176-point primary sticks
+sit outside raised 128-point digital wells, with separated 51-point action caps.
+Level shoulder pairs and stick-click buttons sit below the digital wells;
+Start/Select sit one key height above that row in the center. L1/R1 are outside
+L2/R2. Shallower surfaces retain adjacent equal-sized wells and two compact
+center rows; stacked fallbacks put 1 closer to the lower thumb areas.
 It wins only when its clear 4:3 picture is larger. Narrower
 layouts keep stacked digital/stick bands; landscape retains full-height picture
 space between side rails.
-The Fold's compact inner-display candidate gives primary sticks about 140–144
-points and digital wells about 138–152 points, with separated 54–61-point caps.
-It trades some secondary-cluster size for larger sticks and a shallower band.
 Toolbar pairs sit 28 points inward where space permits, protecting them from
 rounded display corners without adding a new row.
 Generated button targets stay at least 48 points and sticks at least 104
