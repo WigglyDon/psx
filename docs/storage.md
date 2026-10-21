@@ -14,6 +14,8 @@ cargo xtask storage
 cargo xtask storage check 3
 cargo xtask storage audit
 cargo xtask storage prune
+cargo xtask storage audit-backups
+cargo xtask storage compact-backups
 ```
 
 `check` takes the estimated additional GiB for the operation. A previously
@@ -58,6 +60,21 @@ ownership/timestamp normalization used by release tarballs. Extra, changed,
 redirected, unmarked or incomplete work is kept. Recheck identity before
 deletion, record proof first, and retain the archive and receipts.
 
+`compact-backups` explicitly retires redundant expansions of PLAYER-2 device
+backups under `.local`, keeping each complete matching TAR and durable proof.
+It compares the entire path set, file contents, modes and types, then rechecks
+the directory and archive identity before removal. Only an app-files-only
+expansion with an ordinary same-name TAR qualifies. Only the donor's exact
+app-private PS2 firmware/resource links are allowed, compared without following
+them; other links, extra notes/work, incomplete archives or differing data are
+preserved. `audit-backups` performs
+the same checks without removing the expansion. This compacts two copies of
+the same backup; it never expires a backup archive, save, media snapshot or
+unique evidence. Prefer reading selected archive members for later inspection.
+Host ownership/timestamps and the enclosing `files` directory's extraction mode
+may differ; the receipt records that mode and the TAR retains original metadata.
+Nested modes, types, link targets and bytes must still match exactly.
+
 An interrupted source build keeps its unfinished stage and failure evidence.
 Do not retry by creating another checkout, duplicating dependency caches or
 silently deleting that work. Inspect the failed operation and recover it
@@ -73,6 +90,13 @@ unknown files or host-recovery evidence. `.local` is not a disposable cache.
 Keep the accepted PS1 baseline, installed candidate, current reviewed candidate,
 required fallback and their exact source/signature/provenance evidence.
 Existing qualified archives/candidates remain retained in this audit.
+
+Old standalone source-validation Cargo targets may be retired after their
+source archives and retained result/failure logs have been identified and
+verified, with no active compiler/build job. Record the exact cache paths and
+retention proof under the same storage lock; retain enclosing source, private
+inputs, generated signing identity, qualified APKs and unique evidence. Use the
+main target cache for new checks instead of accumulating one per source check.
 
 Keep active Rust/native/dependency caches for current engineering. A future
 cache retirement needs its own ownership, inactive-job and reconstruction

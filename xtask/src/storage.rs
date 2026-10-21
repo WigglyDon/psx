@@ -198,6 +198,9 @@ struct Stamp {
     inode: u64,
     device: u64,
     modified: (i64, i64),
+    changed: (i64, i64),
+    mode: u32,
+    link: Option<PathBuf>,
     kind: u8,
 }
 fn tree(path: &Path) -> Result<BTreeMap<String, Stamp>> {
@@ -235,6 +238,13 @@ fn tree(path: &Path) -> Result<BTreeMap<String, Stamp>> {
                 inode: m.ino(),
                 device: m.dev(),
                 modified: (m.mtime(), m.mtime_nsec()),
+                changed: (m.ctime(), m.ctime_nsec()),
+                mode: m.mode(),
+                link: if kind == 2 {
+                    Some(fs::read_link(path)?)
+                } else {
+                    None
+                },
                 kind,
             },
         );
@@ -430,6 +440,121 @@ pub fn retire_stage(root: &Path, path: &Path, dry: bool) -> Result<()> {
     Ok(())
 }
 
+/// Compact an inspected device-backup expansion, retaining its complete TAR.
+/// Never infer age/disposability of a backup or remove its canonical archive.
+fn backup_resource_link(base: &Path, name: &str) -> bool {
+    let parts: Vec<_> = name.split('/').collect();
+    parts.len() == 5
+        && parts[0] == "files"
+        && parts[1] == "ps2"
+        && parts[3] == "pcsx2"
+        && parts[2].len() == 64
+        && parts[2].bytes().all(|c| c.is_ascii_hexdigit())
+        && matches!(parts[4], "bios" | "resources")
+        && fs::read_link(base.join(name)).is_ok_and(|target| {
+            target
+                == Path::new("/data/user/0/com.machinerhythm.psx/files/system/ps2").join(parts[4])
+        })
+}
+fn retire_backup(root: &Path, path: &Path, dry: bool) -> Result<()> {
+    let parent = root.join(".local");
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid backup name")?;
+    if root.canonicalize()? != root
+        || parent.canonicalize()? != parent
+        || path.parent() != Some(parent.as_path())
+        || !name.starts_with("player-2-")
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    {
+        return Err("Not a project-owned PLAYER-2 backup expansion".into());
+    }
+    let entries = tree(path)?;
+    // These backups contain app files only. The donor's two exact resource
+    // links are compared as links and never followed. Preserve other links,
+    // mixed workspaces, private notes and extra diagnostics for human review.
+    if entries.is_empty()
+        || entries.iter().any(|(n, s)| {
+            (s.kind == 2 && !backup_resource_link(path, n))
+                || !(n == "files" || n.starts_with("files/"))
+        })
+    {
+        return Err("Mixed or linked backup expansion; preserve for review".into());
+    }
+    let archive = parent.join(format!("{name}.tar"));
+    ordinary(&archive)?;
+    let archive_sha = hash(&archive)?;
+    let mut listing = cmd("tar", &["--quoting-style=literal", "-tf"]);
+    listing.arg(&archive);
+    let mut archived = BTreeSet::new();
+    for entry in String::from_utf8(successful(listing)?.stdout)?.lines() {
+        let entry = entry.trim_end_matches('/');
+        if Path::new(entry).is_absolute()
+            || Path::new(entry)
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_)))
+            || !archived.insert(entry.to_owned())
+        {
+            return Err("Unsafe or repeated backup member; preserve copies".into());
+        }
+    }
+    if archived != entries.keys().cloned().collect() {
+        return Err("Extra or missing backup entries; preserve both copies".into());
+    }
+    let mut compare = cmd("tar", &["--quoting-style=literal", "--compare", "-f"]);
+    compare.arg(&archive).arg("-C").arg(path).env("LC_ALL", "C");
+    let compared = compare.output()?;
+    if !matches!(compared.status.code(), Some(0 | 1))
+        || !compared.stderr.is_empty()
+        || String::from_utf8(compared.stdout)?.lines().any(|l| {
+            l != "files: Mode differs"
+                && ![": Mod time differs", ": Uid differs", ": Gid differs"]
+                    .iter()
+                    .any(|suffix| l.ends_with(suffix))
+        })
+    {
+        return Err("Backup bytes, modes or types differ; preserve both copies".into());
+    }
+    File::open(&archive)?.sync_all()?;
+    File::open(&parent)?.sync_all()?;
+    let proof = receipt(
+        root,
+        &json!({
+            "phase":"verified-backup-expansion", "dryRun":dry,
+            "expansion":path.strip_prefix(root)?, "retainedArchive":archive.strip_prefix(root)?,
+            "archiveSha256":archive_sha, "entries":entries.len(),
+        "expandedAppDirectoryMode":fs::symlink_metadata(path.join("files"))?.mode(),
+        "normalization":"host ownership/timestamps and enclosing app-directory mode only; archive metadata retained",
+            "estimatedAllocatedBytes":entries.values().map(|s|s.blocks*512).sum::<u64>(),
+            "space":space(root)?.value()
+        }),
+    )?;
+    ordinary(&archive)?;
+    if path.parent().ok_or("No backup parent")?.canonicalize()? != parent
+        || tree(path)? != entries
+        || hash(&archive)? != archive_sha
+    {
+        return Err("Backup changed during verification; preserve both copies".into());
+    }
+    if !dry {
+        fs::remove_dir_all(path)?;
+        File::open(&parent)?.sync_all()?;
+        receipt(
+            root,
+            &json!({"phase":"compacted-backup-expansion", "proofReceipt":proof.strip_prefix(root)?, "space":space(root)?.value()}),
+        )?;
+    }
+    println!(
+        "{} {} (complete TAR and receipt retained)",
+        if dry { "Verified" } else { "Compacted" },
+        path.strip_prefix(root)?.display()
+    );
+    Ok(())
+}
+
 pub fn run(root: &Path, args: &[String]) -> Result<()> {
     if args.len()
         > if args.first().map(String::as_str) == Some("check") {
@@ -449,6 +574,31 @@ pub fn run(root: &Path, args: &[String]) -> Result<()> {
                 .checked_mul(GIB)
                 .ok_or("Storage budget overflow")?,
         ),
+        Some("audit-backups" | "compact-backups") => {
+            let _lock = Lock::acquire(root)?;
+            let parent = root.join(".local");
+            if parent.canonicalize()? != parent {
+                return Err("Backup parent is redirected; preserve for review".into());
+            }
+            let mut paths = fs::read_dir(&parent)?
+                .map(|e| e.map(|e| e.path()))
+                .collect::<std::io::Result<Vec<_>>>()?;
+            paths.sort();
+            for path in paths {
+                let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if name.starts_with("player-2-")
+                    && path.is_dir()
+                    && parent.join(format!("{name}.tar")).exists()
+                {
+                    if let Err(e) = retire_backup(root, &path, args[0] == "audit-backups") {
+                        println!("Kept {}: {e}", path.strip_prefix(root)?.display());
+                    }
+                }
+            }
+            Ok(())
+        }
         Some("audit" | "prune") => {
             let _lock = Lock::acquire(root)?;
             let parent = root.join("build/source-bundles");
@@ -487,7 +637,10 @@ pub fn run(root: &Path, args: &[String]) -> Result<()> {
             println!("storage audit verifies completed source staging; storage prune removes only verified copies. All archives, builds, private evidence and unfinished trees are retained.");
             Ok(())
         }
-        _ => Err("Use storage [check <planned-GiB> | audit | prune]".into()),
+        _ => Err(
+            "Use storage [check <planned-GiB> | audit | prune | audit-backups | compact-backups]"
+                .into(),
+        ),
     }
 }
 
@@ -671,6 +824,99 @@ mod tests {
         let f = Fixture::new();
         assert!(run(&f.root, &["prune".into(), "--dry-run".into()]).is_err());
         assert!(f.stage.join("source.rs").exists());
+    }
+    fn backup_fixture() -> (Fixture, PathBuf, PathBuf) {
+        let f = Fixture::new();
+        let path = f.root.join(".local/player-2-before-fixture");
+        fs::create_dir_all(path.join("files/saves")).unwrap();
+        fs::write(path.join("files/saves/card.mcd"), b"durable fixture").unwrap();
+        let archive = path.with_extension("tar");
+        let status = Command::new("tar")
+            .arg("-cf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&path)
+            .arg("files")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        (f, path, archive)
+    }
+    #[test]
+    fn backup_compaction_keeps_the_complete_archive_and_durable_proof() {
+        let (f, path, archive) = backup_fixture();
+        let before = hash(&archive).unwrap();
+        fs::set_permissions(path.join("files"), fs::Permissions::from_mode(0o700)).unwrap();
+        retire_backup(&f.root, &path, true).unwrap();
+        assert!(path.join("files/saves/card.mcd").exists());
+        retire_backup(&f.root, &path, false).unwrap();
+        assert!(!path.exists());
+        assert_eq!(hash(&archive).unwrap(), before);
+        assert!(
+            fs::read_dir(f.root.join(".local/storage-retention"))
+                .unwrap()
+                .count()
+                >= 3
+        );
+    }
+    #[test]
+    fn changed_incomplete_or_extra_backup_data_never_authorizes_removal() {
+        let (f, path, archive) = backup_fixture();
+        let card = path.join("files/saves/card.mcd");
+        fs::write(&card, b"changed fixture").unwrap();
+        assert!(retire_backup(&f.root, &path, false).is_err());
+        fs::write(&card, b"durable fixture").unwrap();
+        fs::write(path.join("files/unfinished"), b"keep").unwrap();
+        assert!(retire_backup(&f.root, &path, false).is_err());
+        fs::remove_file(path.join("files/unfinished")).unwrap();
+        fs::set_permissions(&card, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(retire_backup(&f.root, &path, false).is_err());
+        fs::set_permissions(&card, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::write(&archive, b"interrupted archive").unwrap();
+        assert!(retire_backup(&f.root, &path, false).is_err());
+        assert!(card.exists());
+    }
+    #[test]
+    fn backup_compaction_refuses_links_mixed_workspaces_and_extra_options() {
+        let (f, path, archive) = backup_fixture();
+        fs::write(path.join("notes.txt"), b"unique evidence").unwrap();
+        assert!(retire_backup(&f.root, &path, false).is_err());
+        fs::remove_file(path.join("notes.txt")).unwrap();
+        symlink("saves/card.mcd", path.join("files/link")).unwrap();
+        assert!(retire_backup(&f.root, &path, false).is_err());
+        fs::remove_file(path.join("files/link")).unwrap();
+        let moved = archive.with_extension("preserved");
+        fs::rename(&archive, &moved).unwrap();
+        symlink(&moved, &archive).unwrap();
+        assert!(retire_backup(&f.root, &path, false).is_err());
+        assert!(run(&f.root, &["compact-backups".into(), "extra".into()]).is_err());
+        assert!(path.exists());
+        assert!(moved.exists());
+    }
+    #[test]
+    fn backup_resource_links_are_compared_without_following_them() {
+        let (f, path, archive) = backup_fixture();
+        let donor = path.join("files/ps2").join("a".repeat(64)).join("pcsx2");
+        fs::create_dir_all(&donor).unwrap();
+        symlink(
+            "/data/user/0/com.machinerhythm.psx/files/system/ps2/bios",
+            donor.join("bios"),
+        )
+        .unwrap();
+        assert!(Command::new("tar")
+            .arg("-cf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&path)
+            .arg("files")
+            .status()
+            .unwrap()
+            .success());
+        retire_backup(&f.root, &path, true).unwrap();
+        fs::remove_file(donor.join("bios")).unwrap();
+        symlink("/outside/unknown", donor.join("bios")).unwrap();
+        assert!(retire_backup(&f.root, &path, false).is_err());
+        assert!(path.exists());
     }
     #[test]
     fn budgets_and_btrfs_metadata_are_checked_independently_of_df() {
