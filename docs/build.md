@@ -184,6 +184,13 @@ not enable optional widescreen/cheat patches or establish a game-specific fix.
 No floating patch download or private game input is used.
 
 `PSX_PS2_DEPENDENCY_SOURCES` can name an existing exact locked source cache.
+Creating a new corresponding-source bundle requires each dependency's own Git
+repository; a manifest-verified exported cache remains valid for building, but
+may also contain native build output and is not re-exported recursively. Point
+the override at the existing locked Git cache for source packaging. The source
+preflight refuses this mismatch before creating another staging tree; it does
+not remove or replace the build cache. Git export also refuses an ancestor
+repository instead of accidentally archiving project files as a dependency.
 `PSX_PS2_CORE_SOURCE` can name a qualification checkout only when its revision
 and complete tracked diff equal the recorded core and patch. These are build
 inputs, never runtime core-download or user-facing core-selection options.

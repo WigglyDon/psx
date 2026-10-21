@@ -449,14 +449,35 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     }
     Ok(())
 }
+pub fn archive_sources() -> Result<PathBuf> {
+    verify()?;
+    let root = dependency_root();
+    let locks = fs::read_to_string("vendor/armsx2-dependencies/revisions.tsv")?;
+    // Refuse an exported build cache before fetching anything or creating the
+    // project stage. Such a cache can contain ignored native build output.
+    for line in locks.lines() {
+        let fields: Vec<_> = line.split('\t').collect();
+        if fields.len() != 3 {
+            return Err("Invalid PS2 dependency lock".into());
+        }
+        let path = root.join(fields[0]);
+        if path.join(".psx-source-manifest").exists() && !path.join(".git").exists() {
+            archive_repository(&path)?;
+        }
+    }
+    locked_sources(&root)?;
+    for line in locks.lines() {
+        archive_repository(&root.join(line.split('\t').next().unwrap()))?;
+    }
+    Ok(root)
+}
+
 /// Exact upstream source, including nested dependency trees and original notices.
-pub fn archive(staging: &Path) -> Result<()> {
+pub fn archive(staging: &Path, root: &Path) -> Result<()> {
     verify()?;
     let core = staging.join("vendor/armsx2");
     archive_into(Path::new("vendor/armsx2"), REVISION, &core)?;
     write_manifest(&core, REVISION)?;
-    let root = dependency_root();
-    locked_sources(&root)?;
     for line in fs::read_to_string("vendor/armsx2-dependencies/revisions.tsv")?.lines() {
         let f: Vec<_> = line.split('\t').collect();
         let target = staging.join("vendor/armsx2-dependencies/source").join(f[0]);

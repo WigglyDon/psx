@@ -114,8 +114,27 @@ fn hash(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
+fn archive_repository(repository: &Path) -> Result<()> {
+    // Git otherwise walks upward and may archive this project when a dependency
+    // is only an exported build cache. Never create staging from that ancestor.
+    if !repository.join(".git").exists() {
+        return Err(format!(
+            "Source export requires its own Git repository: {}. Verified build exports are still usable for builds; set PSX_PS2_DEPENDENCY_SOURCES to an existing locked Git source cache for source packaging.",
+            repository.display()
+        ).into());
+    }
+    let top = output(command("git", ["rev-parse", "--show-toplevel"]).current_dir(repository))?;
+    if Path::new(top.trim()).canonicalize()? != repository.canonicalize()? {
+        return Err(
+            "Source export resolved a different Git repository; preserve the cache.".into(),
+        );
+    }
+    Ok(())
+}
+
 fn archive_into(repository: &Path, revision: &str, destination: &Path) -> Result<()> {
     storage::between_steps()?;
+    archive_repository(repository)?;
     fs::create_dir_all(destination)?;
     let mut archive = command("git", ["archive", "--format=tar", revision])
         .current_dir(repository)
@@ -169,14 +188,17 @@ fn source_bundle() -> Result<()> {
         println!("Reused verified source bundle: {}", destination.display());
         return Ok(());
     }
+    if staging.exists() {
+        return Err("An unfinished source stage already exists. It is preserved; inspect and recover it before another source job.".into());
+    }
     let _growth = storage::Growth::begin(&root, 3 * storage::GIB)?;
+    // Resolve/verify dependency export inputs before creating an unfinished
+    // source stage. Build-only manifests are not Git archive inputs.
+    let ps2_sources = ps2::archive_sources()?;
     storage::source_parent(&root)?;
     // Only tracked public project/core files enter this tree. Private ignored
     // games, logs, cards and keys never participate in recursive host copying.
     let marker = staging.join(".psx-source-bundle");
-    if staging.exists() {
-        return Err("An unfinished source stage already exists. It is preserved; inspect and recover it before another source job.".into());
-    }
     fs::create_dir_all(&staging)?;
     fs::write(&marker, &revision)?;
     archive_into(Path::new("."), &revision, &staging)?;
@@ -185,7 +207,7 @@ fn source_bundle() -> Result<()> {
         CORE_REV,
         &staging.join("vendor/swanstation"),
     )?;
-    ps2::archive(&staging)?;
+    ps2::archive(&staging, &ps2_sources)?;
     fs::write(
         staging.join("SOURCE-CHECK.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
@@ -1031,4 +1053,70 @@ fn notices() -> Result<()> {
     fs::write(destination.join("INDEX.txt"), index)?;
     println!("Retained {count} upstream notices and Cargo dependency license files in APK assets.");
     Ok(())
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct Temp(PathBuf);
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn export_uses_its_own_repository_and_refuses_build_exports_before_staging() -> Result<()> {
+        let temp = Temp(env::temp_dir().join(format!(
+            "psx-source-export-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        )));
+        fs::create_dir(&temp.0)?;
+        execute(command("git", ["init", "-q"]).current_dir(&temp.0))?;
+        fs::write(temp.0.join("LICENSE"), "retained source license\n")?;
+        execute(command("git", ["add", "LICENSE"]).current_dir(&temp.0))?;
+        execute(
+            command(
+                "git",
+                [
+                    "-c",
+                    "user.name=Source fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "commit",
+                    "-qm",
+                    "source fixture",
+                ],
+            )
+            .current_dir(&temp.0),
+        )?;
+        let revision = output(command("git", ["rev-parse", "HEAD"]).current_dir(&temp.0))?;
+        let cache = temp.0.join("build-export");
+        fs::create_dir(&cache)?;
+        let manifest = cache.join(".psx-source-manifest");
+        fs::write(&manifest, "preserved build manifest\n")?;
+        let destination = temp.0.join("staging");
+
+        // Without the guard, Git finds the parent and this valid revision would
+        // export unrelated project files as if they were dependency sources.
+        let error = archive_into(&cache, revision.trim(), &destination).unwrap_err();
+        assert!(error.to_string().contains("PSX_PS2_DEPENDENCY_SOURCES"));
+        assert!(!destination.exists());
+        assert_eq!(fs::read_to_string(manifest)?, "preserved build manifest\n");
+
+        archive_into(&temp.0, revision.trim(), &destination)?;
+        assert_eq!(
+            fs::read_to_string(destination.join("LICENSE"))?,
+            "retained source license\n"
+        );
+        assert!(!destination.join("build-export").exists());
+        Ok(())
+    }
 }
