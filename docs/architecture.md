@@ -375,9 +375,10 @@ Slow rates retain at least one guest-frame source burst when trimming, so
 their smaller output-fill target cannot discard most of a frame's sound.
 Only the consumer advances its cursor or trims old-rate backlog. Uncapped
 audio adapts to bounded queue fill; its bounded resampling work does not cap
-guest execution. Presentation remains bounded to 60 Hz above 1x. PS2 coalesces
-requested rate changes to at most 20 per second and keeps audio/frontend pacing
-on the applied rate. The native CPU owner changes its existing limiter deadline
+guest execution. Presentation remains bounded to 60 Hz above 1x and for the
+threaded PS2 engine at every rate. PS2 coalesces requested rate changes to at
+most 20 per second and keeps audio on the applied rate. The native CPU owner
+changes its existing limiter deadline
 without a full settings reload or a pause/resume transition. Zero-time pause
 uses the ordinary runtime pause path, rather than the native limiter's zero
 (which means unlimited). Actual achieved speed and Fold audio/UI quality remain
@@ -458,14 +459,32 @@ reference crosses native threads. The binding and library remain alive until
 native context destruction and CPU/GS teardown finish. Both bindings acquire
 the same process core lease, inside the entry's durable writer lease.
 
+The native GS handoff publishes one frame and waits for its consumption.
+A narrow C-ABI notification wakes Rust's existing event-loop owner immediately;
+an atomic pending bit coalesces signals and survives attaching the platform
+waker after publication. Only that owner calls `retro_run`, consumes fences,
+and uses the frontend GL context. The callback performs no GL, VM or file work,
+and is retired under the handoff mutex before host/library teardown. Android's
+stock `AndroidAppWaker` stays in its platform adapter. The portable binding uses
+only `std::task::Waker` and ephemeral state, never durable platform handles.
+PS2's native CPU limiter owns wall-time pacing; a second fixed frontend frame
+clock must not make an otherwise ready producer wait another frame interval.
+An 8 ms housekeeping bound services input/audio without waiting for a picture.
+Duplicate service calls do not redraw the game; composition is separately
+bounded to 60 Hz. Pending composition has its own wake deadline, so the cap
+does not defer a ready picture until the next housekeeping tick.
+Native emulation speed, service frequency and presentation
+costs are measured separately. This scheduling repair needs physical timing
+qualification; its host notification tests are not a gameplay/speed result.
+
 PS2 accepts only actual GLES capability at or above the donor's required
 version, 48 kHz stereo, bounded native-resolution output and a 68 MiB state
 buffer. The adapter forwards supported CPU-owner pause, flush and speed
 operations; timing and completed native performance metrics are distinct from
 frontend calls. Rust disables automatic guest-clock tuning and cycle skipping
-for qualification. On the observed ANGLE/PowerVR renderer, Rust selects the
-donor's existing framebuffer-copy path because its EXT framebuffer-fetch
-shader fails compilation. Other renderer defaults are retained. PS2 file
+for qualification. The repaired GLSL header enables EXT for the PowerVR fetch
+backend's `inout` syntax; Rust migrates the earlier ANGLE/PowerVR copy workaround
+to fetch enabled. Other renderer defaults are retained. PS2 file
 cards already flush page writes; the host does not interrupt its VM for the
 PS1-only one-second save-RAM poll. Full flush/sync remains part of checkpoints
 and interruptions. PS2 background play is not inherited from PS1's opt-in.
@@ -543,9 +562,9 @@ the archive extent, within the same 68 MiB cap. The native reader accepts that
 extent and the former padded buffers. This reduces synchronous preparation
 work; improved device timing remains a separate observation. Exact core/patch
 and firmware binding still applies before restoration. One explicit exception
-accepts the immediately preceding adapter's checkpoint into the exact reviewed
-shader/warning-only patch. It changes no emulated state or serialization. Both
-patch hashes are named in Rust; a future native edit disables the exception
+accepts the two named preceding adapters into the exact reviewed shader and
+frame-notification patch. Neither repair changes emulated state or archive
+fields. All three patch hashes are named in Rust; a future edit disables this exception
 automatically. Firmware, discs, current card and payload integrity must still
 match; unknown and older incompatible bindings remain refused.
 

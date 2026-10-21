@@ -4,7 +4,7 @@ Apply to exactly `83fe4e293f71ab5587ef81b06143725bf8c6a30b`.
 The original submodule is unchanged. `cargo xtask ps2` stages it and applies
 `0001-host-pause-and-card-flush.patch` before building.
 
-The four exported adapter functions explicitly use C linkage; the donor's
+The exported adapter functions explicitly use C linkage; the donor's
 version script exports only `retro_*`. Package verification requires each
 defined public C symbol, catching a C++-mangled/hidden adapter before install.
 
@@ -16,6 +16,18 @@ owners can settle without another frontend frame. The flush returns actual
 directory before binding a checkpoint to their digest. Folder-card durability
 is not supported by this host. Native thread scheduling, JIT and emulation
 internals are unchanged.
+
+`retro_psx_set_frame_callback` additionally exposes a non-reentrant notification
+from the existing GLES frame handoff. It only wakes Rust's frontend owner;
+frame consumption, input/audio service and presentation policy stay in Rust.
+Registering against an already published frame also notifies. The callback
+is serialized by the existing handoff mutex, so clearing it retires in-flight
+calls before the Rust binding/platform waker or library can be destroyed.
+It never moves GL work onto the callback thread or changes native frame/fence
+storage, CPU limiter, guest clocks or serialization. This GLES extension does
+not qualify a future Vulkan host. A focused Linux test applies this patch to
+the pinned donor and compiles its actual handoff with mechanical GL stubs;
+it checks notification, consumption and shutdown, not GPU execution or speed.
 
 Time-scale updates release the frame handoff before the blocking CPU callback
 and update only the existing nominal scalar/limiter deadline, without a full
@@ -68,8 +80,10 @@ renderer. Device rendering/audio/speed validation remains necessary.
 Libretro omits the generic manual-API-choice warning: the frontend grants the
 specific context, so this is not an unsafe user override. Actual renderer and
 other unsafe-setting diagnostics remain. Neither change touches emulated state,
-card protocol or serialization. Rust permits only the exact prior `878bdd9e…`
-patch to resume into this exact `92542cb6…` patch, retaining other input/card/
+card protocol or serialization. The frame-notification addition also changes
+no emulated state or archive fields. Rust permits only the exact prior
+`878bdd9e…` and `92542cb6…` patches to resume into this exact `23a0b217…`
+patch, retaining other input/card/
 payload checks. A future native edit disables that explicit exception. New
 checkpoint writes always record the complete new patch identity.
 

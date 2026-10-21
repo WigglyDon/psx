@@ -7,12 +7,26 @@ use crate::{
     settings::Speed,
 };
 use std::path::{Path, PathBuf};
+use std::task::Waker;
 type Result<T> = std::result::Result<T, String>;
 pub enum Core {
     Ps1(retro::Core),
     Ps2(Box<ps2::Core>, PathBuf),
 }
 impl Core {
+    /// Threaded engines own their emulation clock; the frontend services a
+    /// published frame immediately instead of imposing a second frame clock.
+    pub fn owns_clock(&self) -> bool {
+        matches!(self, Self::Ps2(..))
+    }
+    pub fn set_frame_waker(&self, waker: Waker) {
+        if let Self::Ps2(core, _) = self {
+            core.set_frame_waker(waker);
+        }
+    }
+    pub fn frame_pending(&self) -> bool {
+        matches!(self, Self::Ps2(core, _) if core.frame_pending())
+    }
     pub fn set_speed(&mut self, speed: Speed) -> Result<Speed> {
         if speed.is_paused() {
             return Err("Zero time must pause the runtime.".into());

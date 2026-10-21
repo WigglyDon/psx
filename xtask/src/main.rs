@@ -751,6 +751,7 @@ fn verify_apk() -> Result<()> {
                 "retro_psx_set_paused",
                 "retro_psx_flush_cards",
                 "retro_psx_set_speed",
+                "retro_psx_set_frame_callback",
             ] {
                 if !symbols.lines().any(|line| {
                     let columns: Vec<_> = line.split_whitespace().collect();

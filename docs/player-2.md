@@ -41,6 +41,17 @@ logic is Rust. Targeted retained-donor repairs and justified Rust subsystem
 work are permitted by the engineering correction, without requiring an engine
 replacement or authorizing a blanket rewrite.
 
+The GS handoff now notifies Rust's frontend owner when a frame is published,
+bypassing its former fixed frame-check cadence. The native CPU limiter owns
+emulation time; Rust drains available frames promptly, services input/audio
+within 8 ms and separately bounds composition to 60 Hz. The platform adapter uses
+Android's stock looper waker; the reusable binding carries only a portable
+waker and coalesced pending bit. Callback retirement precedes native teardown.
+Focused Rust and patched-native handoff tests cover publication, late attachment,
+one-consumer ownership and interruption. GPU ordering and actual speed/audio
+still require device validation. Presentation mean/max duration is reported
+separately from frontend calls and native achieved emulation speed.
+
 The host implements thread-safe worker callbacks, negotiated shared GLES,
 48 kHz audio, dual-analog/digital input, isolated file-owned cards and bounded
 revision/firmware-bound checkpoints. PS2 does not inherit PS1's synchronous
@@ -60,8 +71,9 @@ performance cost, not a claim of seamless capture. See
 The PowerVR shader repair enables the EXT framebuffer-fetch language contract
 when its backend emits EXT `inout`, preserving the donor's Mali/ARM preference
 and ARM-only fallback. Actual GTA/Red Dead scenes rendered with EXT fetch
-active. The prior adapter's exact shader-only checkpoint transition is
-explicitly guarded by both complete patch identities; future native changes
+active. Checkpoints from the two named prior adapters can enter the exact
+shader/frame-notification build, which changes no emulated state or archive
+fields. This transition is guarded by complete patch identities; future edits
 disable that exception automatically. No serializer/card-protocol change is
 implied by a host layout edit.
 

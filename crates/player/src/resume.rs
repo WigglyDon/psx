@@ -208,6 +208,13 @@ mod tests {
         );
         for (binding, allowed) in [
             (prior.clone(), true),
+            (
+                prior.replace(
+                    "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
+                    "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
+                ),
+                true,
+            ),
             (prior.replacen("878bdd9e", "00000000", 1), false),
             (prior.replace(&suffix, "other firmware"), false),
         ] {

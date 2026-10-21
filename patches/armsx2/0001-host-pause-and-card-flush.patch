@@ -1,5 +1,5 @@
 diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
-index 24210fb06..b6338bd1e 100644
+index 24210fb06..dfe184715 100644
 --- a/pcsx2-libretro/Main.cpp
 +++ b/pcsx2-libretro/Main.cpp
 @@ -77,6 +77,8 @@
@@ -24,7 +24,7 @@ index 24210fb06..b6338bd1e 100644
  }
  
  void Host::OnSaveStateLoading(const std::string_view filename)
-@@ -2357,6 +2365,85 @@ RETRO_API size_t retro_serialize_size(void)
+@@ -2357,6 +2365,98 @@ RETRO_API size_t retro_serialize_size(void)
  	return VMManager::HasValidVM() ? kSerializeSize : 0;
  }
  
@@ -72,6 +72,19 @@ index 24210fb06..b6338bd1e 100644
 +	return LibretroCore::s_vm_thread_running.load(std::memory_order_acquire) && VMManager::HasValidVM();
 +}
 +
++// Notification may run on the GS owner. It must not call the core or GL;
++// Rust wakes its frontend owner, which alone consumes the published frame.
++// Clearing under the handoff mutex retires callbacks before host teardown.
++extern "C" RETRO_API bool retro_psx_set_frame_callback(void (*callback)())
++{
++#ifdef ENABLE_OPENGL
++	GLLibretro::SetFrameReadyCallback(callback);
++	return true;
++#else
++	return false;
++#endif
++}
++
 +extern "C" RETRO_API bool retro_psx_set_speed(float multiplier)
 +{
 +	// Zero here means the native unlimited limiter; Rust owns actual pause.
@@ -110,7 +123,7 @@ index 24210fb06..b6338bd1e 100644
  RETRO_API bool retro_serialize(void* data, size_t size)
  {
  	if (!VMManager::HasValidVM())
-@@ -2384,7 +2471,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
+@@ -2384,7 +2484,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
  			Console.ErrorFmt("retro_serialize: DownloadState failed: {}", error.GetDescription());
  			return;
  		}
@@ -121,6 +134,55 @@ index 24210fb06..b6338bd1e 100644
  		if (!ok)
  			Console.ErrorFmt("retro_serialize: ZipToBuffer failed: {}", error.GetDescription());
  	}, true);
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
+index 532ccf780..c278ff9f3 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
+@@ -144,6 +144,7 @@ namespace GLLibretro
+ 		u64 s_frame_serial = 0;
+ 		u64 s_frame_consumed = 0;
+ 		bool s_pacing = false;
++		void (*s_frame_ready_callback)() = nullptr;
+ 	} // namespace
+ 
+ 	void PublishFrame(const Frame& frame)
+@@ -158,6 +159,8 @@ namespace GLLibretro
+ 
+ 		s_frame = frame;
+ 		s_frame_serial++;
++		if (s_frame_ready_callback)
++			s_frame_ready_callback();
+ 
+ 		// Block the GS thread until retro_run picks the frame up (or pacing
+ 		// gets aborted for shutdown): one presented frame per retro_run.
+@@ -186,6 +189,14 @@ namespace GLLibretro
+ 		return s_frame_serial != s_frame_consumed && s_frame.texture != 0;
+ 	}
+ 
++	void SetFrameReadyCallback(void (*callback)())
++	{
++		std::lock_guard<std::mutex> lock(s_frame_mutex);
++		s_frame_ready_callback = callback;
++		if (callback && s_frame_serial != s_frame_consumed && s_frame.texture != 0)
++			callback();
++	}
++
+ 	void SetPacing(bool enabled)
+ 	{
+ 		std::lock_guard<std::mutex> lock(s_frame_mutex);
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
+index 0981d06a1..02a8fee78 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
++++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
+@@ -105,6 +105,8 @@ namespace GLLibretro
+ 	void PublishFrame(const Frame& frame);
+ 	bool ConsumeFrame(Frame* out_frame); // true if a new frame arrived since the last consume
+ 	bool HasFrame();                     // same, without consuming it
++	// Non-reentrant notification only; the frontend consumes on its GL owner.
++	void SetFrameReadyCallback(void (*callback)());
+ 
+ 	// Frame pacing: when enabled, PublishFrame blocks the GS thread until
+ 	// retro_run consumes the frame - the frontend's retro_run cadence becomes
 diff --git a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
 index 6e853f423..02c6bdd05 100644
 --- a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp

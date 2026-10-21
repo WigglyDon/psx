@@ -20,6 +20,7 @@ use std::{
         atomic::{AtomicBool, AtomicI16, AtomicU16, Ordering},
         Arc, Mutex,
     },
+    task::Waker,
     time::{Duration, Instant},
 };
 type Result<T> = std::result::Result<T, String>;
@@ -36,21 +37,24 @@ pub fn revision() -> &'static str {
         )
     })
 }
-/// Only the reviewed shader-header repair is state-compatible with the
-/// preceding adapter. Future native edits must make their own decision;
-/// changing the patch bytes disables this exception automatically.
+/// Reviewed shader/header and frame-notification repairs change no emulated
+/// state or archive fields. Future patch edits disable this exact exception.
 pub fn compatible_checkpoint_binding(saved: &str, current: &str) -> bool {
-    const BEFORE: &str = "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6";
-    const AFTER: &str = "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c";
+    const BEFORE: [&str; 2] = [
+        "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
+        "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
+    ];
+    const AFTER: &str = "23a0b217e21a9442dde06b009aa6911f782c083a5ff5c37593b415d615309765";
     if revision() != format!("{REVISION}+{AFTER}") {
         return false;
     }
-    let before = format!("{REVISION}+{BEFORE}+firmware:");
     let after = format!("{REVISION}+{AFTER}+firmware:");
-    saved
-        .strip_prefix(&before)
-        .zip(current.strip_prefix(&after))
-        .is_some_and(|(a, b)| !a.is_empty() && a == b)
+    BEFORE.iter().any(|before| {
+        saved
+            .strip_prefix(&format!("{REVISION}+{before}+firmware:"))
+            .zip(current.strip_prefix(&after))
+            .is_some_and(|(a, b)| !a.is_empty() && a == b)
+    })
 }
 pub const MAX_STATE_SIZE: usize = 68 * 1024 * 1024;
 #[derive(Clone, Default)]
@@ -76,11 +80,44 @@ struct Shared {
     buttons: AtomicU16,
     axes: [AtomicI16; 4],
     fast: AtomicBool,
+    frames: FrameSignal,
     output: Mutex<Output>,
+}
+
+/// A native frame wakes its frontend owner without moving GL or core calls to
+/// the producer thread. One pending bit coalesces wakeups during interruptions.
+#[derive(Default)]
+struct FrameSignal {
+    pending: AtomicBool,
+    waker: Mutex<Option<Waker>>,
+}
+impl FrameSignal {
+    fn notify(&self) {
+        if !self.pending.swap(true, Ordering::AcqRel) {
+            let waker = self.waker.lock().ok().and_then(|slot| slot.clone());
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }
+    }
+    fn set_waker(&self, waker: Waker) {
+        if let Ok(mut slot) = self.waker.lock() {
+            *slot = Some(waker.clone());
+        }
+        // Covers a frame published before platform wakeup was attached.
+        if self.pending.load(Ordering::Acquire) {
+            waker.wake_by_ref();
+        }
+    }
 }
 static ACTIVE: Mutex<Option<Arc<Shared>>> = Mutex::new(None);
 fn shared() -> Option<Arc<Shared>> {
     ACTIVE.lock().ok()?.clone()
+}
+unsafe extern "C" fn frame_available() {
+    if let Some(s) = shared() {
+        s.frames.notify();
+    }
 }
 unsafe extern "C" fn framebuffer() -> usize {
     shared().map_or(0, |s| s.framebuffer)
@@ -279,6 +316,7 @@ pub struct Core {
     flush_fn: unsafe extern "C" fn() -> bool,
     ready_fn: unsafe extern "C" fn() -> bool,
     speed_fn: unsafe extern "C" fn(f32) -> bool,
+    frame_callback_fn: unsafe extern "C" fn(Option<unsafe extern "C" fn()>) -> bool,
     speed: Option<Speed>,
     speed_changed: Instant,
     serialize_size: unsafe extern "C" fn() -> usize,
@@ -341,6 +379,7 @@ impl Core {
             buttons: AtomicU16::new(0),
             axes: std::array::from_fn(|_| AtomicI16::new(0)),
             fast: AtomicBool::new(false),
+            frames: FrameSignal::default(),
             output: Mutex::new(Output::default()),
         });
         macro_rules! symbol {
@@ -393,6 +432,10 @@ impl Core {
             flush_fn: symbol!("retro_psx_flush_cards", unsafe extern "C" fn() -> bool),
             ready_fn: symbol!("retro_psx_ready", unsafe extern "C" fn() -> bool),
             speed_fn: symbol!("retro_psx_set_speed", unsafe extern "C" fn(f32) -> bool),
+            frame_callback_fn: symbol!(
+                "retro_psx_set_frame_callback",
+                unsafe extern "C" fn(Option<unsafe extern "C" fn()>) -> bool
+            ),
             speed: None, // Apply Rust's requested time scale before the first live tick.
             speed_changed: Instant::now(),
             serialize_size: symbol!("retro_serialize_size", unsafe extern "C" fn() -> usize),
@@ -421,6 +464,9 @@ impl Core {
         set_poll(poll);
         set_input(input);
         init();
+        if !(core.frame_callback_fn)(Some(frame_available)) {
+            return Err("The PS2 renderer cannot notify its frontend owner.".into());
+        }
         let game = CString::new(game.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
         let info = GameInfo {
             path: game.as_ptr(),
@@ -471,9 +517,18 @@ impl Core {
         self.shared.fast.store(fast, Ordering::Relaxed);
     }
     pub fn run(&mut self) {
+        // A notification arriving during this call remains pending for the
+        // next service. The native handoff itself owns frame/fence lifetimes.
+        self.shared.frames.pending.store(false, Ordering::Release);
         unsafe {
             (self.run_fn)();
         }
+    }
+    pub fn set_frame_waker(&self, waker: Waker) {
+        self.shared.frames.set_waker(waker);
+    }
+    pub fn frame_pending(&self) -> bool {
+        self.shared.frames.pending.load(Ordering::Acquire)
     }
     pub fn ready(&self) -> bool {
         unsafe { (self.ready_fn)() }
@@ -557,6 +612,9 @@ fn checkpoint_extent(bytes: &[u8]) -> Result<usize> {
 impl Drop for Core {
     fn drop(&mut self) {
         unsafe {
+            // The native setter waits for any in-flight notification. Keep
+            // Shared and its platform waker alive until all workers retire.
+            (self.frame_callback_fn)(None);
             if self.loaded {
                 let _ = self.pause(true);
             }
@@ -866,6 +924,40 @@ pub fn card_identity(root: &Path) -> std::io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     #[test]
+    fn frame_notifications_wake_across_threads_and_survive_late_registration() {
+        use std::{sync::atomic::AtomicUsize, task::Wake};
+        struct Count(AtomicUsize);
+        impl Wake for Count {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+            fn wake_by_ref(self: &Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let frames = Arc::new(FrameSignal::default());
+        let count = Arc::new(Count(AtomicUsize::new(0)));
+        frames.notify(); // Publication can precede attaching a platform looper.
+        frames.set_waker(Waker::from(count.clone()));
+        assert!(frames.pending.load(Ordering::Acquire));
+        assert_eq!(count.0.load(Ordering::Relaxed), 1);
+        frames.notify(); // Coalesce until the frontend services the handoff.
+        assert_eq!(count.0.load(Ordering::Relaxed), 1);
+        frames.pending.store(false, Ordering::Release);
+        let producer = frames.clone();
+        std::thread::spawn(move || producer.notify())
+            .join()
+            .unwrap();
+        assert!(frames.pending.load(Ordering::Acquire));
+        assert_eq!(count.0.load(Ordering::Relaxed), 2);
+        // Retiring the platform wakeup leaves a bounded serviceable signal.
+        frames.waker.lock().unwrap().take();
+        frames.pending.store(false, Ordering::Release);
+        frames.notify();
+        assert!(frames.pending.load(Ordering::Acquire));
+        assert_eq!(count.0.load(Ordering::Relaxed), 2);
+    }
+    #[test]
     fn firmware_selection_is_pinned_and_changed_bytes_or_ambiguous_legacy_inputs_fail_safely() {
         fn image(marker: u8) -> Vec<u8> {
             let mut bytes = vec![marker; 4 * 1024 * 1024];
@@ -936,6 +1028,7 @@ mod tests {
             buttons: AtomicU16::new(1),
             axes: std::array::from_fn(|i| AtomicI16::new(if i == 0 { 12345 } else { 0 })),
             fast: AtomicBool::new(false),
+            frames: FrameSignal::default(),
             output: Mutex::new(Output::default()),
         });
         *ACTIVE.lock().unwrap() = Some(binding.clone());
@@ -949,12 +1042,14 @@ mod tests {
             assert_eq!(input(0, 1, 0, 0), 1);
             assert_eq!(input(0, 5, 0, 0), 12345);
             assert_eq!(input(1, 1, 0, 0), 0);
+            frame_available();
             video(usize::MAX as *const c_void, 640, 448, 0);
         })
         .join()
         .unwrap();
         assert_eq!(binding.output.lock().unwrap().hardware_frames, 1);
         assert_eq!(binding.output.lock().unwrap().frame_width, 640);
+        assert!(binding.frames.pending.load(Ordering::Acquire));
         *ACTIVE.lock().unwrap() = None;
     }
     #[test]

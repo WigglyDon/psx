@@ -12,7 +12,21 @@ use std::{
     os::fd::{FromRawFd, RawFd},
     path::{Path, PathBuf},
     sync::{mpsc, Arc, Mutex},
+    task::{Wake, Waker},
 };
+
+pub fn frame_waker(app: &AndroidApp) -> Waker {
+    struct AppWake(android_activity::AndroidAppWaker);
+    impl Wake for AppWake {
+        fn wake(self: Arc<Self>) {
+            self.0.wake();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.wake();
+        }
+    }
+    Waker::from(Arc::new(AppWake(app.create_waker())))
+}
 
 pub const PICK_GAME: i32 = 101;
 pub const PICK_FIRMWARE: i32 = 102;

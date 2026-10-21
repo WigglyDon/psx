@@ -19,7 +19,7 @@
     "repository": "https://github.com/ARMSX2/ARMSX2.git",
     "revision": "83fe4e293f71ab5587ef81b06143725bf8c6a30b",
     "path": "vendor/armsx2",
-    "interface": "libretro C ABI plus recorded pause/card-flush/ready adapter",
+    "interface": "libretro C ABI plus recorded pause/card-flush/ready/speed/frame-notification adapter",
     "patch": "patches/armsx2/0001-host-pause-and-card-flush.patch",
     "dependencies": "vendor/armsx2-dependencies/revisions.tsv",
     "upstreamLicense": "GPL-3.0 and exact original per-file/dependency terms",

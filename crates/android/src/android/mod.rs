@@ -105,6 +105,7 @@ enum Work {
     Added(Library),
 }
 struct Player {
+    frame_waker: std::task::Waker,
     root: PathBuf,
     platform: Platform,
     core: Option<Core>,
@@ -164,6 +165,9 @@ struct Player {
     last_report: Instant,
     frames: u64,
     run_time: Duration,
+    presents: u64,
+    present_time: Duration,
+    max_present_time: Duration,
     // Last: GL outlives every core teardown, including early-return paths.
     graphics: Graphics,
 }
@@ -183,6 +187,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     queue.set_volume(playback.output_volume());
     queue.set_speed(playback.effective_speed());
     let mut player = Player {
+        frame_waker: platform::frame_waker(&app),
         library: Library::load(&root)
             .map_err(|e| format!("The saved library could not be read: {e}"))?,
         controller_settings: ControllerSettings::load(&root).map_err(|e| e.to_string())?,
@@ -244,18 +249,39 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         last_report: now,
         frames: 0,
         run_time: Duration::ZERO,
+        presents: 0,
+        present_time: Duration::ZERO,
+        max_present_time: Duration::ZERO,
     };
     player.refresh_menu(&app);
     while !player.destroyed {
         let timeout = if player.activity.can_run() && player.core.is_some() {
-            player
-                .next_frame
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(8))
+            if player.core.as_ref().is_some_and(Core::frame_pending) {
+                Duration::ZERO
+            } else {
+                player
+                    .next_frame
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(8))
+            }
         } else if player.visual_animating {
             Duration::from_millis(16)
         } else {
             Duration::from_millis(33)
+        };
+        let timeout = if player.dirty
+            && player.activity.surface
+            && player.activity.foreground
+            && (player.playback.effective_speed().is_fast()
+                || player.core.as_ref().is_some_and(Core::owns_clock))
+        {
+            timeout.min(
+                player
+                    .next_present
+                    .saturating_duration_since(Instant::now()),
+            )
+        } else {
+            timeout
         };
         app.poll_events(Some(timeout), |event| {
             if let PollEvent::Main(event) = event {
@@ -446,7 +472,11 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.stop_sound();
             }
             player.next_frame = Instant::now();
-        } else if player.core.is_some() && Instant::now() >= player.next_frame {
+        } else if player
+            .core
+            .as_ref()
+            .is_some_and(|core| core.frame_pending() || Instant::now() >= player.next_frame)
+        {
             if let Err(error) = player.tick() {
                 player.fail(error);
             }
@@ -508,10 +538,14 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 state.hw.map(|h| h.bottom_left).unwrap_or(true),
             ))
         });
-        let present_due =
-            !player.playback.effective_speed().is_fast() || now >= player.next_present;
+        // A threaded engine can wake us faster than the display. Always drain
+        // its handoff, but bound composition to60 Hz and present the newest frame.
+        let paced_present = player.playback.effective_speed().is_fast()
+            || player.core.as_ref().is_some_and(Core::owns_clock);
+        let present_due = !paced_present || now >= player.next_present;
         if player.dirty && player.activity.surface && player.activity.foreground && present_due {
             player.next_present = now + Duration::from_secs_f64(1. / 60.);
+            let before = Instant::now();
             if let Err(error) = unsafe {
                 player.graphics.render(
                     player.density,
@@ -525,6 +559,10 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.fail(error);
                 player.activity.surface = false;
             }
+            let elapsed = before.elapsed();
+            player.presents += 1;
+            player.present_time += elapsed;
+            player.max_present_time = player.max_present_time.max(elapsed);
             player.dirty = false;
             // One save worker at a time; rapid toggles coalesce to the latest
             // intent. Neither pause nor resume waits for that worker.
@@ -2252,6 +2290,7 @@ impl Player {
                 self.graphics.gles_version(),
             )?
         };
+        core.set_frame_waker(self.frame_waker.clone());
         let card = if game.system == System::Ps1 {
             let card = MemoryCard::open(self.root.join("saves").join(format!("{}.srm", game.id)))
                 .map_err(|e| e.to_string())?;
@@ -2327,6 +2366,9 @@ impl Player {
         self.last_report = Instant::now();
         self.frames = 0;
         self.run_time = Duration::ZERO;
+        self.presents = 0;
+        self.present_time = Duration::ZERO;
+        self.max_present_time = Duration::ZERO;
         self.message = game.title;
         self.screen = Screen::Settings;
         self.session.as_mut().unwrap().state = SessionState::Restoring;
@@ -2340,8 +2382,9 @@ impl Player {
     }
     fn tick(&mut self) -> Result<(), String> {
         self.ensure_session_available()?;
-        self.dirty = true;
         let core = self.core.as_mut().unwrap();
+        let owns_clock = core.owns_clock();
+        let previous_frames = core.state().hardware_frames;
         let speed = core.set_speed(self.playback.effective_speed())?;
         self.queue.set_speed(speed);
         core.pause(false)?;
@@ -2352,6 +2395,7 @@ impl Player {
         );
         let before = Instant::now();
         core.run();
+        self.dirty |= !owns_clock || core.state().hardware_frames != previous_frames;
         self.checkpoint_dirty = true;
         self.run_time += before.elapsed();
         self.frames += 1;
@@ -2364,8 +2408,10 @@ impl Player {
         {
             return Err("The hardware renderer stopped. Close and reopen the game.".into());
         }
-        if core.state().hardware_frames == 0 && self.frames > 600 {
-            return Err("The core has not produced a hardware-rendered picture. Try compatible PS1 firmware.".into());
+        if core.state().hardware_frames == 0
+            && self.last_report.elapsed() >= Duration::from_secs(10)
+        {
+            return Err("The game has not produced a hardware-rendered picture. Reopen it or check its firmware.".into());
         }
         if core.state().frame_width > 1024 || core.state().frame_height > 1024 {
             return Err("The core output exceeded the native-resolution buffer.".into());
@@ -2374,7 +2420,11 @@ impl Player {
         let target = self.queue.target_frames() as f64;
         let error = (self.queue.queued() as f64 - target) / target;
         let correction = 1. + (error * 0.003).clamp(-0.005, 0.005);
-        if let Some(multiplier) = speed.multiplier() {
+        if owns_clock {
+            // The donor's CPU limiter owns normal/fractional/unlimited time.
+            // Frame notifications bypass this audio/input housekeeping bound.
+            self.next_frame = Instant::now() + Duration::from_millis(8);
+        } else if let Some(multiplier) = speed.multiplier() {
             self.next_frame += Duration::from_secs_f64(correction / fps / multiplier);
         } else {
             self.next_frame = Instant::now();
@@ -2408,6 +2458,12 @@ impl Player {
             }
             if self.game.as_ref().is_some_and(|g| g.system == System::Ps2) {
                 log::info!("PS2 frontend: calls_per_second={:.2} call_ms={:.2} hardware_frames={} software_frames={} audio_queued={} underruns={} dropped={} requested={}", self.frames as f64/elapsed, self.run_time.as_secs_f64()*1000./self.frames as f64, core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed),self.playback.effective_speed().label());
+                log::info!(
+                    "PS2 presentation: per_second={:.2} mean_ms={:.2} max_ms={:.2}",
+                    self.presents as f64 / elapsed,
+                    self.present_time.as_secs_f64() * 1000. / self.presents.max(1) as f64,
+                    self.max_present_time.as_secs_f64() * 1000.
+                );
             } else {
                 log::info!("playback fps={:.2} speed={:.1}% core_ms={:.2} hw_frames={} sw_frames={} audio_queued={} underruns={} dropped={} target={}",
                 self.frames as f64/elapsed,self.frames as f64/elapsed/fps*100.,self.run_time.as_secs_f64()*1000./self.frames as f64,
@@ -2416,6 +2472,9 @@ impl Player {
             self.last_report = Instant::now();
             self.frames = 0;
             self.run_time = Duration::ZERO;
+            self.presents = 0;
+            self.present_time = Duration::ZERO;
+            self.max_present_time = Duration::ZERO;
         }
         Ok(())
     }
@@ -2496,6 +2555,9 @@ impl Player {
         }
         self.frames = 0;
         self.run_time = Duration::ZERO;
+        self.presents = 0;
+        self.present_time = Duration::ZERO;
+        self.max_present_time = Duration::ZERO;
         self.last_report = Instant::now();
         self.cancel_input();
         self.stop_sound();
