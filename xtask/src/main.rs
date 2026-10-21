@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 mod ps2;
+mod storage;
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -23,22 +24,37 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("Build failed: {e}");
+            eprintln!("Task failed: {e}");
             ExitCode::FAILURE
         }
     }
 }
 fn run() -> Result<()> {
     env::set_current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())?;
-    match env::args().nth(1).as_deref() {
+    let operation = env::args().nth(1);
+    let root = env::current_dir()?.canonicalize()?;
+    let _lock = match operation.as_deref() {
+        Some("apk" | "verify" | "notices" | "source" | "firmware" | "ps2") => {
+            Some(storage::Lock::acquire(&root)?)
+        }
+        _ => None,
+    };
+    let _growth = match operation.as_deref() {
+        Some("apk" | "ps2") => Some(storage::Growth::begin(&root, 8 * storage::GIB)?),
+        Some("firmware") => Some(storage::Growth::begin(&root, storage::GIB)?),
+        Some("notices") => Some(storage::Growth::begin(&root, 64 * 1024 * 1024)?),
+        _ => None,
+    };
+    match operation.as_deref() {
         Some("apk") => apk(),
         Some("verify") => verify_apk(),
         Some("notices") => notices(),
         Some("source") => source_bundle(),
         Some("firmware") => firmware(),
         Some("ps2") => ps2::build(),
+        Some("storage") => storage::run(&root, &env::args().skip(2).collect::<Vec<_>>()),
         _ => {
-            eprintln!("Usage: cargo xtask apk | verify | notices | source | firmware\nSet ANDROID_SDK_ROOT, ANDROID_NDK_HOME, ANDROID_BUILD_TOOLS (default 37.0.0), ANDROID_PLATFORM (default android-37.0). Compile SDK may exceed target API 36. Requires Java with javac module, cmake, ninja, zip, unzip, Rust Android target. Source bundles also use tar, gzip and cargo vendor. Firmware reproduction uses Podman and the pinned Linux amd64 compiler image.");
+            eprintln!("Usage: cargo xtask apk | verify | notices | source | firmware | ps2 | storage [check <planned-GiB> | audit | prune]\nSet ANDROID_SDK_ROOT, ANDROID_NDK_HOME, ANDROID_BUILD_TOOLS (default 37.0.0), ANDROID_PLATFORM (default android-37.0). Compile SDK may exceed target API 36. Requires Java with javac module, cmake, ninja, zip, unzip, Rust Android target. Source bundles also use tar, gzip and cargo vendor. Firmware reproduction uses Podman and the pinned Linux amd64 compiler image.");
             Ok(())
         }
     }
@@ -52,11 +68,12 @@ fn command(
     command
 }
 fn execute(cmd: &mut Command) -> Result<()> {
+    storage::between_steps()?;
     eprintln!("Running {}", cmd.get_program().to_string_lossy());
     if !cmd.status()?.success() {
         return Err(format!("{} failed", cmd.get_program().to_string_lossy()).into());
     }
-    Ok(())
+    storage::between_steps()
 }
 fn output(cmd: &mut Command) -> Result<String> {
     let result = cmd.output()?;
@@ -98,6 +115,7 @@ fn hash(path: &Path) -> Result<String> {
 }
 
 fn archive_into(repository: &Path, revision: &str, destination: &Path) -> Result<()> {
+    storage::between_steps()?;
     fs::create_dir_all(destination)?;
     let mut archive = command("git", ["archive", "--format=tar", revision])
         .current_dir(repository)
@@ -139,15 +157,25 @@ fn source_bundle() -> Result<()> {
         .to_owned();
     let short = &revision[..12];
     let name = format!("psx-source-{short}");
-    let staging = Path::new("build/source-bundles").join(&name);
+    let root = env::current_dir()?.canonicalize()?;
+    let destination = Path::new("build").join(format!("{name}.tar.gz"));
+    let parent = root.join("build/source-bundles");
+    let staging = parent.join(&name);
+    if destination.exists() || destination.with_extension("gz.sha256").exists() {
+        storage::verify_archive(&root, &revision)?;
+        if staging.exists() {
+            storage::retire_stage(&root, &staging, false)?;
+        }
+        println!("Reused verified source bundle: {}", destination.display());
+        return Ok(());
+    }
+    let _growth = storage::Growth::begin(&root, 3 * storage::GIB)?;
+    storage::source_parent(&root)?;
     // Only tracked public project/core files enter this tree. Private ignored
     // games, logs, cards and keys never participate in recursive host copying.
     let marker = staging.join(".psx-source-bundle");
     if staging.exists() {
-        if !fs::read_to_string(&marker).is_ok_and(|value| value == revision) {
-            return Err("Source staging directory lacks this task's revision marker.".into());
-        }
-        fs::remove_dir_all(&staging)?;
+        return Err("An unfinished source stage already exists. It is preserved; inspect and recover it before another source job.".into());
     }
     fs::create_dir_all(&staging)?;
     fs::write(&marker, &revision)?;
@@ -182,7 +210,11 @@ fn source_bundle() -> Result<()> {
     content.push_str("\n[source.crates-io]\nreplace-with = \"release-vendor\"\n\n[source.release-vendor]\ndirectory = \"vendor/rust\"\n");
     fs::write(config, content)?;
     fs::write(staging.join("SOURCE-REVISION.txt"), format!("psx {revision}\nSwanStation {CORE_REV}\n\nRust crates are included under vendor/rust with their original notices.\nSee docs/build.md. SDK/NDK, the Rust toolchain and development signing keys are not included.\n"))?;
-    let destination = Path::new("build").join(format!("{name}.tar.gz"));
+    storage::between_steps()?;
+    let archive_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&destination)?;
     let mut tar = command(
         "tar",
         [
@@ -203,7 +235,7 @@ fn source_bundle() -> Result<()> {
     .spawn()?;
     let packed = command("gzip", ["-n"])
         .stdin(Stdio::from(tar.stdout.take().ok_or("Missing tar output")?))
-        .stdout(fs::File::create(&destination)?)
+        .stdout(archive_file)
         .status()?;
     let archived = tar.wait()?;
     if !packed.success() || !archived.success() {
@@ -218,6 +250,7 @@ fn source_bundle() -> Result<()> {
         "Source bundle: {}\nSHA-256: {digest}",
         destination.display()
     );
+    storage::retire_stage(&root, &staging, false)?;
     Ok(())
 }
 

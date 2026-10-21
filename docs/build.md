@@ -1,5 +1,10 @@
 # Android development build
 
+Run the [storage preflight and retention procedure](storage.md) before large
+builds, backups or experiments. Writing xtask commands serialize project use
+and check shared-host capacity. Completed source bundles are reused, and their
+verified expanded stages are retired. Unfinished output is preserved for review.
+
 Clone with `git clone --recurse-submodules https://github.com/WigglyDon/psx`.
 For an existing checkout, run `git submodule update --init --recursive`.
 The submodules must be the exact revisions in `upstream.lock.json`; the build

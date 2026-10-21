@@ -49,6 +49,7 @@ working PS1 baseline and its remaining qualifications stay recorded in
 | [Architecture](docs/architecture.md) | Execution, platform and interface boundaries |
 | [Files and saves](docs/formats.md) | Supported inputs, storage access and recovery |
 | [Distribution](docs/distribution.md) | Core licensing and eventual store requirements |
+| [Development storage](docs/storage.md) | Capacity preflight and verified artifact retention |
 | [AGENTS.md](AGENTS.md) | Development instructions |
 
 ## Source and attribution

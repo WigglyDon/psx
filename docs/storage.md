@@ -1,0 +1,95 @@
+# Development storage
+
+The workstation is shared. Btrfs can exhaust metadata allocation while `df`
+still reports free bytes. Check capacity before large writes; retaining another
+expanded copy of reproducible source is not a backup strategy.
+
+`cargo xtask storage` reports project classes and current capacity. Allocated
+file-block estimates can share extents or be compressed on Btrfs; do not add
+them together or call them physical reclaim. Record actual filesystem and
+allocation readings before and after cleanup.
+
+```sh
+cargo xtask storage
+cargo xtask storage check 3
+cargo xtask storage audit
+cargo xtask storage prune
+```
+
+`check` takes the estimated additional GiB for the operation. A previously
+built `target/release/xtask storage check 3` avoids compiling a tool during
+pressure or device custody. `audit` verifies without deletion; `prune` removes
+only verified expanded source stages, with durable private receipts. It keeps
+unrecognized, incomplete or differing trees and explains why.
+
+## Capacity and concurrency
+
+The initial local guard reserves 12 GiB of available filesystem space plus
+the operation's estimated growth: 8 GiB for an APK or standalone PS2 build,
+3 GiB for corresponding source, 1 GiB for firmware reproduction and 64 MiB
+for notices. On Btrfs it additionally requires 512 MiB of logical metadata
+slack and 1 GiB of device-unallocated space. Missing allocation readings fail
+closed for growth. These conservative starting values are not a validated
+host quota or a claim that simultaneous workloads fit; the host custodian
+owns changes to shared capacity policy.
+
+Writing xtask operations hold one descriptor-owned project lock. Capacity is
+checked before large jobs and between subprocess stages; existing caches
+remain reusable. This does not reserve bytes against other projects or bound
+a compiler while it runs. Direct Cargo/tools, backups, media transfers and
+experiments must run an explicit preflight with their actual expected peak.
+If another job consumes the margin, stop new writes and report pressure.
+No storage check performs balance, snapshots cleanup, package changes or
+filesystem repair. Read-only verification and retention remain available.
+
+## Source bundles
+
+Completed `build/psx-source-<revision>.tar.gz` archives and their SHA-256
+sidecars are canonical corresponding-source artifacts. Reuse an existing
+verified bundle for the same revision. Successful source creation retires its
+expanded stage after verification instead of accumulating one expanded tree
+per commit. Old completed stages can be retired explicitly with `prune`.
+
+A stage is eligible only directly under `build/source-bundles`, with its
+original revision marker, a corresponding Git commit, a complete matching
+archive/checksum and the same archived full revision. Compare the complete
+path set, contents, permissions, types and symlink targets. Ignore only the
+ownership/timestamp normalization used by release tarballs. Extra, changed,
+redirected, unmarked or incomplete work is kept. Recheck identity before
+deletion, record proof first, and retain the archive and receipts.
+
+An interrupted source build keeps its unfinished stage and failure evidence.
+Do not retry by creating another checkout, duplicating dependency caches or
+silently deleting that work. Inspect the failed operation and recover it
+under the project's current assignment. Source checking should stream or
+extract selected files rather than expand another complete bundle.
+
+## Protected work and other artifacts
+
+Never automatically expire games, proprietary firmware, memory cards, saves,
+checkpoints, controller profiles, device backups, owner-selected screenshots,
+licensed fixtures, signing material, credentials, Git worktrees/unpushed work,
+unknown files or host-recovery evidence. `.local` is not a disposable cache.
+Keep the accepted PS1 baseline, installed candidate, current reviewed candidate,
+required fallback and their exact source/signature/provenance evidence.
+Existing qualified archives/candidates remain retained in this audit.
+
+Keep active Rust/native/dependency caches for current engineering. A future
+cache retirement needs its own ownership, inactive-job and reconstruction
+check; no global `cargo clean`, `git clean` or shared SDK/cache purge.
+Shared SDK/NDK and host-tool caches outside this project belong to their
+custodians and are excluded from project cleanup.
+
+New device windows back up current app data without recopying game media.
+Read selected backup members directly where possible; avoid another full
+extraction merely to inspect one profile or checkpoint. Keep captures and
+diagnostic runs focused and bounded to the actual question. Preserve current
+failure/qualification logs and use one named output per check, not repeated
+unindexed dumps. End each assignment with artifact identities and an explicit
+retention decision; do not silently discard unfinished evidence to meet a
+space target.
+
+Private receipts live under `.local/storage-retention`. GitHub receives only
+appropriate aggregate results and source/build identities, subject to the
+existing device-evidence disclosure rules. Neither `du` nor a project's net
+`df` change proves that concurrent host activity was caused by this project.

@@ -92,3 +92,12 @@ are separate observations. Report what actually ran and any material limits.
 Prepare without device custody; use the current stock-device procedure before
 installation or testing. Preserve the owner's other apps and saved data.
 
+## Shared host storage
+
+Follow docs/storage.md before bulk writes. Use the Rust xtask storage preflight
+with the operation's expected peak, retain the shared-host reserve and allocation
+margin, and serialize project build/retention work. Remove only verified
+reconstructible project-owned output. Keep unfinished work, canonical source,
+qualification evidence, private media/firmware/saves/backups and signing material.
+Never treat .local as disposable or clear another project's SDK/cache.
+
