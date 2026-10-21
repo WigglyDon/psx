@@ -158,8 +158,12 @@ Do not read whole discs into memory by default.
 Keep memory-card persistence separate from optional save-state resume.
 Persist ordinary in-game saves safely and prove them after process restart.
 Do not let an old save state silently roll back newer memory-card progress.
-Automatic checkpoints use the pinned core's public serialize/unserialize ABI,
-between frames on the same execution/GL owner. A bounded worker hashes and
+Automatic checkpoints use the pinned engine's state interfaces on the same
+execution/GL owner. PS1 uses public serialize/unserialize. PS2 captures the donor's owned
+byte/name entry list while paused, then transfers it to the existing bounded
+Rust save worker for archive packaging. Packaging reads no live VM settings,
+cards or graphics and retains the native library until the list is consumed.
+Cancellation frees that list once. The worker hashes and
 atomically writes one captured state; no worker calls emulation or GL. Periodic
 writes do not block playback on storage sync. Background, explicit pause and
 closure wait for durability. Resume validates core/disc inputs, payload integrity

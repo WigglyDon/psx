@@ -179,7 +179,7 @@ pub fn seal_closed_cards(root: &Path, game: &Game, before: &[u8], after: &[u8]) 
 mod tests {
     use super::*;
     #[test]
-    fn shader_only_upgrade_loads_prior_snapshot_without_weakening_other_bindings() {
+    fn compatible_adapter_upgrades_keep_other_snapshot_bindings() {
         let root = std::env::temp_dir().join(format!("psx-fetch-upgrade-{}", std::process::id()));
         let game = Game {
             system: System::Ps2,
@@ -212,6 +212,13 @@ mod tests {
                 prior.replace(
                     "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
                     "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
+                ),
+                true,
+            ),
+            (
+                prior.replace(
+                    "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
+                    "23a0b217e21a9442dde06b009aa6911f782c083a5ff5c37593b415d615309765",
                 ),
                 true,
             ),

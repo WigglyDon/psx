@@ -13,6 +13,19 @@ pub enum Core {
     Ps1(retro::Core),
     Ps2(Box<ps2::Core>, PathBuf),
 }
+/// Frozen state awaiting packaging, independent of a live engine assignment.
+pub enum Checkpoint {
+    Ps1(Vec<u8>),
+    Ps2(ps2::Checkpoint),
+}
+impl Checkpoint {
+    pub fn into_bytes(self) -> Result<Vec<u8>> {
+        match self {
+            Self::Ps1(bytes) => Ok(bytes),
+            Self::Ps2(captured) => captured.into_bytes(),
+        }
+    }
+}
 impl Core {
     /// Threaded engines own their emulation clock; the frontend services a
     /// published frame immediately instead of imposing a second frame clock.
@@ -102,10 +115,10 @@ impl Core {
             Self::Ps2(core, _) => core.run(),
         }
     }
-    pub fn checkpoint(&mut self) -> Result<Vec<u8>> {
+    pub fn checkpoint(&mut self) -> Result<Checkpoint> {
         match self {
-            Self::Ps1(core) => core.checkpoint(),
-            Self::Ps2(core, _) => core.checkpoint(),
+            Self::Ps1(core) => core.checkpoint().map(Checkpoint::Ps1),
+            Self::Ps2(core, _) => core.checkpoint().map(Checkpoint::Ps2),
         }
     }
     pub fn restore_checkpoint(&mut self, bytes: &[u8]) -> Result<()> {

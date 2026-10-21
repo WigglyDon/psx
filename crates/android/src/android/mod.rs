@@ -2522,10 +2522,13 @@ impl Player {
         if let (Some(core), Some(game)) = (&mut self.core, &self.game) {
             let before = Instant::now();
             let state = core.checkpoint()?;
+            let captured_in = before.elapsed();
+            let before_cards = Instant::now();
             let card = core.card_identity()?;
             log::info!(
-                "Session snapshot prepared in {:.2} ms",
-                before.elapsed().as_secs_f64() * 1000.
+                "Session snapshot captured in {:.2} ms; cards verified in {:.2} ms",
+                captured_in.as_secs_f64() * 1000.,
+                before_cards.elapsed().as_secs_f64() * 1000.
             );
             let game = game.clone();
             let root = self.root.clone();
@@ -2533,8 +2536,15 @@ impl Player {
             let (tx, rx) = mpsc::sync_channel(1);
             self.checkpoint_work = Some(rx);
             std::thread::spawn(move || {
-                let result = resume::save(&root, &game, paused, &card, &state)
-                    .map_err(|e| format!("The session could not be saved: {e}"));
+                let before = Instant::now();
+                let result = state.into_bytes().and_then(|state| {
+                    log::info!(
+                        "Session archive packaged in {:.2} ms",
+                        before.elapsed().as_secs_f64() * 1000.
+                    );
+                    resume::save(&root, &game, paused, &card, &state)
+                        .map_err(|e| format!("The session could not be saved: {e}"))
+                });
                 if result.is_ok() {
                     log::info!("Automatic session saved");
                 }

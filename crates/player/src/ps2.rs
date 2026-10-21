@@ -15,6 +15,7 @@ use std::{
     fs,
     marker::PhantomData,
     path::{Path, PathBuf},
+    ptr::NonNull,
     rc::Rc,
     sync::{
         atomic::{AtomicBool, AtomicI16, AtomicU16, Ordering},
@@ -37,14 +38,15 @@ pub fn revision() -> &'static str {
         )
     })
 }
-/// Reviewed shader/header and frame-notification repairs change no emulated
-/// state or archive fields. Future patch edits disable this exact exception.
+/// Reviewed shader, notification and capture/packaging changes retain the same
+/// complete state/archive fields. Future patch edits disable this exception.
 pub fn compatible_checkpoint_binding(saved: &str, current: &str) -> bool {
-    const BEFORE: [&str; 2] = [
+    const BEFORE: [&str; 3] = [
         "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
         "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
+        "23a0b217e21a9442dde06b009aa6911f782c083a5ff5c37593b415d615309765",
     ];
-    const AFTER: &str = "23a0b217e21a9442dde06b009aa6911f782c083a5ff5c37593b415d615309765";
+    const AFTER: &str = "9f5bf1a2a6d6aa228d7789eb0e38bc7cb62c94c98ca12e6a88d36fd8899c01ac";
     if revision() != format!("{REVISION}+{AFTER}") {
         return false;
     }
@@ -57,6 +59,48 @@ pub fn compatible_checkpoint_binding(saved: &str, current: &str) -> bool {
     })
 }
 pub const MAX_STATE_SIZE: usize = 68 * 1024 * 1024;
+
+/// An owned donor archive of already frozen bytes. Only capture touches the
+/// paused CPU/GS owners; packaging may run on the bounded Rust save worker.
+pub struct Checkpoint {
+    captured: Option<NonNull<c_void>>,
+    pack: unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize,
+    free: unsafe extern "C" fn(*mut c_void),
+    _library: Arc<Library>,
+}
+// SAFETY: The pinned ABI transfers exclusive ownership of a byte/name entry
+// list, with no VM/GL pointers or thread-local destructor. pack/free use only
+// that list and immutable build constants; an Arc keeps their code loaded.
+// This type is neither Clone nor Sync. The host joins its one save worker
+// before native teardown or assigning the game's writer to another runtime.
+unsafe impl Send for Checkpoint {}
+impl Checkpoint {
+    pub fn into_bytes(mut self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::<u8>::with_capacity(MAX_STATE_SIZE);
+        let captured = self.captured.take().unwrap();
+        // The native operation consumes the list on both success and failure.
+        let used =
+            unsafe { (self.pack)(captured.as_ptr(), bytes.as_mut_ptr().cast(), MAX_STATE_SIZE) };
+        if !(8..=MAX_STATE_SIZE).contains(&used) {
+            return Err("The PS2 session checkpoint could not be packaged.".into());
+        }
+        // SAFETY: The pinned pack ABI initializes exactly its returned prefix
+        // (header plus complete ZIP). Reject failure/oversize before exposing
+        // bytes; unused reserved capacity is never read or zero-filled.
+        unsafe { bytes.set_len(used) };
+        if checkpoint_extent(&bytes)? != used {
+            return Err("The PS2 session checkpoint has an invalid archive length.".into());
+        }
+        Ok(bytes)
+    }
+}
+impl Drop for Checkpoint {
+    fn drop(&mut self) {
+        if let Some(captured) = self.captured.take() {
+            unsafe { (self.free)(captured.as_ptr()) };
+        }
+    }
+}
 #[derive(Clone, Default)]
 pub struct Output {
     pub metrics: Option<[f32; 5]>,
@@ -307,6 +351,34 @@ struct GameInfo {
     size: usize,
     meta: *const c_char,
 }
+
+fn host_options(firmware: String) -> Result<BTreeMap<Vec<u8>, CString>> {
+    let mut options = BTreeMap::new();
+    options.insert(
+        b"armsx2_bios".to_vec(),
+        CString::new(firmware).map_err(|e| e.to_string())?,
+    );
+    for (key, value) in [
+        ("armsx2_renderer", "OpenGL"),
+        ("armsx2_upscale", "1x"),
+        ("armsx2_ee_cycle_rate", "100%"),
+        ("armsx2_ee_cycle_skip", "disabled"),
+        // Preserve existing snapshots' mode: gifFreeze records the difference
+        // but does not implement switching it on load. Qualify that transition
+        // before adopting the adapter's enabled default for saved sessions.
+        ("armsx2_mtvu", "disabled"),
+        ("armsx2_fast_boot", "enabled"),
+        ("armsx2_widescreen_patches", "disabled"),
+        // The donor's 640x448 intermediate gets its final 4:3 fit in Rust.
+        ("armsx2_aspect_ratio", "Stretch"),
+        ("armsx2_no_interlacing_patches", "disabled"),
+        ("armsx2_hw_download_mode", "Accurate"),
+    ] {
+        options.insert(key.as_bytes().to_vec(), CString::new(value).unwrap());
+    }
+    Ok(options)
+}
+
 pub struct Core {
     shared: Arc<Shared>,
     run_fn: unsafe extern "C" fn(),
@@ -319,10 +391,11 @@ pub struct Core {
     frame_callback_fn: unsafe extern "C" fn(Option<unsafe extern "C" fn()>) -> bool,
     speed: Option<Speed>,
     speed_changed: Instant,
-    serialize_size: unsafe extern "C" fn() -> usize,
-    serialize: unsafe extern "C" fn(*mut c_void, usize) -> bool,
+    capture_state: unsafe extern "C" fn() -> *mut c_void,
+    pack_state: unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize,
+    free_state: unsafe extern "C" fn(*mut c_void),
     unserialize: unsafe extern "C" fn(*const c_void, usize) -> bool,
-    library: Library,
+    library: Arc<Library>,
     loaded: bool,
     context: bool,
     paused: bool,
@@ -343,29 +416,12 @@ impl Core {
             return Err("PS2 needs an OpenGL ES 3.1 or newer device renderer.".into());
         }
         let lease = CoreLease::acquire()?;
-        let library = Library::new(path)
-            .map_err(|e| format!("The bundled PS2 engine could not load: {e}"))?;
-        let mut options = BTreeMap::new();
-        let firmware = firmware_binding(config.system)?;
-        options.insert(
-            b"armsx2_bios".to_vec(),
-            CString::new(firmware.file).map_err(|e| e.to_string())?,
+        let library = Arc::new(
+            Library::new(path)
+                .map_err(|e| format!("The bundled PS2 engine could not load: {e}"))?,
         );
-        for (k, v) in [
-            ("armsx2_renderer", "OpenGL"),
-            ("armsx2_upscale", "1x"),
-            ("armsx2_ee_cycle_rate", "100%"),
-            ("armsx2_ee_cycle_skip", "disabled"),
-            ("armsx2_fast_boot", "enabled"),
-            ("armsx2_widescreen_patches", "disabled"),
-            // The GS presents into a 640x448 intermediate. The Rust host
-            // applies the final 4:3 fit; fitting here too creates nested bars.
-            ("armsx2_aspect_ratio", "Stretch"),
-            ("armsx2_no_interlacing_patches", "disabled"),
-            ("armsx2_hw_download_mode", "Accurate"),
-        ] {
-            options.insert(k.as_bytes().to_vec(), CString::new(v).unwrap());
-        }
+        let firmware = firmware_binding(config.system)?;
+        let options = host_options(firmware.file)?;
         let shared = Arc::new(Shared {
             system: CString::new(config.system.as_os_str().as_encoded_bytes())
                 .map_err(|e| e.to_string())?,
@@ -438,11 +494,15 @@ impl Core {
             ),
             speed: None, // Apply Rust's requested time scale before the first live tick.
             speed_changed: Instant::now(),
-            serialize_size: symbol!("retro_serialize_size", unsafe extern "C" fn() -> usize),
-            serialize: symbol!(
-                "retro_serialize",
-                unsafe extern "C" fn(*mut c_void, usize) -> bool
+            capture_state: symbol!(
+                "retro_psx_capture_state",
+                unsafe extern "C" fn() -> *mut c_void
             ),
+            pack_state: symbol!(
+                "retro_psx_pack_state",
+                unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize
+            ),
+            free_state: symbol!("retro_psx_free_state", unsafe extern "C" fn(*mut c_void)),
             unserialize: symbol!(
                 "retro_unserialize",
                 unsafe extern "C" fn(*const c_void, usize) -> bool
@@ -569,21 +629,16 @@ impl Core {
         }
         Ok(())
     }
-    pub fn checkpoint(&mut self) -> Result<Vec<u8>> {
+    pub fn checkpoint(&mut self) -> Result<Checkpoint> {
         self.flush()?;
-        let size = unsafe { (self.serialize_size)() };
-        if size == 0 || size > MAX_STATE_SIZE {
-            return Err("The PS2 session is not ready for a bounded checkpoint.".into());
-        }
-        let mut bytes = vec![0; size];
-        if !unsafe { (self.serialize)(bytes.as_mut_ptr().cast(), size) } {
-            return Err("The PS2 session checkpoint failed.".into());
-        }
-        // ARMSX2's ABI reserves a fixed maximum but prefixes the actual ZIP
-        // length. Its reader accepts that exact extent; padding is not state.
-        let used = checkpoint_extent(&bytes)?;
-        bytes.truncate(used);
-        Ok(bytes)
+        let captured = NonNull::new(unsafe { (self.capture_state)() })
+            .ok_or("The PS2 session checkpoint could not be captured.")?;
+        Ok(Checkpoint {
+            captured: Some(captured),
+            pack: self.pack_state,
+            free: self.free_state,
+            _library: self.library.clone(),
+        })
     }
     pub fn restore(&mut self, bytes: &[u8]) -> Result<()> {
         self.flush()?;
@@ -798,9 +853,8 @@ fn qualification_settings(previous: &str, repaired_fetch: bool) -> String {
         ("UI", "SettingsVersion", "1"),
         ("EmuCore", "AutoTune", "false"),
         ("EmuCore", "EnableFastBootFastForward", "false"),
-        // Native serialization runs on the CPU owner. Avoid compressing the
-        // archive while the VM is stopped; the bounded storage worker owns
-        // hashing/writing. Both compressed and stored ZIPs use the same reader.
+        // Retain the legacy ABI's stored-ZIP policy; the split capture path
+        // selects this explicitly on its save worker without live settings.
         ("EmuCore", "SavestateCompressionType", "0"),
         ("EmuCore/GS", "AspectRatio", "Stretch"),
         ("EmuCore/GS", "IntegerScaling", "false"),
@@ -920,9 +974,34 @@ pub fn card_identity(root: &Path) -> std::io::Result<Vec<u8>> {
     Ok(hash.finalize().to_vec())
 }
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "ps2_checkpoint_test.rs"]
+mod checkpoint_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_sessions_retain_vu_mode_and_normal_guest_clocks() {
+        let source = include_str!("../../../vendor/armsx2/pcsx2-libretro/Main.cpp");
+        assert!(
+            source.contains("{\"armsx2_mtvu\", \"MTVU (multi-threaded VU1); enabled|disabled\"}")
+        );
+        let options = host_options("fixture.bin".into()).unwrap();
+        assert_eq!(options[b"armsx2_mtvu".as_slice()].to_bytes(), b"disabled");
+        assert_eq!(
+            options[b"armsx2_ee_cycle_rate".as_slice()].to_bytes(),
+            b"100%"
+        );
+        assert_eq!(
+            options[b"armsx2_ee_cycle_skip".as_slice()].to_bytes(),
+            b"disabled"
+        );
+        assert_eq!(
+            options[b"armsx2_bios".as_slice()].to_bytes(),
+            b"fixture.bin"
+        );
+    }
     #[test]
     fn frame_notifications_wake_across_threads_and_survive_late_registration() {
         use std::{sync::atomic::AtomicUsize, task::Wake};

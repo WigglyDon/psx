@@ -52,6 +52,12 @@ one-consumer ownership and interruption. GPU ordering and actual speed/audio
 still require device validation. Presentation mean/max duration is reported
 separately from frontend calls and native achieved emulation speed.
 
+Rust explicitly retains existing sessions' disabled MTVU mode. The pinned
+adapter defaults it to enabled, but `gifFreeze` records a mode difference
+without implementing the transition on load. Adopting that default needs a
+verified saved-state migration or explicit new-session policy. It must not
+silently change a running session's mode or be reported as a measured speed fix.
+
 The host implements thread-safe worker callbacks, negotiated shared GLES,
 48 kHz audio, dual-analog/digital input, isolated file-owned cards and bounded
 revision/firmware-bound checkpoints. PS2 does not inherit PS1's synchronous
@@ -62,17 +68,23 @@ old cards cannot replace newer durable progress. Incompatible states are kept
 and explained until explicit disc restart with the current card.
 
 The 68 MiB serialization ABI has a smaller validated ZIP payload; the host
-retains exact archive bytes without unused ABI padding. Stored ZIP entries
-and omission of an unused thumbnail reduce checkpoint work. Periodic captures
-still produce observed hundreds-of-milliseconds stalls; this is a remaining
-performance cost, not a claim of seamless capture. See
+retains exact archive bytes without unused ABI padding. PS2 captures the
+existing complete frozen entry list on its paused CPU owner and transfers
+exclusive ownership to the bounded Rust save worker. That worker packages the
+stored ZIP, hashes and writes it; it does not enter emulation, GL or live
+configuration. The native library remains loaded through packaging/cancellation,
+and the host joins its single writer before teardown or switching. The existing
+reader, archive fields and authoritative-card checks are retained. No thumbnail
+is generated. Capture and current-card hashing/synchronization still stop play;
+packaging has been removed from that wait, not proved cost-free on the device.
+Capture, card verification and worker packaging have separate timings. See
 [formats.md](formats.md) and [adapter details](../patches/armsx2/README.md).
 
 The PowerVR shader repair enables the EXT framebuffer-fetch language contract
 when its backend emits EXT `inout`, preserving the donor's Mali/ARM preference
 and ARM-only fallback. Actual GTA/Red Dead scenes rendered with EXT fetch
-active. Checkpoints from the two named prior adapters can enter the exact
-shader/frame-notification build, which changes no emulated state or archive
+active. Checkpoints from the three named prior adapters can enter the exact
+capture/packaging build, which changes no emulated state or archive
 fields. This transition is guarded by complete patch identities; future edits
 disable that exception automatically. No serializer/card-protocol change is
 implied by a host layout edit.

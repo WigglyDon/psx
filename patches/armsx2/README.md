@@ -39,11 +39,25 @@ rate. The native callback retains its current running/paused state and restores
 the frame handoff only when running. Guest CPU/device clocks are unchanged.
 
 The libretro checkpoint omits the unused thumbnail: psx restores and renders
-the machine directly. This avoids a GS readback and PNG encoding while the VM
-is stopped. Rust selects the existing uncompressed ZIP setting and retains
-only the validated length-prefixed archive, rather than unused ABI padding.
-Machine state remains complete and the existing native ZIP reader accepts
-both compressed and stored entries. Device timing is qualified separately.
+the machine directly. `retro_psx_capture_state` forwards the donor's existing
+complete `SaveState_DownloadState` through its paused CPU owner, transferring
+the owned byte/name `ArchiveEntryList` to Rust. `retro_psx_pack_state` consumes
+that list on the existing Rust save worker through `SaveState_ZipToBuffer`;
+`retro_psx_free_state` handles cancellation. These are ABI glue around retained
+capture/ZIP implementation. Packaging performs no VM, GL, card or CPU-queue work.
+Its explicit stored-ZIP argument bypasses live compression settings, so the
+immutable list can be packaged independently of a resumed or torn-down runtime.
+Rust retains the loaded library until pack/free returns, with no cloned state
+owner; it joins the one checkpoint writer before runtime teardown/switching.
+
+The length-prefixed archive and emulated fields are unchanged; the existing
+reader accepts stored and compressed ZIP entries. Rust retains only the exact
+validated extent, not unused ABI padding. Capture/card verification stay on the
+paused owner and remain synchronous costs. Packaging/hashing/writing move off
+that wait; separate timings and device checks must establish the actual gain.
+A Linux fixture compiles the actual patched capture/pack exports with mechanical
+VM/ZIP stubs, checking post-resume packaging, unchanged frozen bytes, cancellation
+and failed-pack ownership. It is not full serialization or speed acceptance.
 
 The observed clean-boot card-format failure also has a bounded diagnostic:
 the first 32 PS2 writes and 16 erases report transfer geometry/checksums, without
@@ -80,9 +94,9 @@ renderer. Device rendering/audio/speed validation remains necessary.
 Libretro omits the generic manual-API-choice warning: the frontend grants the
 specific context, so this is not an unsafe user override. Actual renderer and
 other unsafe-setting diagnostics remain. Neither change touches emulated state,
-card protocol or serialization. The frame-notification addition also changes
+card protocol or serialization. The frame-notification and capture/packaging additions change
 no emulated state or archive fields. Rust permits only the exact prior
-`878bdd9e…` and `92542cb6…` patches to resume into this exact `23a0b217…`
+`878bdd9e…`, `92542cb6…` and `23a0b217…` patches to resume into this exact `9f5bf1a2…`
 patch, retaining other input/card/
 payload checks. A future native edit disables that explicit exception. New
 checkpoint writes always record the complete new patch identity.

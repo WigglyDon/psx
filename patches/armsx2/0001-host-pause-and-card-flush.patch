@@ -1,5 +1,5 @@
 diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
-index 24210fb06..dfe184715 100644
+index 24210fb06..87644c528 100644
 --- a/pcsx2-libretro/Main.cpp
 +++ b/pcsx2-libretro/Main.cpp
 @@ -77,6 +77,8 @@
@@ -24,10 +24,53 @@ index 24210fb06..dfe184715 100644
  }
  
  void Host::OnSaveStateLoading(const std::string_view filename)
-@@ -2357,6 +2365,98 @@ RETRO_API size_t retro_serialize_size(void)
+@@ -2357,6 +2365,141 @@ RETRO_API size_t retro_serialize_size(void)
  	return VMManager::HasValidVM() ? kSerializeSize : 0;
  }
  
++// Split the donor's existing frozen entry list from archive packaging. Rust
++// captures on the paused CPU owner, then owns this list on its save worker.
++// The list contains only copied bytes/names, never live VM or graphics handles.
++extern "C" RETRO_API void* retro_psx_capture_state(void)
++{
++	if (!LibretroCore::s_vm_thread_running.load(std::memory_order_acquire) ||
++		VMManager::GetState() != VMState::Paused)
++		return nullptr;
++	std::unique_ptr<ArchiveEntryList> entries;
++	Host::RunOnCPUThread([&entries]() {
++		if (VMManager::GetState() != VMState::Paused)
++			return;
++		Error error;
++		entries = SaveState_DownloadState(&error);
++		if (!entries)
++			Console.ErrorFmt("psx state capture failed: {}", error.GetDescription());
++	}, true);
++	return entries.release();
++}
++
++// Consumes the list even on failure. No CPU queue, GS, live settings or card
++// access is permitted here; the native library must remain loaded until return.
++extern "C" RETRO_API size_t retro_psx_pack_state(void* captured, void* data, size_t size)
++{
++	std::unique_ptr<ArchiveEntryList> entries(static_cast<ArchiveEntryList*>(captured));
++	if (!entries || !data || size < sizeof(u64) || size > kSerializeSize)
++		return 0;
++	Error error;
++	std::vector<u8> buffer;
++	if (!SaveState_ZipToBuffer(std::move(entries), nullptr, &buffer, &error, true) ||
++		buffer.empty() || buffer.size() > size - sizeof(u64))
++		return 0;
++	const u64 zip_len = buffer.size();
++	std::memcpy(data, &zip_len, sizeof(zip_len));
++	std::memcpy(static_cast<u8*>(data) + sizeof(zip_len), buffer.data(), buffer.size());
++	return sizeof(zip_len) + buffer.size();
++}
++
++extern "C" RETRO_API void retro_psx_free_state(void* captured)
++{
++	delete static_cast<ArchiveEntryList*>(captured);
++}
++
 +// psx adapter: expose the existing CPU-owner pause and file-card flush. Host
 +// policy remains in Rust. Stop the GS handoff before a blocking CPU callback.
 +extern "C" RETRO_API bool retro_psx_set_paused(bool paused)
@@ -123,7 +166,7 @@ index 24210fb06..dfe184715 100644
  RETRO_API bool retro_serialize(void* data, size_t size)
  {
  	if (!VMManager::HasValidVM())
-@@ -2384,7 +2484,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
+@@ -2384,7 +2527,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
  			Console.ErrorFmt("retro_serialize: DownloadState failed: {}", error.GetDescription());
  			return;
  		}
@@ -330,6 +373,75 @@ index 349c503c0..339ecbc2d 100644
  
  	// Check if auto ejection is active. If so, set cmd stat to DISCONNECTED,
  	// and zero out the fifo to simulate dead air over the wire.
+diff --git a/pcsx2/SaveState.cpp b/pcsx2/SaveState.cpp
+index c591f7139..dc8120f42 100644
+--- a/pcsx2/SaveState.cpp
++++ b/pcsx2/SaveState.cpp
+@@ -1081,12 +1081,19 @@ static bool SaveState_ReadScreenshot(zip_t* zf, u32* out_width, u32* out_height,
+ // --------------------------------------------------------------------------------------
+ //  CompressThread_VmState
+ // --------------------------------------------------------------------------------------
+-static bool SaveState_AddToZip(zip_t* zf, ArchiveEntryList* srclist, SaveStateScreenshotData* screenshot)
++static bool SaveState_AddToZip(zip_t* zf, ArchiveEntryList* srclist, SaveStateScreenshotData* screenshot,
++	bool store_only = false)
+ {
+ 	u32 compression = ZIP_CM_DEFAULT;
+ 	u32 compression_level = 0;
+ 
+-	if (EmuConfig.Savestate.CompressionType == SavestateCompressionMethod::Zstandard)
++	// The psx worker packages already captured bytes without reading live VM
++	// configuration. Other donor frontends retain their existing settings path.
++	if (store_only)
++	{
++		compression = ZIP_CM_STORE;
++	}
++	else if (EmuConfig.Savestate.CompressionType == SavestateCompressionMethod::Zstandard)
+ 	{
+ 		compression = ZIP_CM_ZSTD;
+ 
+@@ -1227,22 +1234,24 @@ bool SaveState_ZipToDisk(
+ 
+ // libretro: write a state into an in-memory zip (retro_serialize buffer).
+ bool SaveState_ZipToBuffer(std::unique_ptr<ArchiveEntryList> srclist,
+-	std::unique_ptr<SaveStateScreenshotData> screenshot, std::vector<u8>* out_data, Error* error)
++	std::unique_ptr<SaveStateScreenshotData> screenshot, std::vector<u8>* out_data, Error* error,
++	bool store_only)
+ {
+ 	zip_error_t ze = {};
+ 	zip_source_t* zs = zip_source_buffer_create(nullptr, 0, 0, &ze);
+ 	zip_t* zf = nullptr;
+-	if (zs && !(zf = zip_open_from_source(zs, ZIP_TRUNCATE, &ze)))
++	if (!zs || !(zf = zip_open_from_source(zs, ZIP_TRUNCATE, &ze)))
+ 	{
+ 		Error::SetString(error, fmt::format("Savestate buffer zip error: {}", zip_error_strerror(&ze)));
+-		zip_source_free(zs);
++		if (zs)
++			zip_source_free(zs);
+ 		return false;
+ 	}
+ 
+ 	// keep the source alive across zip_close so the bytes can be read back
+ 	zip_source_keep(zs);
+ 
+-	if (!SaveState_AddToZip(zf, srclist.get(), screenshot.get()))
++	if (!SaveState_AddToZip(zf, srclist.get(), screenshot.get(), store_only))
+ 	{
+ 		Error::SetString(error, "Failed to save state to memory zip.");
+ 		zip_discard(zf);
+diff --git a/pcsx2/SaveState.h b/pcsx2/SaveState.h
+index b0d89beed..ad21515f2 100644
+--- a/pcsx2/SaveState.h
++++ b/pcsx2/SaveState.h
+@@ -61,7 +61,8 @@ extern bool SaveState_ReadScreenshot(const std::string& filename, u32* out_width
+ extern bool SaveState_UnzipFromDisk(const std::string& filename, Error* error);
+ // libretro in-memory state (retro_serialize/retro_unserialize)
+ extern bool SaveState_ZipToBuffer(std::unique_ptr<ArchiveEntryList> srclist,
+-	std::unique_ptr<SaveStateScreenshotData> screenshot, std::vector<u8>* out_data, Error* error);
++	std::unique_ptr<SaveStateScreenshotData> screenshot, std::vector<u8>* out_data, Error* error,
++	bool store_only = false);
+ extern bool SaveState_UnzipFromBuffer(const void* data, size_t size, Error* error);
+ 
+ // --------------------------------------------------------------------------------------
 diff --git a/pcsx2/VMManager.cpp b/pcsx2/VMManager.cpp
 index 417a53803..5cde10a6a 100644
 --- a/pcsx2/VMManager.cpp
