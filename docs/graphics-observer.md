@@ -114,3 +114,58 @@ Report a sanitized boundary matrix on #2 and keep it open. Clean sampled stages
 with wrong/unobserved pixels require a matched full-renderer or separately
 reviewed private pixel observation, not another clear/error-only test. Apparent
 non-reproduction is not a fix or gameplay/save/audio/performance acceptance.
+
+## First actual full-path observation
+
+The diagnostic built from `4277d4ca651a4c9c2e8e88113a0ef092e330f01c` ran one
+fresh-process clean boot for 46.656 seconds. Its unchanged normal adapter was
+`90b35554…`, with separate observer patch `a08bf0c8…`; see issue #2 for exact
+APK/source/symbol bindings. No restored machine state, pixel readback or screenshot
+was used. The owner reported flicker affecting controls/the whole screen.
+
+The first retained boundary failure is producer stage 2, frame 465, at 11.435145
+seconds from observer initialization: the fence returned non-null, but the
+immediate owning-context `glIsSync` query returned false after fence/flush and
+before publication. The preceding retained frame has complete copy FBOs, valid
+producer/read fences, an admitted 640×448 frame against the 1024×1024 target,
+and successful final UI/swap observations. The later retained samples continue
+to report invalid fences while sampled GL errors remain empty and swaps report
+success. A contemporaneous application-process GPU-command submission warning
+is retained privately. These observations narrow the interval; neither CPU log
+order nor a failed sync establishes the initiating GPU command or driver cause.
+
+Two valid numeric exports total 145,144 bytes. Their first failure and 32 preceding
+events agree; their bounded rings report 10,828 and 51,019 drops/evictions. They
+are not a complete command history. An absent optional third export was returned
+as a legacy `exec-out` diagnostic with exit 0, exposing a collector bookkeeping
+error after both valid files were saved. The operator also failed to recognize
+the GPU-command warning as an earlier stop condition; it stopped at its 46.656s
+deadline. Both operator defects have focused off-device corrections/tests; the
+executed operator and historical receipt remain preserved. No second launch
+qualified those corrections. Exact original APK and normal data restoration,
+physical display-off and shared-lease release were verified.
+
+## Next discriminating scope for review
+
+Prepare a matched **full-renderer image-handoff comparison**, not another
+generated clear/pbuffer probe. The reference should retain the same application
+UID/loader/window, full donor GS workload, backend/settings/guest clocks,
+CPU/frame pacing and ordinary Rust UI/final swap. Remove only the frontend's
+cross-context game-image read/copy; feed a fixed initialized host target to the
+otherwise retained final blit. A consumed frame with no GPU reader needs an
+explicit CPU ownership acknowledgement, not a fabricated completion fence.
+The donor still renders the actual private title into its normal backbuffers.
+
+This would ask whether the observed producer failure requires the cross-context
+image-read commands. Persistence narrows the common GS/setup/UI path; absence
+narrows the removed read/copy or its timing effects, not a shader/driver root
+cause. A prospective normal arm must be matched to the reference, rather than
+treating this dated observer run as a causal control. Report instrumentation and
+timing changes and stop at instability. No backend fallback or compatibility
+gate follows from either outcome.
+
+This is a concrete next scope, **not an implemented or admitted experiment**.
+Its ownership/pacing contracts, exact builds, bounded fresh-process pair and
+scratch/rollback require Master review and current custodian admission before
+any further device operation. The existing working PS1 path and rollback remain
+authoritative.
