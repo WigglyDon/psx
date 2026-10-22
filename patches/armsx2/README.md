@@ -14,8 +14,8 @@ the GL/Vulkan frame handoff before a blocking pause, so the native CPU and GS
 owners can settle without another frontend frame. The flush returns actual
 `fflush` failure for regular file cards. Rust then syncs those files and their
 directory before binding a checkpoint to their digest. Folder-card durability
-is not supported by this host. Native thread scheduling, JIT and emulation
-internals are unchanged.
+is not supported by this host. JIT and guest clocks remain unchanged; the
+targeted card-protocol repairs below are retained donor modifications.
 
 `retro_psx_set_frame_callback` additionally exposes a non-reentrant notification
 from the existing GLES frame handoff. It only wakes Rust's frontend owner;
@@ -80,11 +80,38 @@ terminators after zero, one and two queued DMA blocks. It does not execute guest
 firmware or prove the cause/repair of the observed game-format error. No card
 preformatting, successful-response stub, auth bypass or state field is added.
 
+Two further retained SIO2 repairs address card-type and restore coherence.
+The dispatcher refuses PS1/PocketStation opcodes on PS2 cards, matching SIO0's
+existing type check. It appends dead air for the current packet without entering
+legacy 128-byte read/write handlers or disturbing queued earlier replies.
+The original state stream stores CRCs but omits the card endpoint's negotiated
+terminator and transfer state. After loading it, use normal eject/reinsert/auth
+even when CRCs match; a fresh process otherwise resumes guest MCMAN against
+power-on endpoint state. Current media and the archive layout stay unchanged.
+Rust-driven fixtures apply the actual patch, compile its dispatch/restore
+methods with mechanical devices/stream types, and fail before both changes.
+They verify the type gate, retained genuine PS1 dispatch and reinsertion for
+matching/changed media. They do not execute guest filesystem saving, restore
+omitted protocol fields or repair bytes damaged by earlier legacy writes.
+
 Its existing `OnPerformanceMetricsUpdated` callback also forwards a five-float
 completed sample (VPS, speed percent, average/minimum/maximum frame time) via
 the private `0x20000` environment command. Rust copies it under the output
 mutex; it never reads those native globals from the frontend thread. Frontend
 call rate is not reported as achieved PS2 emulation speed.
+
+A separate nine-float GS-owner sample uses private command `0x20001`: EE/GS/GPU
+usage, GS/GPU milliseconds and draws/readbacks/barriers/blocking waits. Rust
+copies finite nonnegative values before returning, under the same output mutex.
+It reports these at its existing bounded diagnostic interval. No new thread,
+GPU query, readback or public telemetry is introduced.
+
+Rust's Android host option `psx_performance_hints` enables the donor's retained
+ADPF implementation at startup. This is glue around its existing thread
+registration, finite frame-work sampler, runtime capability checks and teardown;
+it neither forces system clocks nor changes guest timing. Other frontends keep
+their existing opt-in policy. This requires real device speed/thermal comparison;
+a successful compile does not establish a performance gain.
 
 The donor writes its card change-detector on close. Rust holds the entry's
 writer lock through native teardown, syncs the final files and seals only the
@@ -105,10 +132,10 @@ Libretro omits the generic manual-API-choice warning: the frontend grants the
 specific context, so this is not an unsafe user override. Actual renderer and
 other unsafe-setting diagnostics remain. Those rendering repairs, frame
 notification, capture/packaging and the reply-padding correction change no
-emulated state or archive fields. The reply correction does change card wire
+emulated state or archive fields. The card repairs do change wire/restore
 behavior. Rust permits only the exact prior `878bdd9e…`, `92542cb6…`,
-`23a0b217…` and `9f5bf1a2…` patches to resume into this exact `510a3f5e…`
-patch, retaining other input/card/payload checks. A future native edit disables
+`23a0b217…`, `9f5bf1a2…` and `510a3f5e…` patches to resume into this exact
+`4650bdf4…` patch, retaining other input/card/payload checks. A future native edit disables
 that explicit exception. New
 checkpoint writes always record the complete new patch identity.
 

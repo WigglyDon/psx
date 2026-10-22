@@ -38,16 +38,18 @@ pub fn revision() -> &'static str {
         )
     })
 }
-/// Reviewed shader, notification, capture/packaging and card-reply padding
-/// changes retain the state/archive fields. Future edits disable this exception.
+/// Reviewed adapter/card repairs retain state/archive fields. Loading forces
+/// normal card renegotiation, never replacement of current media. Future edits
+/// disable this exact compatibility exception.
 pub fn compatible_checkpoint_binding(saved: &str, current: &str) -> bool {
-    const BEFORE: [&str; 4] = [
+    const BEFORE: [&str; 5] = [
         "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
         "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
         "23a0b217e21a9442dde06b009aa6911f782c083a5ff5c37593b415d615309765",
         "9f5bf1a2a6d6aa228d7789eb0e38bc7cb62c94c98ca12e6a88d36fd8899c01ac",
+        "510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1",
     ];
-    const AFTER: &str = "510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1";
+    const AFTER: &str = "4650bdf4b18c1a892780c11fba002af17f02235b88079e5be9d98ee2f3913a43";
     if revision() != format!("{REVISION}+{AFTER}") {
         return false;
     }
@@ -105,6 +107,8 @@ impl Drop for Checkpoint {
 #[derive(Clone, Default)]
 pub struct Output {
     pub metrics: Option<[f32; 5]>,
+    /// EE/GS/GPU usage, GS/GPU ms, draws/readbacks/barriers/blocking waits.
+    pub render_costs: Option<[f32; 9]>,
     pub av: AvInfo,
     pub hw: Option<HwRender>,
     pub hardware_frames: u64,
@@ -247,6 +251,16 @@ unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
             }
             false
         }
+        0x20001 => {
+            let costs = *(data as *const [f32; 9]);
+            if costs.iter().all(|v| v.is_finite() && *v >= 0.) {
+                if let Ok(mut o) = s.output.lock() {
+                    o.render_costs = Some(costs);
+                    return true;
+                }
+            }
+            false
+        }
         3 => {
             *(data as *mut bool) = true;
             true
@@ -374,6 +388,16 @@ fn host_options(firmware: String) -> Result<BTreeMap<Vec<u8>, CString>> {
         ("armsx2_aspect_ratio", "Stretch"),
         ("armsx2_no_interlacing_patches", "disabled"),
         ("armsx2_hw_download_mode", "Accurate"),
+        // Public Android performance hints express the existing frame budget,
+        // without forcing clocks, skipping guest work or changing CPU timing.
+        (
+            "psx_performance_hints",
+            if cfg!(target_os = "android") {
+                "enabled"
+            } else {
+                "disabled"
+            },
+        ),
     ] {
         options.insert(key.as_bytes().to_vec(), CString::new(value).unwrap());
     }
@@ -983,6 +1007,24 @@ mod checkpoint_tests;
 mod tests {
     use super::*;
     #[test]
+    fn reviewed_card_repair_accepts_only_known_states_with_the_same_firmware() {
+        let previous = format!("{REVISION}+510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1+firmware:fixture");
+        let current = format!("{}+firmware:fixture", revision());
+        assert!(compatible_checkpoint_binding(&previous, &current));
+        assert!(!compatible_checkpoint_binding(
+            &previous,
+            &format!("{}+firmware:different", revision())
+        ));
+        assert!(!compatible_checkpoint_binding(
+            &previous.replace("510a3f5e", "ffffffff"),
+            &current
+        ));
+        assert!(!compatible_checkpoint_binding(
+            &previous,
+            &current.replace("4650bdf4", "ffffffff")
+        ));
+    }
+    #[test]
     fn saved_sessions_retain_vu_mode_and_normal_guest_clocks() {
         let source = include_str!("../../../vendor/armsx2/pcsx2-libretro/Main.cpp");
         assert!(
@@ -1124,11 +1166,16 @@ mod tests {
             assert_eq!(input(1, 1, 0, 0), 0);
             frame_available();
             video(usize::MAX as *const c_void, 640, 448, 0);
+            let mut costs = [1., 2., 3., 4., 5., 6., 7., 8., 9.];
+            assert!(environment(0x20001, costs.as_mut_ptr().cast()));
+            costs[0] = f32::NAN;
+            assert!(!environment(0x20001, costs.as_mut_ptr().cast()));
         })
         .join()
         .unwrap();
         assert_eq!(binding.output.lock().unwrap().hardware_frames, 1);
         assert_eq!(binding.output.lock().unwrap().frame_width, 640);
+        assert_eq!(binding.output.lock().unwrap().render_costs.unwrap()[0], 1.);
         assert!(binding.frames.pending.load(Ordering::Acquire));
         *ACTIVE.lock().unwrap() = None;
     }

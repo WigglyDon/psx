@@ -76,6 +76,7 @@ impl Core {
                 let s = core.state();
                 ps2::Output {
                     metrics: None,
+                    render_costs: None,
                     av: s.av,
                     hw: s.hw,
                     hardware_frames: s.hardware_frames,

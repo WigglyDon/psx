@@ -1,17 +1,18 @@
 diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
-index 24210fb06..87644c528 100644
+index 24210fb06..fcd15e2ad 100644
 --- a/pcsx2-libretro/Main.cpp
 +++ b/pcsx2-libretro/Main.cpp
-@@ -77,6 +77,8 @@
+@@ -77,6 +77,9 @@
  #include "pcsx2/GS/Renderers/OpenGL/GLLibretro.h"
  #include "pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.h"
  #endif
 +
 +#include "pcsx2/SIO/Memcard/MemoryCardFile.h"
++#include "pcsx2/GS/GSPerfMon.h"
  #include "pcsx2/GameList.h"
  #include "pcsx2/Host.h"
  #include "pcsx2/IopThread/OwnerAsserts.h"
-@@ -442,6 +444,12 @@ void Host::OnGameChanged(const std::string& title, const std::string& elf_overri
+@@ -442,6 +445,22 @@ void Host::OnGameChanged(const std::string& title, const std::string& elf_overri
  
  void Host::OnPerformanceMetricsUpdated()
  {
@@ -21,10 +22,35 @@ index 24210fb06..87644c528 100644
 +		PerformanceMetrics::GetAverageFrameTime(), PerformanceMetrics::GetMinimumFrameTime(),
 +		PerformanceMetrics::GetMaximumFrameTime() };
 +	environ_cb(0x20000, metrics);
++	// This callback runs on the GS owner after its completed sample. Never
++	// make the frontend read these mutable counters from another thread.
++	float costs[] = { static_cast<float>(PerformanceMetrics::GetCPUThreadUsage()),
++		PerformanceMetrics::GetGSThreadUsage(), PerformanceMetrics::GetGPUUsage(),
++		PerformanceMetrics::GetGSThreadAverageTime(), PerformanceMetrics::GetGPUAverageTime(),
++		static_cast<float>(g_perfmon.Get(GSPerfMon::DrawCalls)),
++		static_cast<float>(g_perfmon.Get(GSPerfMon::Readbacks)),
++		static_cast<float>(g_perfmon.Get(GSPerfMon::Barriers)),
++		static_cast<float>(g_perfmon.Get(GSPerfMon::GpuBlockingWaits)) };
++	environ_cb(0x20001, costs);
  }
  
  void Host::OnSaveStateLoading(const std::string_view filename)
-@@ -2357,6 +2365,141 @@ RETRO_API size_t retro_serialize_size(void)
+@@ -1148,6 +1167,14 @@ static void ApplyCoreOptions(bool startup)
+ 		return;
+ 
+ 	struct retro_variable var;
++	if (startup)
++	{
++		// Rust chooses host policy; retain the donor's optional ADPF sampler,
++		// registered EE/GS threads, finite deadlines and shutdown ownership.
++		var = {"psx_performance_hints", nullptr};
++		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++			PerformanceMetrics::AdpfSetEnabled(!std::strcmp(var.value, "enabled"));
++	}
+ 	{
+ 		auto lock = Host::GetSettingsLock();
+ 
+@@ -2357,6 +2384,141 @@ RETRO_API size_t retro_serialize_size(void)
  	return VMManager::HasValidVM() ? kSerializeSize : 0;
  }
  
@@ -166,7 +192,7 @@ index 24210fb06..87644c528 100644
  RETRO_API bool retro_serialize(void* data, size_t size)
  {
  	if (!VMManager::HasValidVM())
-@@ -2384,7 +2527,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
+@@ -2384,7 +2546,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
  			Console.ErrorFmt("retro_serialize: DownloadState failed: {}", error.GetDescription());
  			return;
  		}
@@ -362,7 +388,7 @@ index bfa67e63a..938e06abd 100644
  	The2bTerminator(4);
  
 diff --git a/pcsx2/SIO/Sio2.cpp b/pcsx2/SIO/Sio2.cpp
-index 349c503c0..339ecbc2d 100644
+index 349c503c0..0ff7bf762 100644
 --- a/pcsx2/SIO/Sio2.cpp
 +++ b/pcsx2/SIO/Sio2.cpp
 @@ -286,6 +286,18 @@ void Sio2::Memcard()
@@ -384,6 +410,66 @@ index 349c503c0..339ecbc2d 100644
  
  	// Check if auto ejection is active. If so, set cmd stat to DISCONNECTED,
  	// and zero out the fifo to simulate dead air over the wire.
+@@ -310,6 +322,18 @@ void Sio2::Memcard()
+ 	const u8 responseByte = mcd->IsPresent() ? 0x00 : 0xff;
+ 	g_Sio2FifoOut.push_back(responseByte);
+ 	g_Sio2FifoOut.push_back(responseByte);
++	// SIO0 already rejects these commands on a PS2 card. SIO2 must do the
++	// same: answering 0x5a makes MCMAN misidentify it as a PS1 card, whose
++	// 128-byte writes would then corrupt the PS2 NAND without an erase.
++	if (!mcd->IsPSX() && (commandByte == MemcardCommand::PS1_READ ||
++		commandByte == MemcardCommand::PS1_STATE || commandByte == MemcardCommand::PS1_WRITE ||
++		commandByte == MemcardCommand::PS1_POCKETSTATION))
++	{
++		SetCmdStat(CmdStat::DISCONNECTED);
++		for (size_t replyBytes = 2; replyBytes < commandLength; replyBytes++)
++			g_Sio2FifoOut.push_back(0x00);
++		return;
++	}
+ 	u8 ps1Input = 0;
+ 	u8 ps1Output = 0;
+ 
+@@ -557,8 +581,8 @@ bool Sio2::DoState(StateWrapper& sw)
+ 	sw.Do(&g_Sio2FifoIn);
+ 	sw.Do(&g_Sio2FifoOut);
+ 
+-	// CRCs for memory cards.
+-	// If the memory card hasn't changed when loading state, we can safely skip ejecting it.
++	// Retain the existing CRC fields for state compatibility. They do not
++	// describe the card endpoint's negotiated protocol state.
+ 	u64 mcdCrcs[SIO::PORTS][SIO::SLOTS];
+ 	if (sw.IsWriting())
+ 	{
+@@ -570,22 +594,13 @@ bool Sio2::DoState(StateWrapper& sw)
+ 	}
+ 	sw.DoBytes(mcdCrcs, sizeof(mcdCrcs));
+ 
+-	if (sw.IsReading())
+-	{
+-		bool ejected = false;
+-		for (u32 port = 0; port < SIO::PORTS && !ejected; port++)
+-		{
+-			for (u32 slot = 0; slot < SIO::SLOTS; slot++)
+-			{
+-				if (mcdCrcs[port][slot] != mcds[port][slot].GetChecksum())
+-				{
+-					AutoEject::SetAll();
+-					ejected = true;
+-					break;
+-				}
+-			}
+-		}
+-	}
++	// This stream does not save the card endpoint (term/transfer state).
++	// After a fresh process, an unchanged card still has power-on state while
++	// the restored MCMAN expects its negotiated terminator. Force the normal
++	// reinsertion/authentication path even when CRCs match. Preserve the stream
++	// and current file contents; never infer endpoint state from card bytes.
++	if (sw.IsReading() && sw.IsGood())
++		AutoEject::SetAll();
+ 
+ 	sw.Do(&sioLastFrameMcdBusy);
+ 	return sw.IsGood();
 diff --git a/pcsx2/SaveState.cpp b/pcsx2/SaveState.cpp
 index c591f7139..dc8120f42 100644
 --- a/pcsx2/SaveState.cpp

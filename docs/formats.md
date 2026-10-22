@@ -143,6 +143,12 @@ native owner, requests a checked flush, syncs files and binds checkpoint
 metadata to their current digest. It never replaces cards during native
 ownership. Folder-card storage is unsupported by this host.
 
+Restoring a PS2 checkpoint reinserts cards through the donor's normal detection
+path, because its existing state stream omits the card endpoint's negotiated
+protocol state. This changes neither the archive layout nor current card bytes.
+PS2 cards refuse legacy PS1 card commands; a card-type probe cannot turn a PS2
+file into PS1 storage. Existing damaged bytes are preserved for explicit recovery.
+
 PS2 checkpoints allow the donor's 68 MiB bound and pin both its exact source
 revision, adapter-patch hash and selected firmware hash. Orderly shutdown seals against the final
 card files while retaining the writer lock. A changed card, failed seal or

@@ -194,6 +194,12 @@ closure wait for durability. Resume validates core/disc inputs, payload integrit
 and the contemporaneous card before entering the core, then restores the durable
 card. See [formats.md](formats.md) for recovery and reset behavior.
 
+ARM64 card/payload hashing uses the pinned SHA-256 implementation's runtime
+CPU-feature detection and accelerated backend, retaining its portable fallback
+and identical digests. This reduces host verification work without weakening
+checkpoint/card checks or changing saved identities. Capture and card sync
+remain synchronous; they are not made free by background archive packaging.
+
 ## Everyday use
 
 The first screen offers saved games and Add games. During play the cog opens
@@ -510,7 +516,15 @@ version, 48 kHz stereo, bounded native-resolution output and a 68 MiB state
 buffer. The adapter forwards supported CPU-owner pause, flush and speed
 operations; timing and completed native performance metrics are distinct from
 frontend calls. Rust disables automatic guest-clock tuning and cycle skipping
-for qualification. The repaired GLSL header enables EXT for the PowerVR fetch
+for qualification. On Android it enables the donor's existing public performance
+hint session for registered native workers. The retained sampler reports active
+work against the finite emulated frame deadline, excludes limiter sleep and
+closes at VM teardown. Unsupported platform symbols leave hints inactive; this
+does not force clocks or bypass Android thermal policy. Its effect on sustained
+speed and heat needs device measurement. Completed GS-owner samples additionally
+forward bounded CPU/GPU costs and draw/readback/barrier/blocking-wait counters;
+Rust never reads those mutable native counters from its frontend thread.
+The repaired GLSL header enables EXT for the PowerVR fetch
 backend's `inout` syntax; Rust migrates the earlier ANGLE/PowerVR copy workaround
 to fetch enabled. Other renderer defaults are retained. PS2 file
 cards already flush page writes; the host does not interrupt its VM for the
@@ -591,12 +605,21 @@ the archive extent, within the same 68 MiB cap. The native reader accepts that
 extent and the former padded buffers. This reduces synchronous preparation
 work; improved device timing remains a separate observation. Exact core/patch
 and firmware binding still applies before restoration. One explicit exception
-accepts four named preceding adapters into the exact reviewed capture/packaging
-and card-reply-padding patch. These repairs change no state or archive fields;
-the padding repair corrects queued card responses without changing card storage.
-All five patch hashes are named in Rust; a future edit disables this exception
+accepts five named preceding adapters into the exact reviewed card-recovery and
+performance-hint patch. These repairs change no state or archive fields.
+All six patch hashes are named in Rust; a future edit disables this exception
 automatically. Firmware, discs, current card and payload integrity must still
 match; unknown and older incompatible bindings remain refused.
+
+The donor state stream omits card-endpoint negotiation and transfer state. A
+fresh runtime must therefore use its existing eject/reinsert/authentication
+sequence after restoration even when card CRCs match; matching file bytes do
+not restore the endpoint. This keeps the old archive readable and current cards
+authoritative. SIO2 also refuses PS1/PocketStation commands on PS2 cards, matching
+the SIO0 type check, so a failed PS2 probe cannot enter legacy 128-byte writes
+on PS2 NAND. Focused Rust-driven fixtures reproduce both defects in the original
+dispatcher/restore code and exercise the retained-source repairs. They do not
+establish ordinary guest save/load success or repair earlier damaged card bytes.
 
 Collection and platform links enter the same `OpenGame(GameId)` flow. Android
 initial intents precede automatic resume. Warm intents enter a bounded ordered

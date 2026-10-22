@@ -2664,6 +2664,11 @@ impl Player {
                 log::info!("PS2 native metrics: vps={fps:.2} speed={speed:.1}% frame_ms={average:.2} min_ms={minimum:.2} max_ms={maximum:.2}");
             }
             if self.game.as_ref().is_some_and(|g| g.system == System::Ps2) {
+                if let Some([ee, gs, gpu, gs_ms, gpu_ms, draws, readbacks, barriers, waits]) =
+                    core.state().render_costs
+                {
+                    log::info!("PS2 graphics: ee={ee:.1}% gs={gs:.1}% gpu={gpu:.1}% gs_ms={gs_ms:.2} gpu_ms={gpu_ms:.2} draws={draws:.1} readbacks={readbacks:.1} barriers={barriers:.1} blocking_waits={waits:.1}");
+                }
                 log::info!("PS2 frontend: calls_per_second={:.2} call_ms={:.2} hardware_frames={} software_frames={} audio_queued={} underruns={} dropped={} requested={}", self.frames as f64/elapsed, self.run_time.as_secs_f64()*1000./self.frames as f64, core.state().hardware_frames,core.state().software_frames,self.queue.queued(),self.queue.underruns.load(Ordering::Relaxed),self.queue.dropped.load(Ordering::Relaxed),self.playback.effective_speed().label());
                 log::info!(
                     "PS2 presentation: per_second={:.2} mean_ms={:.2} max_ms={:.2}",
