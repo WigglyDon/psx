@@ -7,6 +7,7 @@ pub mod files;
 mod firmware;
 pub mod input;
 pub mod library;
+mod native_signals;
 pub mod phone_buttons;
 pub mod ps2;
 pub mod resume;

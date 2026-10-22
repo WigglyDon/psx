@@ -31,6 +31,15 @@ The single live runtime is PLAYER-2 policy. Future worker slots may assign
 these same saved sessions without changing their permanent identities;
 no second process or IPC framework is implemented in this milestone.
 
+On Linux/Android, the PS2 runtime also owns its installed SIGSEGV/SIGBUS
+actions. Rust captures the inherited handlers, masks and flags before native
+initialization, then restores actions still belonging to that engine only
+after its workers and native teardown finish, before releasing its library.
+An action installed by another module is preserved. If the OS refuses a
+restoration, the stopped library mapping is retained until process exit so a
+remaining handler cannot enter unmapped code. This adds no guest fault handler
+and changes no checkpoint or card format.
+
 SwanStation is the pinned Android prototype candidate. Its suitability for
 the eventual two-store product remains conditional on the checks in
 [distribution.md](distribution.md). Keep player behavior in shared Rust and

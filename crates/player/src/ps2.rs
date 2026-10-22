@@ -2,6 +2,7 @@
 //! Callback state is shared, never a TLS mutable reference on native workers.
 use crate::{
     audio::AudioQueue,
+    native_signals::NativeSignals,
     retro::{AvInfo, CoreLease, Environment, Geometry, HostConfig, HwRender},
     saves::atomic_write,
     session::GameId,
@@ -421,6 +422,7 @@ pub struct Core {
     free_state: unsafe extern "C" fn(*mut c_void),
     unserialize: unsafe extern "C" fn(*const c_void, usize) -> bool,
     library: Arc<Library>,
+    native_signals: NativeSignals,
     loaded: bool,
     context: bool,
     paused: bool,
@@ -504,9 +506,12 @@ impl Core {
             "retro_get_system_av_info",
             unsafe extern "C" fn(*mut AvInfo)
         );
+        let run_fn = symbol!("retro_run", unsafe extern "C" fn());
+        let native_signals = NativeSignals::capture(run_fn as *const () as *const c_void)
+            .map_err(|e| format!("PS2 fault-handler ownership is unavailable: {e}"))?;
         let mut core = Self {
             shared: shared.clone(),
-            run_fn: symbol!("retro_run", unsafe extern "C" fn()),
+            run_fn,
             unload: symbol!("retro_unload_game", unsafe extern "C" fn()),
             deinit: symbol!("retro_deinit", unsafe extern "C" fn()),
             pause_fn: symbol!("retro_psx_set_paused", unsafe extern "C" fn(bool) -> bool),
@@ -533,6 +538,7 @@ impl Core {
                 unsafe extern "C" fn(*const c_void, usize) -> bool
             ),
             library,
+            native_signals,
             loaded: false,
             context: false,
             paused: false,
@@ -709,6 +715,17 @@ impl Drop for Core {
                 self.loaded = false;
             }
             (self.deinit)();
+        }
+        match self.native_signals.restore() {
+            Ok(count) => eprintln!("psx: retired {count} PS2 fault handlers"),
+            Err(error) => {
+                // A still-installed handler must never point into unmapped code.
+                // Retain this stopped library until process exit on OS failure.
+                eprintln!(
+                    "psx: could not retire PS2 fault handlers: {error}; engine mapping retained"
+                );
+                std::mem::forget(self.library.clone());
+            }
         }
         if let Ok(mut active) = ACTIVE.lock() {
             *active = None;
