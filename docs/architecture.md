@@ -524,6 +524,9 @@ does not force clocks or bypass Android thermal policy. Its effect on sustained
 speed and heat needs device measurement. Completed GS-owner samples additionally
 forward bounded CPU/GPU costs and draw/readback/barrier/blocking-wait counters;
 Rust never reads those mutable native counters from its frontend thread.
+The donor instruments blocking waits only on Vulkan: a zero in that field on
+GLES is unavailable evidence, not proof that no GPU wait occurred. GLES analysis
+uses its measured CPU/GPU times and implemented draw/readback/barrier counters.
 The repaired GLSL header enables EXT for the PowerVR fetch
 backend's `inout` syntax; Rust migrates the earlier ANGLE/PowerVR copy workaround
 to fetch enabled. Other renderer defaults are retained. PS2 file

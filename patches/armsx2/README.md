@@ -105,6 +105,8 @@ usage, GS/GPU milliseconds and draws/readbacks/barriers/blocking waits. Rust
 copies finite nonnegative values before returning, under the same output mutex.
 It reports these at its existing bounded diagnostic interval. No new thread,
 GPU query, readback or public telemetry is introduced.
+The donor increments `GpuBlockingWaits` only on Vulkan. Its zero on GLES is
+not an observed absence of waits; use the implemented GLES counters and timing.
 
 Rust's Android host option `psx_performance_hints` enables the donor's retained
 ADPF implementation at startup. This is glue around its existing thread
