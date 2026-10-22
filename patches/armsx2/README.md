@@ -136,10 +136,21 @@ other unsafe-setting diagnostics remain. Those rendering repairs, frame
 notification, capture/packaging and the reply-padding correction change no
 emulated state or archive fields. The card repairs do change wire/restore
 behavior. Rust permits only the exact prior `878bdd9e…`, `92542cb6…`,
-`23a0b217…`, `9f5bf1a2…` and `510a3f5e…` patches to resume into this exact
-`4650bdf4…` patch, retaining other input/card/payload checks. A future native edit disables
-that explicit exception. New
-checkpoint writes always record the complete new patch identity.
+`23a0b217…`, `9f5bf1a2…`, `510a3f5e…` and `4650bdf4…` patches to resume into
+this exact `2873915c…` patch, retaining other input/card/payload checks. The
+additional upload-path selection below changes no state/archive fields. A
+future native edit disables that explicit exception. New checkpoint writes
+always record the complete new patch identity.
+
+An old-driver qualification candidate reuses the donor's existing
+orphan-per-upload `glBufferData` path for exactly `Adreno (TM) 640` with
+`V@0490.*` in its GL version. The retained Adreno650 fallback is unchanged;
+newer640 drivers, other Adreno models and other vendors keep their existing
+persistent-buffer selection. No new buffer implementation, draw scheduler,
+guest clock, global accuracy override or user setting is added. A Rust-driven
+test compiles the actual patched factory with mechanical GL/factory declarations
+and checks that boundary against newer/other renderers. This is selection
+evidence only: actual GPU rendering/speed improvement remains unqualified.
 
 Original file licenses remain applicable to these modifications. No upstream
 acceptance or device gameplay result is implied by this patch.
