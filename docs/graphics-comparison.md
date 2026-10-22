@@ -79,12 +79,21 @@ is mandatory. This is a correctness comparison, never a performance measurement.
 | 6 | Read-completion fence/flush/return |
 | 8 | Producer resource retirement |
 | 9 | Final pixel readback |
+| 10 | Remaining frontend GL cleanup, before releasing its current context |
 
 EGL setup/current/swap failures retain their error result. The first observed
 GL error/FBO failure is retained rather than silently drained. Pixel mismatches
 include their frame and coordinate. Prepared manifests bind the probe source,
 helper source/binary and native revision-plus-patch; mismatches refuse execution.
 Original donor source/copyright and GPL text remain beside the generated helper.
+
+Pixel verification retains its digest; final `PASS` is emitted only after the
+producer has joined successfully, required resource retirement and GL cleanup
+have no observed failure, and EGL teardown succeeds. Cleanup is attempted after
+a comparison failure and retains the original failure alongside later symptoms.
+A positive run needs all 24 frames, final PASS **and exit 0 without timeout**.
+The negative control needs the deliberate stage-4 incomplete-framebuffer failure;
+an arbitrary setup/loader/permission error or timeout is inconclusive.
 
 ## Build and off-device validation
 
@@ -93,6 +102,8 @@ with the existing project build lock. These commands prepare/run only the host:
 
 ```sh
 cargo build --locked --offline -p psx-player --example ps2-graphics-probe
+LP_NUM_THREADS=2 LIBGL_ALWAYS_SOFTWARE=1 timeout -k 2s 30s \
+  cargo test --locked --offline -p psx-player --example ps2-graphics-probe -- --test-threads=1
 # Choose a new project-owned output directory; preparation refuses an existing tree.
 target/debug/examples/ps2-graphics-probe prepare build/graphics-comparison-host
 LP_NUM_THREADS=2 LIBGL_ALWAYS_SOFTWARE=1 timeout -k 2s 30s \
@@ -109,6 +120,8 @@ Mesa software GLES 3.2 produced identical positive-mode output digests:
 The negative control failed at stage 4 with an incomplete draw target, even with
 `GL_NO_ERROR` at that boundary. This validates the oracle and the generated
 handoff case on that implementation; it does not qualify the phone or donor GS.
+The host-only regression injects an actual GL error after successful pixel
+verification and confirms that final cleanup reports failure without a PASS.
 
 For an Android **preparation only**, set `PSX_GL_PROBE_CXX` to the installed NDK's
 `aarch64-linux-android28-clang++` and `PSX_GL_PROBE_ANDROID=1`, then run the host

@@ -8,6 +8,7 @@ use std::{
     error::Error,
     ffi::{c_void, CStr},
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
     sync::{mpsc, Arc},
@@ -32,7 +33,7 @@ fn main() -> Result<()> {
     match args.get(1).and_then(|s| s.to_str()) {
         Some("prepare") if args.len() == 3 => prepare(Path::new(&args[2])),
         Some(mode @ ("reference" | "shared" | "negative-control")) if args.len() == 3 => unsafe {
-            run(mode, Path::new(&args[2]))
+            run(mode, Path::new(&args[2]), &mut std::io::stdout().lock())
         },
         _ => Err("Usage: ps2-graphics-probe prepare DIRECTORY | reference|shared|negative-control HELPER.so; use an external 30-second timeout".into()),
     }
@@ -240,6 +241,19 @@ fn observed() -> Result<()> {
         None => Ok(()),
     })
 }
+fn retain_cleanup<T>(result: &mut Result<T>, cleanup: Result<()>) {
+    if let Err(cleanup) = cleanup {
+        let message = match result {
+            Ok(_) => format!("cleanup: {cleanup}"),
+            Err(original) => format!("{original}; cleanup: {cleanup}"),
+        };
+        *result = Err(message.into());
+    }
+}
+#[cfg(test)]
+thread_local! {
+    static INJECT_CLEANUP_ERROR: Cell<bool> = const { Cell::new(false) };
+}
 unsafe fn load_gl(egl: &Egl) -> glow::Context {
     glow::Context::from_loader_function(|name| {
         egl.get_proc_address(name)
@@ -338,7 +352,7 @@ unsafe fn produce(
     );
     Ok(())
 }
-unsafe fn run(mode: &str, helper: &Path) -> Result<()> {
+unsafe fn run(mode: &str, helper: &Path, output: &mut impl Write) -> Result<()> {
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(helper.parent().unwrap().join("binding.json"))?)?;
     if manifest["native"] != psx_player::ps2::revision()
@@ -462,22 +476,35 @@ unsafe fn run(mode: &str, helper: &Path) -> Result<()> {
                     let buffers = (0..3)
                         .map(|_| target(&worker_gl, WIDTH, HEIGHT))
                         .collect::<Result<Vec<_>>>()?;
-                    for frame in 0..FRAMES {
-                        ready_tx.send(frame)?;
-                        produce(&worker_gl, handoff, buffers[frame % 3], frame)?;
-                        ack_rx.recv_timeout(Duration::from_secs(2))?;
-                    }
+                    let mut result = (|| -> Result<()> {
+                        for frame in 0..FRAMES {
+                            ready_tx.send(frame)?;
+                            produce(&worker_gl, handoff, buffers[frame % 3], frame)?;
+                            ack_rx.recv_timeout(Duration::from_secs(2))?;
+                        }
+                        Ok(())
+                    })();
                     for (fbo, texture) in buffers {
                         (handoff.reuse)(texture.0.get());
                         worker_gl.delete_framebuffer(fbo);
                         worker_gl.delete_texture(texture);
                     }
                     boundary(8);
-                    observed()?;
-                    api.make_current(display, None, None, None)?;
-                    api.destroy_context(display, context)?;
-                    api.destroy_surface(display, surface)?;
-                    Ok(())
+                    retain_cleanup(&mut result, observed());
+                    retain_cleanup(
+                        &mut result,
+                        api.make_current(display, None, None, None)
+                            .map_err(Into::into),
+                    );
+                    retain_cleanup(
+                        &mut result,
+                        api.destroy_context(display, context).map_err(Into::into),
+                    );
+                    retain_cleanup(
+                        &mut result,
+                        api.destroy_surface(display, surface).map_err(Into::into),
+                    );
+                    result
                 })();
                 result.map_err(|e| e.to_string())
             },
@@ -490,7 +517,7 @@ unsafe fn run(mode: &str, helper: &Path) -> Result<()> {
             .map(|_| target(&gl, WIDTH, HEIGHT))
             .collect::<Result<_>>()?;
     }
-    let comparison = (|| -> Result<()> {
+    let comparison = (|| -> Result<String> {
         for (frame, (fbo, _)) in targets.iter().enumerate() {
             if let Some(rx) = &notifications {
                 if rx.recv_timeout(Duration::from_secs(2))? != frame {
@@ -547,8 +574,7 @@ unsafe fn run(mode: &str, helper: &Path) -> Result<()> {
         }
         egl.swap_buffers(display, surface)
             .map_err(|e| format!("stage=egl-swap egl={e:?}"))?;
-        println!("PASS frames={FRAMES} digest={:x}; generated content only, no gameplay/performance claim",digest.finalize());
-        Ok(())
+        Ok(format!("{:x}", digest.finalize()))
     })();
     (handoff.pacing)(false);
     drop(acknowledge);
@@ -558,17 +584,17 @@ unsafe fn run(mode: &str, helper: &Path) -> Result<()> {
         .transpose()
         .map_err(|e| e.to_string())
         .and_then(|result| result.unwrap_or(Ok(())));
-    match (comparison, producer) {
+    let mut result = match (comparison, producer) {
         // A producer GL/FBO failure can disconnect the notification channel or
         // leave the consumer waiting for publication. Preserve its actual stage
         // together with that downstream symptom instead of reporting only it.
         (Err(frontend), Err(producer)) => {
-            return Err(format!("producer: {producer}; frontend: {frontend}").into());
+            Err(format!("producer: {producer}; frontend: {frontend}").into())
         }
-        (Err(error), Ok(())) => return Err(error),
-        (Ok(()), Err(error)) => return Err(error.into()),
-        (Ok(()), Ok(())) => {}
-    }
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error.into()),
+        (Ok(digest), Ok(())) => Ok(digest),
+    };
     for (fbo, texture) in sources {
         (handoff.reuse)(texture.0.get());
         gl.delete_framebuffer(fbo);
@@ -579,9 +605,64 @@ unsafe fn run(mode: &str, helper: &Path) -> Result<()> {
         gl.delete_framebuffer(fbo);
         gl.delete_texture(texture);
     }
-    egl.make_current(display, None, None, None)?;
-    egl.destroy_context(display, context)?;
-    egl.destroy_surface(display, surface)?;
-    egl.terminate(display)?;
+    #[cfg(test)]
+    if INJECT_CLEANUP_ERROR.with(|flag| flag.replace(false)) {
+        gl.enable(u32::MAX); // Actual GL_INVALID_ENUM after all pixels matched.
+    }
+    boundary(10); // Check remaining GL cleanup while this context is current.
+    retain_cleanup(&mut result, observed());
+    GL.with(|slot| slot.set(std::ptr::null()));
+    retain_cleanup(
+        &mut result,
+        egl.make_current(display, None, None, None)
+            .map_err(Into::into),
+    );
+    retain_cleanup(
+        &mut result,
+        egl.destroy_context(display, context).map_err(Into::into),
+    );
+    retain_cleanup(
+        &mut result,
+        egl.destroy_surface(display, surface).map_err(Into::into),
+    );
+    retain_cleanup(&mut result, egl.terminate(display).map_err(Into::into));
+    let digest = result?;
+    writeln!(output, "PASS frames={FRAMES} digest={digest}; retirement/cleanup complete; generated content only, no gameplay/performance claim")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matched_pixels_followed_by_cleanup_failure_never_report_pass() {
+        let directory =
+            std::env::temp_dir().join(format!("psx-gl-late-error-{}", std::process::id()));
+        prepare(&directory).unwrap();
+        INJECT_CLEANUP_ERROR.with(|flag| flag.set(true));
+        let mut output = Vec::new();
+        let error = unsafe { run("reference", &directory.join("handoff.so"), &mut output) }
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !INJECT_CLEANUP_ERROR.with(Cell::get),
+            "must reach final cleanup after matching pixels"
+        );
+        assert!(error.contains("stage=10 gl=0x0500"), "{error}");
+        assert!(output.is_empty(), "no final PASS on a late failure");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn cleanup_keeps_original_failure_and_revokes_pixel_success() {
+        let mut result: Result<String> = Err("original pixel failure".into());
+        retain_cleanup(&mut result, Err("teardown failure".into()));
+        let error = result.unwrap_err().to_string();
+        assert!(error.starts_with("original pixel failure"));
+        assert!(error.contains("teardown failure"));
+        let mut matched = Ok("matched pixel digest".to_owned());
+        retain_cleanup(&mut matched, Err("producer retirement failure".into()));
+        assert!(matched.is_err());
+    }
 }
