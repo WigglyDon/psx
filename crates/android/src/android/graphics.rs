@@ -20,17 +20,23 @@ pub struct Graphics {
     context: egl::Context,
     pbuffer: egl::Surface,
     surface: Option<egl::Surface>,
-    pub gl: glow::Context,
-    pub fbo: glow::Framebuffer,
+    objects: Objects,
+    pub width: i32,
+    pub height: i32,
+    pub content: Rect,
+}
+
+// Names belong to exactly one context/share group. Graphics explicitly
+// deletes them while that context is current, before releasing it.
+struct Objects {
+    gl: glow::Context,
+    fbo: glow::Framebuffer,
     texture: glow::Texture,
     depth: glow::Renderbuffer,
     program: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
     text: Text,
-    pub width: i32,
-    pub height: i32,
-    pub content: Rect,
 }
 
 unsafe extern "C" fn proc_address(name: *const c_char) -> Option<unsafe extern "C" fn()> {
@@ -84,6 +90,32 @@ impl Graphics {
             .map_err(|e| e.to_string())?;
         API.make_current(display, Some(pbuffer), Some(pbuffer), Some(context))
             .map_err(|e| e.to_string())?;
+        let objects = match Objects::new() {
+            Ok(objects) => objects,
+            Err(error) => {
+                let _ = API.make_current(display, None, None, None);
+                let _ = API.destroy_surface(display, pbuffer);
+                let _ = API.destroy_context(display, context);
+                let _ = API.terminate(display);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            display,
+            config,
+            context,
+            pbuffer,
+            surface: None,
+            objects,
+            width: 1,
+            height: 1,
+            content: Rect::new(0., 0., 1., 1.),
+        })
+    }
+}
+
+impl Objects {
+    unsafe fn new() -> Result<Self, String> {
         let gl = glow::Context::from_loader_function(|name| {
             API.get_proc_address(name)
                 .map_or(std::ptr::null(), |f| f as *const _)
@@ -187,11 +219,6 @@ impl Graphics {
         gl.bind_vertex_array(None);
         gl.bind_buffer(glow::ARRAY_BUFFER, None);
         Ok(Self {
-            display,
-            config,
-            context,
-            pbuffer,
-            surface: None,
             gl,
             fbo,
             texture,
@@ -200,26 +227,35 @@ impl Graphics {
             vao,
             vbo,
             text,
-            width: 1,
-            height: 1,
-            content: Rect::new(0., 0., 1., 1.),
         })
     }
 
+    unsafe fn destroy(&self) {
+        self.gl.delete_framebuffer(self.fbo);
+        self.gl.delete_texture(self.texture);
+        self.gl.delete_renderbuffer(self.depth);
+        self.gl.delete_program(self.program);
+        self.gl.delete_vertex_array(self.vao);
+        self.gl.delete_buffer(self.vbo);
+        self.gl.delete_texture(self.text.texture);
+    }
+}
+
+impl Graphics {
     pub fn proc_address(&self) -> Option<ProcAddress> {
         Some(proc_address)
     }
     pub fn framebuffer(&self) -> usize {
-        self.fbo.0.get() as usize
+        self.objects.fbo.0.get() as usize
     }
     pub fn renderer(&self) -> String {
-        unsafe { self.gl.get_parameter_string(glow::RENDERER) }
+        unsafe { self.objects.gl.get_parameter_string(glow::RENDERER) }
     }
     pub fn gles_version(&self) -> [u32; 2] {
         unsafe {
             [
-                self.gl.get_parameter_i32(glow::MAJOR_VERSION) as u32,
-                self.gl.get_parameter_i32(glow::MINOR_VERSION) as u32,
+                self.objects.gl.get_parameter_i32(glow::MAJOR_VERSION) as u32,
+                self.objects.gl.get_parameter_i32(glow::MINOR_VERSION) as u32,
             ]
         }
     }
@@ -236,6 +272,59 @@ impl Graphics {
         if changed {
             log::info!("Restored player EGL context after native teardown");
         }
+        Ok(())
+    }
+
+    /// Call only after the engine, its GS worker and checkpoint worker retire.
+    /// A PS2 worker shares our object group; a driver fault in that group must
+    /// not carry a failed PBO mapping into the next engine. Keep the window,
+    /// pbuffer and geometry, but give the next runtime an independent group.
+    pub unsafe fn replace_context(&mut self) -> Result<(), String> {
+        let previous = self.context;
+        let next = API
+            .create_context(
+                self.display,
+                self.config,
+                None,
+                &[egl::CONTEXT_CLIENT_VERSION, 3, egl::NONE],
+            )
+            .map_err(|e| format!("The next graphics context could not start: {e}"))?;
+        let surface = self.surface.unwrap_or(self.pbuffer);
+        let bind = |context| {
+            API.make_current(self.display, Some(surface), Some(surface), Some(context))
+                .map_err(|e| format!("The graphics context could not become current: {e}"))
+        };
+        if let Err(error) = bind(next) {
+            let _ = API.destroy_context(self.display, next);
+            return Err(error);
+        }
+        let objects = match Objects::new() {
+            Ok(objects) => objects,
+            Err(error) => {
+                // Destroying this independent context also frees any partial
+                // GL construction. The preceding renderer is still intact.
+                let _ = API.make_current(self.display, None, None, None);
+                let _ = API.destroy_context(self.display, next);
+                let _ = bind(previous);
+                return Err(error);
+            }
+        };
+        if bind(previous).is_ok() {
+            self.objects.destroy();
+        } else {
+            // A lost old context cannot accept glDelete*. EGL destruction
+            // below reclaims that group's objects without entering it.
+            log::warn!("Previous graphics context unavailable during replacement");
+        }
+        self.objects = objects;
+        self.context = next;
+        let result = bind(next);
+        if result.is_err() {
+            let _ = API.make_current(self.display, None, None, None);
+        }
+        let _ = API.destroy_context(self.display, previous);
+        result?;
+        log::info!("Replaced player EGL context after PS2 closure");
         Ok(())
     }
     pub unsafe fn attach(
@@ -313,7 +402,7 @@ impl Graphics {
         if self.surface.is_none() {
             return Ok(());
         }
-        let gl = &self.gl;
+        let gl = &self.objects.gl;
         // The donor caches its current program, including across duplicate
         // frames. Restore the actual program after frontend drawing rather
         // than invalidating that cache behind its back. A core unloaded while
@@ -350,7 +439,7 @@ impl Graphics {
                 let top = (self.content.y + r.y * density).round() as i32;
                 let right = (self.content.x + (r.x + r.w) * density).round() as i32;
                 let bottom_edge = (self.content.y + (r.y + r.h) * density).round() as i32;
-                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(self.fbo));
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(self.objects.fbo));
                 let (bottom, top_source) = if bottom_left {
                     (0, h as i32)
                 } else {
@@ -379,7 +468,7 @@ impl Graphics {
             vertices: Vec::with_capacity(24000),
             w,
             h,
-            font: &self.text,
+            font: &self.objects.text,
             opacity: 1.,
             offset: origin,
             screen: [self.width as f32 / density, self.height as f32 / density],
@@ -553,8 +642,8 @@ impl Graphics {
             glow::ONE,
             glow::ONE_MINUS_SRC_ALPHA,
         );
-        gl.use_program(Some(self.program));
-        let clip_radius = gl.get_uniform_location(self.program, "panelRadius");
+        gl.use_program(Some(self.objects.program));
+        let clip_radius = gl.get_uniform_location(self.objects.program, "panelRadius");
         gl.uniform_1_f32(clip_radius.as_ref(), 0.);
         gl.active_texture(glow::TEXTURE0);
         // A donor sampler can override the atlas's linear/mipmap filters.
@@ -563,9 +652,9 @@ impl Graphics {
             std::num::NonZeroU32::new(gl.get_parameter_i32(glow::SAMPLER_BINDING) as u32)
                 .map(glow::NativeSampler);
         gl.bind_sampler(0, None);
-        gl.bind_texture(glow::TEXTURE_2D, Some(self.text.texture));
-        gl.bind_vertex_array(Some(self.vao));
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.objects.text.texture));
+        gl.bind_vertex_array(Some(self.objects.vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.objects.vbo));
         let bytes = std::slice::from_raw_parts(
             canvas.vertices.as_ptr() as *const u8,
             canvas.vertices.len() * 4,
@@ -576,7 +665,8 @@ impl Graphics {
             gl.draw_arrays(glow::TRIANGLES, 0, menu_start);
             if menu.is_some_and(|m| m.over_game || m.anchor.is_some()) {
                 gl.uniform_4_f32(
-                    gl.get_uniform_location(self.program, "panelClip").as_ref(),
+                    gl.get_uniform_location(self.objects.program, "panelClip")
+                        .as_ref(),
                     self.content.x + panel.x * density,
                     self.height as f32 - self.content.y - (panel.y + panel.h) * density,
                     panel.w * density,
@@ -610,13 +700,13 @@ impl Graphics {
     }
 
     pub fn text_rows(&self, body: &str, width: f32) -> Vec<Row> {
-        wrap(&self.text, body, width, 18.)
+        wrap(&self.objects.text, body, width, 18.)
             .into_iter()
             .map(Row::text)
             .collect()
     }
     pub fn menu_description(&self, body: &str, width: f32) -> Vec<String> {
-        wrap(&self.text, body, width, 15.)
+        wrap(&self.objects.text, body, width, 15.)
     }
 }
 
@@ -624,13 +714,9 @@ impl Drop for Graphics {
     fn drop(&mut self) {
         unsafe {
             let _ = self.detach();
-            self.gl.delete_framebuffer(self.fbo);
-            self.gl.delete_texture(self.texture);
-            self.gl.delete_renderbuffer(self.depth);
-            self.gl.delete_program(self.program);
-            self.gl.delete_vertex_array(self.vao);
-            self.gl.delete_buffer(self.vbo);
-            self.gl.delete_texture(self.text.texture);
+            if self.restore_current().is_ok() {
+                self.objects.destroy();
+            }
             let _ = API.make_current(self.display, None, None, None);
             let _ = API.destroy_surface(self.display, self.pbuffer);
             let _ = API.destroy_context(self.display, self.context);

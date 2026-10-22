@@ -45,6 +45,18 @@ and current surface (or its pbuffer) current again before a new engine queries
 GL or initializes resources. Native teardown does not own the next runtime's
 platform context binding.
 
+Ordinary PS2 closure additionally replaces the frontend context and its GL
+objects after all checkpoint/native owners retire and cards are sealed. Its
+worker shared the preceding object group; retaining that group can retain
+failed driver buffer mappings into the next runtime. The replacement shares
+no objects, rebuilds the game target/UI resources and keeps the same EGL
+display, window/pbuffer surfaces and geometry. Old objects are deleted only
+with their old context current; construction failure disposes the partial new
+group without replacing the preceding renderer. Final app shutdown destroys
+the existing graphics owner directly. Folding/surface replacement within a
+live game still preserves its context and runtime. This adds no process or
+live core; actual driver recovery and switching require device qualification.
+
 SwanStation is the pinned Android prototype candidate. Its suitability for
 the eventual two-store product remains conditional on the checks in
 [distribution.md](distribution.md). Keep player behavior in shared Rust and

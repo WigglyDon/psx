@@ -2817,6 +2817,7 @@ impl Player {
         } else {
             None
         };
+        let retire_graphics = matches!(self.core, Some(Core::Ps2(..)));
         self.core.take();
         if let (Some(game), Some(before)) = (&self.game, before) {
             let cards = self.root.join("ps2").join(&game.id).join("pcsx2/memcards");
@@ -2839,6 +2840,12 @@ impl Player {
         self.queue.clear_stopped();
         if had_game && clear_active {
             resume::clear_active(&self.root).map_err(|e| e.to_string())?;
+        }
+        if retire_graphics && clear_active {
+            // All writers and CPU/GS owners retired; cards are sealed. Drop
+            // their GL share group before another runtime can inherit it.
+            // Final app shutdown instead destroys Graphics normally.
+            unsafe { self.graphics.replace_context()? };
         }
         Ok(())
     }
