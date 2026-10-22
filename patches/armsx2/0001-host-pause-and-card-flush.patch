@@ -252,26 +252,6 @@ index 0981d06a1..02a8fee78 100644
  
  	// Frame pacing: when enabled, PublishFrame blocks the GS thread until
  	// retro_run consumes the frame - the frontend's retro_run cadence becomes
-diff --git a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
-index a89247f73..5cfc93e0d 100644
---- a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
-+++ b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
-@@ -321,9 +321,14 @@ std::unique_ptr<GLStreamBuffer> GLStreamBuffer::Create(GLenum target, u32 size)
- 	const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
- 	const bool adreno650_no_persistent = renderer &&
- 		std::strstr(renderer, "Adreno") && std::strstr(renderer, "650");
-+	// Reuse the retained orphan-per-upload path for this exact old driver;
-+	// do not disable persistent buffers on newer drivers or Adreno models.
-+	const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
-+	const bool adreno640_v490_no_persistent = renderer && version &&
-+		std::strcmp(renderer, "Adreno (TM) 640") == 0 && std::strstr(version, "V@0490.");
- 
- 	std::unique_ptr<GLStreamBuffer> buf;
--	if (!adreno650_no_persistent &&
-+	if (!adreno650_no_persistent && !adreno640_v490_no_persistent &&
- 		(GLAD_GL_VERSION_4_4 || GLAD_GL_ARB_buffer_storage || GLAD_GL_EXT_buffer_storage))
- 	{
- 		buf = BufferStorageStreamBuffer::Create(target, size);
 diff --git a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
 index 6e853f423..02c6bdd05 100644
 --- a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
