@@ -149,11 +149,80 @@ The GLES sharing requirements are described by Khronos's
 [Sync Object](https://wikis.khronos.org/opengl/Sync_Object) and
 [Memory Model](https://wikis.khronos.org/opengl/Memory_Model) references.
 
-No physical execution is authorized by this preparation. A later comparison
-requires the current resource-discovery/custodian route and a separately admitted
+Preparation alone grants no physical execution. A later comparison requires the
+current resource-discovery/custodian route and a separately admitted
 stock lab session, with exact artifacts, current conflicts/rollback and a cleanup
 reserve. Request at most three fresh processes, each ≤30 seconds, generated
 memory under 16 MiB plus runtime/driver overhead, output under 64 KiB and no games,
 firmware, screenshots, settings changes or unattended stress. Keep the personal
 Fold out of that request. Any failure must retire only this fixture and preserve
 the working application; no automatic retry or device/driver modification follows.
+
+## Bounded hardware outcome, 2026-10-22
+
+The corrected probe at `9a0f49ff50c7f796334c3ada6708ccd89b0e048f` ran once per
+mode in an admitted stock-lab session, after resource-discovery and current
+custodian/policy, return, binding, profile and exclusive-custody checks. The actual
+EGL 1.5 / hardware GLES 3.2 implementation and shell execution identity are
+retained privately. No product APK, application data or graphics configuration
+was changed.
+
+| Mode | Pixel/boundary result | Final exit | Timeout |
+| --- | --- | --- | --- |
+| Reference | All 24 frames match; retirement/cleanup complete | 0 | No |
+| Shared | All 24 frames match; retirement/cleanup complete | 0 | No |
+| Negative control | Deliberate stage-4 incomplete draw FBO (`0x8cd7`), no PASS | 1 | No |
+
+Both positive digests match the host digest above. This accepts these generated
+commands on that implementation only. It does not rule out the full donor GS,
+app loader/window/UI, resize or workload/timing defects. No driver cause or
+production repair follows. Do not repeat or expand the passing fixture.
+
+Two earlier preparation/admission stops ran no probe and transferred no files:
+an incorrect host selector was refused before device queries; valid Toybox help
+exit 125 was initially treated as a failure. The latter's physical-return
+observer read the wrong service and retained an unverified-return flag. A fresh
+custodian reconciliation verified physical OFF before the admitted comparison.
+All prior receipts remain preserved. Final process retirement, fixture/directory
+removal, physical OFF and lease release were verified; no security-lock claim.
+The Fold, application, saves and retained rollback artifacts were untouched.
+
+## Prepared next observation scope (off-device only)
+
+The missing distinction is now **real GS output before handoff versus its copy
+and final application presentation**, using the application's actual loader,
+UID and NativeActivity window. Another generated clear/pbuffer pass cannot
+answer it. The following source boundaries were reviewed for the next packet;
+no observation build, configuration option or further device session is enabled:
+
+| Owner/boundary | Observation needed |
+| --- | --- |
+| GS owner, `GSDeviceOGL::EndPresent` | Pending GL errors before publication; source FBO completeness, frame dimensions, producer-fence creation/flush result |
+| Frontend owner, `Main.cpp::retro_run` | Producer-wait result, read/draw attachments and completeness before copy; error after blit and read-fence creation/flush |
+| Rust `ps2::Core::run` return → `Graphics::render` entry | Correlated frame sequence and native handoff outcome before existing error drains |
+| Rust game-FBO→window blit, UI draw and EGL swap | Separate error observations and actual FBO/surface dimensions; swap result distinguished from visible pixels |
+
+Prepare one fixed diagnostic build with Rust-owned bounded numeric events and
+only the necessary retained-native ABI/call-site glue. Keep the same renderer,
+fences, pacing, threading, guest clocks and app settings. Retain the first
+observed failure and a small preceding ring, not a per-draw trace or unbounded
+log; include ephemeral owner/context and frame sequence, API error, FBO status,
+dimensions and fence-presence/result, with no content paths or pixel bytes.
+Existing fatal-error handling must still receive its original result; logging
+must not suppress or turn it into a fallback. Do not use CPU finishes or add
+per-frame readbacks that could serialize away the failing dependency.
+
+A producer-side failure before publication narrows to real donor rendering or
+its setup. A first failure after wait/attachment/copy narrows the added frontend
+path; a first final-blit/UI/swap failure narrows application presentation. Empty
+queues at every boundary still cannot prove correct source pixels: that outcome
+requires a separately reviewed matched full-renderer or private pixel-observation
+comparison, rather than inferring a driver cause. Instrumentation can perturb
+timing and must be labeled accordingly.
+
+This is a precise next scope, not an implemented/qualified observer or a requested
+physical trial. A later real-workload build needs its own exact patch/APK/source
+binding, actual current-data backup/rollback and private-input authority before
+any separately admitted test. PS1 recovery and the last valid PS2 checkpoint/card
+must remain authoritative; no new checkpoint may replace them after a reported
+graphics failure. PLAYER-2 remains open for Master acceptance.
