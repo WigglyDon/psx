@@ -1,171 +1,194 @@
 # Development PS2 graphics observation
 
-[Master disposition](https://github.com/WigglyDon/psx/issues/2#issuecomment-6343717225)
-authorizes this fixed full-path observer. It is an observation build, not a
-rendering repair or performance option. The passing small probe is not repeated.
+The [active Master disposition](https://github.com/WigglyDon/psx/issues/2#issuecomment-6348349808)
+authorizes a matched full-renderer comparison. This is development observation,
+not PS2 acceptance, a production rendering repair, or a driver diagnosis. Do not
+repeat the passing generated probe.
 
-## Build and progress isolation
+## Build and isolation
 
-`PSX_GRAPHICS_OBSERVER=1 cargo xtask apk` selects Rust's `graphics-observer`
-feature and applies `0002-development-graphics-observer.patch` after unchanged
-`0001`. Donor pin, GLES backend, settings, synchronization, pacing and guest clocks
-stay the same. Native additions are numeric call sites, frame-token carriage
-and callback ABI glue; Rust owns sampling, tokens, aggregation and export.
-Ordinary builds compile neither observation nor the second patch. No setting,
-permission or network capability is added. Source validation checks the exact
-combined diff through a separate index and rejects a diagnostic tree in an
-ordinary build. A source-matched warm cache uses a 3 GiB incremental estimate
-instead of the 8 GiB cold estimate; shared reserve/step checks remain mandatory.
+`PSX_GRAPHICS_OBSERVER=1 cargo xtask apk` selects the normal observation arm.
+Adding `PSX_GRAPHICS_OBSERVER_MODE=no-game-image-reader` selects the reference.
+Unknown modes are refused. Both use the same source base and native binary:
+unchanged adapter `0001`, historical observer `0002`, then separate matched
+observer/ownership glue `0003`. Rust owns the fixed build-mode decision, sampling,
+aggregation, stop transport and final presentation. No setting, fallback,
+permission, backend, shader, resolution or guest-clock change is introduced.
+Ordinary builds compile neither observer nor comparison path; their PS2 revision
+binding and rendering behavior remain unchanged. Diagnostic revisions include
+all patch hashes and the mode. No checkpoint compatibility exception is added.
+The builder derives the expected combined diff using a separate index and
+refuses unknown native changes. Retain the historical executed artifacts.
 
-The diagnostic app requires its own `observer-scratch-v1` root and exact
-`prepared-v1` marker `PSX-OBSERVER-SCRATCH-1\n`; it never falls back to normal
-progress. The admitted operator prepares a separate selected-game library,
-regular copies of agreed settings/controller profiles, new card/checkpoint
-paths and authorized read-only media references. Links outside scratch and hard
-links are refused. Copy the selected firmware and its sidecars into scratch:
-the donor can write NVRAM/mechacon sidecars beside its BIOS, so linking the normal
-BIOS directory would not isolate progress. Internal resource/BIOS links stay
-inside scratch. Resources install separately into scratch. Prove scratch
-absent before preparation and retain its cleanup inventory. This development
-contract is neither a user setup flow nor a new OS security boundary.
+Both arms run the actual title and full GS workload into ordinary donor
+backbuffers, with existing CPU/frame pacing, loader/UID/window, UI and final
+swap. Normal retains forward wait/delete, attachment, blit, read fence/flush,
+and producer reverse wait/delete. Reference selects an explicit no-reader
+acknowledgement through Rust's build constant. It submits **no frontend donor
+texture attachment, sampling or blit**, no forward GPU wait and no reverse
+fence. The host-owned 1024×1024 target is explicitly cleared to a fixed color
+on its own GL owner, then used by the normal Rust final blit/UI/swap. A static
+reference picture is expected; it is not successful game rendering.
 
-Diagnostic revision binding includes both patch hashes. Old-state compatibility
-is not relaxed and the owner's only checkpoint is not moved to force a clean
-boot. Normal progress, signer, APK and actual recoverable data remain the
-rollback authority. Isolation/rollback must be proved before requesting use.
+Consume transfers the producer fence and grants an exclusive, monotonically
+numbered reader lease. Reference acknowledgement checks texture/lease, retires
+the transferred non-null fence exactly once on the frontend owner, and releases
+the CPU lease. Null or invalid fences are failures, never the mode selector or
+proof of GPU completion. Stale/duplicate acknowledgements fail without deleting
+another frame's fence. The producer's ordinary GL context orders its own future
+writes; acknowledgement asserts only that no frontend GPU read was submitted.
+No fake signaled fence or implicit normal `CompleteFrame(null)` is used.
+Scheduling and GPU load necessarily differ; matched inputs do not mean identical
+timing. Existing live-context resource retirement and worker join remain intact.
 
-## Stages and numeric schema
+The app refuses an unprepared `observer-scratch-v1` root. Its `prepared-v1`
+marker must be exactly `PSX-OBSERVER-SCRATCH-2:MODE\n`, matching the built mode.
+Normal progress is never a fallback. Prepare equivalent independent selected-game
+libraries, copied controller/settings files, empty cards/checkpoints and regular
+copies of authorized BIOS **and sidecars**. All mutable paths stay in scratch;
+external links and hard links are refused. Existing selected media remains
+read-only. Prove scratch absent, actual APK/signer and recoverable normal data
+before install; preserve the normal checkpoint and strict revision checks.
 
-Events contain monotonic microseconds, CPU insertion sequence, owner and opaque
-context/surface/share-group/frame/texture-generation tokens, stage, dimensions,
-32 state values and eight details. Private GL/EGL names are map keys only.
-Context creation and surface attachment record separate generations. Tokens are
-ephemeral and never saved game identity; CPU order is not GPU execution order.
+## Boundary audit and schema 2
+
+Native `GLsync` is pointer-sized and passed unchanged through the C callback.
+C-layout metadata carries the current native EGL context and actual GLAD
+creation/validity/status/error entry points only during the callback. It uses
+the already-loaded `eglGetCurrentContext`, not context capture that reloads EGL.
+Rust compares with the platform's actual current context and the entry points
+captured by **its actual glow loader** on that owner. It independently compares
+native and Rust validity queries on the same handle. Function-address equality
+is reported, not assumed: different trampolines alone do not prove a defect.
+Absent context, ABI mismatch, validity disagreement and pre/post handle/context/
+dispatch changes request a diagnostic stop. No raw handle/address is exported.
+
+Fence checks run immediately after creation and **before the existing flush**,
+then after that flush, on the same owning thread. Producer frame publication is
+later: the consumer cannot yet retire that frame's fence. The read fence follows
+the same pre/post check. No status query follows a failed validity check. Null,
+invalid, valid-unsignaled, query errors and absent context remain distinct.
+Consumed OOM/context-lost errors still enter existing typed recovery once;
+ordinary errors do not become device loss. Retirement cannot requeue an old
+fault; actual frontend context replacement begins a clean error epoch.
+
+Events contain sequence/time, opaque owner/context/surface/group/frame/texture
+identity, dimensions, 32 state values and eight details. A 256-event ring, four
+initialization records, first failure plus 32 preceding events, first terminal
+observation and monotonic sampled stage milestones are bounded. Drops count
+capacity/contention; this is not a complete GPU history or causal ordering.
 
 | Stage | Meaning |
 | --- | --- |
-| 25 | Backbuffer allocation/texture generation |
-| 1, 2, 3 | Producer pending state, fence/flush, publication |
-| 4, 23 | Consume, or actual no-new/duplicate/read-lease-busy branch |
-| 9 | Producer server wait issued, with fence still live for status |
-| 5, 6, 7 | Native attachments, copy result, read-completion fence/flush |
-| 8 | Producer return-wait issued, before live read fence deletion |
-| 10 | Rust core-run return, hardware count and reported dimensions |
-| 11 | Render admission, including absent surface and 1024×1024 guard |
-| 15, 12 | Actual game-target→window blit inputs and post-blit observation |
-| 13, 14 | UI completion and actual EGL swap return |
-| 30 | Existing GL check, preserving its original typed result |
-| 39, 40, 41 | Native retirement begins/ends; valid-context GL cleanup |
-| 43, 44 | Actual frontend context/share-group and surface creation |
+| 25 | Backbuffer allocation |
+| 1, 16, 2, 3 | Producer state, new fence before flush, after flush, publication |
+| 4, 23 | Consume or no-new/duplicate/reader-busy branch |
+| 9 | Existing producer server wait issued, before deletion |
+| 5, 6, 17, 7 | Native attachments/copy, new read fence before/after flush |
+| 8 | Existing producer return wait, before read fence deletion |
+| 51, 52, 53 | No-reader CPU acknowledgement, producer fence retirement, rejected lease |
+| 10, 11 | Rust run return and presentation admission |
+| 15, 12, 13, 14 | Final game-target blit inputs/result, UI, actual EGL swap result |
+| 30 | Existing GL check with original typed result |
+| 39, 40, 41 | Retirement begins/ends, valid-owner cleanup |
+| 43, 44 | Actual frontend context/surface creation |
 
-State 0–7: pending errors; 8/9: read/draw completeness (zero unsampled);
-10/11: attachment tokens; 12/13: FBO tokens; 14–17: viewport; 18–21: scissor;
-22: scissor enable; 23: sync status (zero absent/not requested, -1 invalid,
-otherwise actual GL unsignaled/signaled enum); 24/25: attachment type;
-26: fence presence. Other fields are reserved. Only already-bound targets are
-queried, preserving bindings; an unused surfaceless producer default read FBO
-is not treated as a failure. Fence queries precede deletion. Issuing a server
-wait or seeing a valid unsignaled fence is not proof of completed GPU work.
+State 0–7: pending GL errors; 8/9: sampled read/draw completeness; 10/11:
+attachment tokens; 12/13: FBO tokens; 14–17: viewport; 18–21: scissor; 22:
+scissor enable; 23: sync status (0 absent/unqueried, -1 invalid, otherwise actual
+GL status); 24/25: attachment type; 26: fence presence. Only already-bound targets
+are queried. Unused surfaceless default-read incompleteness is not a failure.
 
-Admission/post-blit details carry reported, fixed target and window dimensions
-and the actual blit-guard result. Stage 15 carries the destination rectangle;
-14 carries success and the returned EGL error. Detail slot 7=1 distinguishes an
-error after observation queries from the pending-error sample; -1 means missing
-current context, so no GL queries occurred. No pixels, paths or shader text are
-exported. Existing shader/link/allocation diagnostics remain intact locally.
+Native callback detail: ABI valid, same current context, creator-entry equality,
+validity-entry equality, native validity (-2 unqueried), pre/post identity
+(0 pre, 1 matching post, -1 mismatch, -2 other stage), status-entry equality,
+error-entry equality. Other Rust stages retain their existing detail schema.
+An additional error event uses detail[7]=1; missing context has detail[7]=-1.
+Post-query errors are collected separately and preserve fatal forwarding.
+Successful FBO/swap samples are not proof of correct pixels.
 
-## Bounds, error recovery and qualification
+## Stop and collection
 
-A 256-event ring retains up to four initialization records, the first observed
-failure and 32 preceding events. Capacity/contention drops are counted. Ordinary
-samples use try-lock; failures retain their bounded copy under the short recorder
-lock. No formatting or file I/O holds it. Multiple GL flags have no guaranteed
-chronological order; the first observation is not necessarily the causal call.
+Callbacks only retain bounded memory, latch a stop reason and wake the actual
+application owner and independent writer. No callback formats/writes files,
+waits for GPU completion or reenters teardown. Invalid/null required fence,
+missing context, ownership/dispatch mismatch, fatal GL result or failed swap
+requests stop. The application owner checks before further rendering and retires
+through its existing core pause/unload/join, retaining completed writers but
+starting no new checkpoint/flush for disposable faulted scratch.
 
-Consumed fatal errors are retained for existing typed loss/OOM recovery once,
-coalescing pending failures. Ordinary errors do not become device loss.
-Retirement cannot requeue its old runtime's fault into the successor; context
-replacement starts a clean pending-error epoch. Existing GL checks still return
-their original fatal result, and EGL information comes from the actual operation.
-No CPU finish, wait loop, pixel readback, screenshot, full command capture or
-automatic black-screen detector is added. Sampling may perturb timing; clean
-errors/FBOs/swaps do not establish correct pixels.
+The independent writer emits immutable `first-stop.json` (≤4 KiB) without
+waiting for the frontend or a 45-second deadline. It also consumes the admitted
+operator's `operator-stop` marker and wakes the same owner. Up to three numeric
+snapshots (≤256 KiB each) cover first failure/terminal and lifecycle/retirement;
+total export bound is 790,528 bytes. A blocked GL owner, process death or storage
+failure can still prevent complete retirement/collection; report it explicitly.
+There is no production automatic recovery or black-screen detector.
 
-One observation writer formats/writes snapshots outside render/audio work; it
-never enters VM or cards/checkpoints. At most three scratch files, each ≤256 KiB
-(total ≤768 KiB), have first-failure, 45-second and lifecycle/retirement export
-opportunities. A blocked frontend, process death or export failure can leave an
-incomplete trace and must be reported. Host tests cover retention/bounds, owner/frame correlation,
-fatal injection, cleanup/late errors, real incomplete FBO/binding preservation,
-isolation and disabled execution. The patched-handoff fixture separately checks
-token carriage/callback retirement using stubbed GL, not driver/game behavior.
+The actual retained Rust operator imports the reviewed pure `operator` module.
+It recognizes the original GPU-command ioctl warning, submission/wait failures,
+invalid/fatal stop signal and same-lease owner stop request. It delivers the stop
+marker on the admitted lease, then externally retires before the 30-second cap.
+Presence is checked separately from legacy `exec-out` file bytes. Each valid
+export is saved independently; an absent optional or malformed later export
+cannot erase accepted evidence. No PASS is inferred from launch, exit or swap.
 
-After exact source/APK/native/symbol bindings pass, request one current custodian
-admission through resource-discovery. It must explicitly include diagnostic APK
-replacement and the already-selected private title/firmware, current APK/signer
-and data rollback, and isolated scratch. One fresh-process clean boot only,
-≤60 seconds from launch request, earlier stop on fatal failure/instability, plus
-separate install/rollback/return reserve. No restored-state/configuration
-permutation, second device, repeat, Fold access or automatic retry. Missing
-isolation/admission/rollback stops use. Restore the agreed prior app/data and
-verify fixture cleanup/normal resource return. Raw evidence stays private.
+Focused checks cover high-bit C/Rust forwarding, same-thread/context/dispatch
+pairing, valid-unsignaled versus invalid/no-status-query, real host GLES
+pre/post and deleted-sync observations, existing error forwarding, normal and
+no-reader handoffs, stale/double acknowledgement, repeated teardown, disabled
+ordinary builds, independent writer/owner stop delivery and the retained actual
+warning/collector fixtures. These establish host contracts, not physical GPU
+recovery, gameplay, saving or speed.
 
-Report a sanitized boundary matrix on #2 and keep it open. Clean sampled stages
-with wrong/unobserved pixels require a matched full-renderer or separately
-reviewed private pixel observation, not another clear/error-only test. Apparent
-non-reproduction is not a fix or gameplay/save/audio/performance acceptance.
+## Physical comparison and return
 
-## First actual full-path observation
+Publish exact source/patch/APK/native/symbol/signer/mode bindings before requesting
+one current custodian admission through resource discovery. Previous release is
+not current health clearance: reconcile the prior submission failure and
+whole-screen flicker explicitly. The Fold is excluded.
 
-The diagnostic built from `4277d4ca651a4c9c2e8e88113a0ef092e330f01c` ran one
-fresh-process clean boot for 46.656 seconds. Its unchanged normal adapter was
-`90b35554…`, with separate observer patch `a08bf0c8…`; see issue #2 for exact
-APK/source/symbol bindings. No restored machine state, pixel readback or screenshot
-was used. The owner reported flicker affecting controls/the whole screen.
+At most two fresh-process clean boots, one per arm, reference first, each
+externally capped at 30 seconds from launch, with separate installation/rollback
+reserve. Same already-authorized title/firmware, fresh equivalent scratch,
+unchanged display and input. Record observer time and full-GS/publication/
+copy-or-ack/presentation milestones. Progress that never reaches the earlier
+failure's workload interval is inconclusive. No screenshots/readback, generated
+probe, repeats, permutations, system changes, reboot, clear-data or other apps.
 
-The first retained boundary failure is producer stage 2, frame 465, at 11.435145
-seconds from observer initialization: the fence returned non-null, but the
-immediate owning-context `glIsSync` query returned false after fence/flush and
-before publication. The preceding retained frame has complete copy FBOs, valid
-producer/read fences, an admitted 640×448 frame against the 1024×1024 target,
-and successful final UI/swap observations. The later retained samples continue
-to report invalid fences while sampled GL errors remain empty and swaps report
-success. A contemporaneous application-process GPU-command submission warning
-is retained privately. These observations narrow the interval; neither CPU log
-order nor a failed sync establishes the initiating GPU command or driver cause.
+At the first submission/wait failure, recorded invalid/fatal boundary, owner's
+stop or whole-screen instability: stop and suspend the remainder for custodian
+recovery/re-admission. A reproducing reference is useful; do not launch a normal
+arm redundantly. Restore the exact baseline, verify all normal data, remove only
+owned scratch, preserve Home, verify physical return and release through the
+same procedure. Keep raw evidence private and publish sanitized results on #2,
+which remains open for Master acceptance.
 
-Two valid numeric exports total 145,144 bytes. Their first failure and 32 preceding
-events agree; their bounded rings report 10,828 and 51,019 drops/evictions. They
-are not a complete command history. An absent optional third export was returned
-as a legacy `exec-out` diagnostic with exit 0, exposing a collector bookkeeping
-error after both valid files were saved. The operator also failed to recognize
-the GPU-command warning as an earlier stop condition; it stopped at its 46.656s
-deadline. Both operator defects have focused off-device corrections/tests; the
-executed operator and historical receipt remain preserved. No second launch
-qualified those corrections. Exact original APK and normal data restoration,
-physical display-off and shared-lease release were verified.
+Reference failure removes the game-image read/copy as a necessary condition for
+that reproduction; common GS/setup/command-stream/dispatch/remaining UI still
+exist. Clean reference plus failing matched normal narrows transfer/ownership/
+timing, not universal producer correctness. Both clean, unmatched progress or
+interruption is inconclusive, not a fix or performance result.
 
-## Next discriminating scope for review
+## Historical actual full-path observation
 
-Prepare a matched **full-renderer image-handoff comparison**, not another
-generated clear/pbuffer probe. The reference should retain the same application
-UID/loader/window, full donor GS workload, backend/settings/guest clocks,
-CPU/frame pacing and ordinary Rust UI/final swap. Remove only the frontend's
-cross-context game-image read/copy; feed a fixed initialized host target to the
-otherwise retained final blit. A consumed frame with no GPU reader needs an
-explicit CPU ownership acknowledgement, not a fabricated completion fence.
-The donor still renders the actual private title into its normal backbuffers.
+Source `4277d4ca651a4c9c2e8e88113a0ef092e330f01c` ran one clean boot for 46.656s
+with unchanged adapter `90b35554…` and historical observer `a08bf0c8…`.
+First retained abnormality: producer stage2/frame465 at 11.435145s,
+non-null fence invalid after flush, before publication. Initialization and the
+preceding producer samples retain context4/group1; frontend context1/group1.
+The earlier frame's copy FBOs, 640×448 admission and final swap samples succeeded.
+That old observer did not carry the native/Rust dispatch comparison; its tokens
+alone cannot rule out a dispatch defect. No handle truncation or deleting-owner
+escape was demonstrated by source audit. No production repair follows.
 
-This would ask whether the observed producer failure requires the cross-context
-image-read commands. Persistence narrows the common GS/setup/UI path; absence
-narrows the removed read/copy or its timing effects, not a shader/driver root
-cause. A prospective normal arm must be matched to the reference, rather than
-treating this dated observer run as a causal control. Report instrumentation and
-timing changes and stop at instability. No backend fallback or compatibility
-gate follows from either outcome.
-
-This is a concrete next scope, **not an implemented or admitted experiment**.
-Its ownership/pacing contracts, exact builds, bounded fresh-process pair and
-scratch/rollback require Master review and current custodian admission before
-any further device operation. The existing working PS1 path and rollback remain
-authoritative.
+The owner reported whole-screen/controls flicker and own-process submission
+failure was retained. Two valid exports total145,144bytes; capacity/contention
+drops10,828 and51,019 limit causal claims. The old operator missed the warning
+and ran to its deadline; optional missing third export caused a late parser
+error after both valid files were saved. Executed operator, receipts, APK/source,
+native symbols and rollback remain frozen. Exact original APK/normal-data
+restoration, Home, physicalOFF and original shared-lease release were verified.
+This accepted localization increment is neither a compliant early-stop run nor
+a driver/GPU-health certification. The new matched comparison must qualify its
+own corrected observation/operator rather than reuse that trial as its control.

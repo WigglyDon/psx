@@ -272,6 +272,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         present_time: Duration::ZERO,
         max_present_time: Duration::ZERO,
     };
+    #[cfg(feature = "graphics-observer")]
+    psx_player::graphics_observer::start(&player.root, player.frame_waker.clone())
+        .map_err(|e| e.to_string())?;
     player.refresh_menu(&app);
     while !player.destroyed {
         let timeout = if player.activity.can_run() && player.core.is_some() {
@@ -309,6 +312,10 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 }
             }
         });
+        #[cfg(feature = "graphics-observer")]
+        if psx_player::graphics_observer::stop_requested() {
+            break;
+        }
         for event in platform::events() {
             player.platform_event(&app, event);
         }
@@ -563,6 +570,10 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         let paced_present = player.playback.effective_speed().is_fast()
             || player.core.as_ref().is_some_and(Core::owns_clock);
         let present_due = !paced_present || now >= player.next_present;
+        #[cfg(feature = "graphics-observer")]
+        if psx_player::graphics_observer::stop_requested() {
+            break;
+        }
         if player.dirty && player.activity.surface && player.activity.foreground && present_due {
             player.next_present = now + Duration::from_secs_f64(1. / 60.);
             let before = Instant::now();
@@ -602,6 +613,19 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     }
     player.stop_sound();
     player.cancel_work.store(true, Ordering::Relaxed);
+    #[cfg(feature = "graphics-observer")]
+    if psx_player::graphics_observer::stop_requested() {
+        // Test retirement on the actual frontend owner, never the GL callback.
+        // Keep existing completed writers, but do not make a new fault checkpoint.
+        let _ = player.finish_checkpoint();
+        player.checkpoint_dirty = false;
+        player.checkpoint_valid = false;
+        player.checkpoint_after_present = false;
+        // Retire through Core's existing pause/unload/join on this GL owner.
+        // Scratch is disposable; starting a new flush/checkpoint after a GPU
+        // failure would add work and can delay the bounded test stop.
+        player.core.take();
+    }
     let result = player.unload(false);
     #[cfg(feature = "graphics-observer")]
     {
@@ -2523,6 +2547,10 @@ impl Player {
         } else {
             let deadline = Instant::now() + Duration::from_secs(15);
             while !core.ready() {
+                #[cfg(feature = "graphics-observer")]
+                if psx_player::graphics_observer::stop_requested() {
+                    return Err("Development observation stopped.".into());
+                }
                 core.run();
                 if Instant::now() >= deadline {
                     return Err(
@@ -2720,6 +2748,10 @@ impl Player {
         self.finish_checkpoint()
     }
     fn checkpoint_interruption(&mut self) -> Result<(), String> {
+        #[cfg(feature = "graphics-observer")]
+        if psx_player::graphics_observer::stop_requested() {
+            return self.finish_checkpoint();
+        }
         if self.activity.background_playback {
             // Continue-play callbacks can arrive repeatedly during one
             // transition. Keep one bounded write in flight without waiting

@@ -66,6 +66,14 @@ pub fn verify_resources(apk: &Path) -> Result<()> {
 }
 const PATCH: &str = "patches/armsx2/0001-host-pause-and-card-flush.patch";
 const OBSERVER_PATCH: &str = "patches/armsx2/0002-development-graphics-observer.patch";
+const MATCHED_PATCH: &str = "patches/armsx2/0003-development-matched-reader.patch";
+pub fn observer_mode() -> Result<&'static str> {
+    match env::var("PSX_GRAPHICS_OBSERVER_MODE").as_deref() {
+        Err(_) | Ok("normal") => Ok("normal"),
+        Ok("no-game-image-reader") if observer_enabled() => Ok("no-game-image-reader"),
+        _ => Err("Invalid development observer mode".into()),
+    }
+}
 pub fn observer_enabled() -> bool {
     env::var("PSX_GRAPHICS_OBSERVER").as_deref() == Ok("1")
 }
@@ -88,7 +96,7 @@ pub fn warm_observer_cache() -> bool {
     }) && output(command("git", ["rev-parse", "HEAD"]).current_dir(source))
         .is_ok_and(|head| head.trim() == REVISION)
 }
-fn observer_diff(source: &Path) -> Result<Vec<u8>> {
+fn observer_diff(source: &Path, matched: bool) -> Result<Vec<u8>> {
     // A separate temporary index derives the exact combined patch without
     // changing the retained donor's real index or accepting unknown edits.
     let index = env::current_dir()?.join("build/observer-native.index");
@@ -101,7 +109,10 @@ fn observer_diff(source: &Path) -> Result<Vec<u8>> {
         c
     };
     execute(&mut git(&["read-tree", REVISION]))?;
-    for path in [PATCH, OBSERVER_PATCH] {
+    for path in [PATCH, OBSERVER_PATCH]
+        .into_iter()
+        .chain(matched.then_some(MATCHED_PATCH))
+    {
         execute(git(&["apply", "--cached"]).arg(Path::new(path).canonicalize()?))?;
     }
     let output = git(&["diff", "--cached", "--binary"]).output()?;
@@ -396,6 +407,7 @@ pub fn build() -> Result<()> {
                 .current_dir(&source)
                 .output()?
                 .stdout;
+            let old_observer = observer_diff(&source, false)?;
             if actual == expected {
                 execute(
                     command("git", ["apply"])
@@ -403,7 +415,14 @@ pub fn build() -> Result<()> {
                         .current_dir(&source),
                 )?;
             }
-            expected = observer_diff(&source)?;
+            if actual == expected || actual == old_observer {
+                execute(
+                    command("git", ["apply"])
+                        .arg(Path::new(MATCHED_PATCH).canonicalize()?)
+                        .current_dir(&source),
+                )?;
+            }
+            expected = observer_diff(&source, true)?;
         }
         if output(command("git", ["rev-parse", "HEAD"]).current_dir(&source))?.trim() != REVISION
             || command("git", ["diff", "--binary"])
@@ -420,7 +439,11 @@ pub fn build() -> Result<()> {
         let marker = source.join(".psx-source-pin");
         let mut binding = format!("{REVISION}\n{}\n", hash(Path::new(PATCH))?);
         if observer_enabled() {
-            binding.push_str(&format!("observer:{}\n", hash(Path::new(OBSERVER_PATCH))?));
+            binding.push_str(&format!(
+                "observer:{}\nmatched:{}\n",
+                hash(Path::new(OBSERVER_PATCH))?,
+                hash(Path::new(MATCHED_PATCH))?
+            ));
         }
         if !source.exists() {
             if upstream.join(".psx-source-manifest").exists() {
@@ -443,6 +466,11 @@ pub fn build() -> Result<()> {
                     command("git", ["apply", "--directory"])
                         .arg(&source)
                         .arg(Path::new(OBSERVER_PATCH).canonicalize()?),
+                )?;
+                execute(
+                    command("git", ["apply", "--directory"])
+                        .arg(&source)
+                        .arg(Path::new(MATCHED_PATCH).canonicalize()?),
                 )?;
             }
             fs::write(&marker, &binding)?;

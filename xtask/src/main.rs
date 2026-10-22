@@ -508,7 +508,14 @@ fn apk() -> Result<()> {
     );
     let scoped_storage = env::var_os("PSX_SCOPED_STORAGE").is_some();
     if ps2::observer_enabled() {
-        rust.args(["--features", "graphics-observer"]);
+        rust.args([
+            "--features",
+            if ps2::observer_mode()? == "no-game-image-reader" {
+                "no-game-image-reader"
+            } else {
+                "graphics-observer"
+            },
+        ]);
     }
     if scoped_storage {
         rust.arg("--no-default-features");
@@ -641,7 +648,7 @@ public final class PlaybackService extends android.app.Service {
         fs::write(
             observer_manifest,
             serde_json::to_vec_pretty(
-                &serde_json::json!({"projectRevision":revision,"developmentOnly":true,"scratch":"observer-scratch-v1","normalAdapterSha256":hash(Path::new("patches/armsx2/0001-host-pause-and-card-flush.patch"))?,"observerPatchSha256":hash(Path::new("patches/armsx2/0002-development-graphics-observer.patch"))?,"observerRustSha256":hash(Path::new("crates/player/src/graphics_observer.rs"))?,"maxExportBytes":786432}),
+                &serde_json::json!({"projectRevision":revision,"developmentOnly":true,"scratch":"observer-scratch-v1","mode":ps2::observer_mode()?,"observerAbi":2,"matchedPatchSha256":hash(Path::new("patches/armsx2/0003-development-matched-reader.patch"))?,"normalAdapterSha256":hash(Path::new("patches/armsx2/0001-host-pause-and-card-flush.patch"))?,"observerPatchSha256":hash(Path::new("patches/armsx2/0002-development-graphics-observer.patch"))?,"observerRustSha256":hash(Path::new("crates/player/src/graphics_observer.rs"))?,"maxExportBytes":790528}),
             )?,
         )?;
     } else if observer_manifest.exists() {

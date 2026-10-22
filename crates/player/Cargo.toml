@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [features]
 graphics-observer = ["dep:glow"]
+no-game-image-reader = ["graphics-observer"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }

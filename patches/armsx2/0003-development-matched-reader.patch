@@ -1,0 +1,216 @@
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
+index 305e1e6..c85e708 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
++++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
+@@ -35,6 +35,7 @@
+ #include "glad/gl.h"
+ 
+ #include <memory>
++#include <cstdint>
+ #include <span>
+ 
+ class Error;
+@@ -48,7 +49,7 @@ class Error;
+ namespace GLLibretro
+ {
+ 	inline constexpr bool Active = false;
+-	inline u64 Observe(u32, u32, u64 frame, GLuint, u32, u32, GLsync) { return frame; }
++	inline u64 Observe(u32, u32, u64 frame, GLuint, u32, u32, GLsync, std::uintptr_t = 0) { return frame; }
+ 
+ 	struct Frame
+ 	{
+@@ -57,12 +58,14 @@ namespace GLLibretro
+ 		u32 width = 0;
+ 		u32 height = 0;
+ 		u64 observation = 0; // Opaque Rust frame identity, diagnostic build only.
++		u64 read_lease = 0;
+ 	};
+ 
+ 	inline void Deactivate() {}
+ 	inline void PublishFrame(const Frame&) {}
+ 	inline bool ConsumeFrame(Frame*) { return false; }
+ 	inline void CompleteFrame(const Frame&, GLsync) {}
++	inline bool AcknowledgeNoReader(Frame*) { return false; }
+ 	inline void WaitForFrontend(GLuint) {}
+ 	inline bool HasFrame() { return false; }
+ 	inline void SetPacing(bool) {}
+@@ -77,9 +80,15 @@ namespace GLLibretro
+ 	// True when the GL device is presenting through a libretro frontend;
+ 	// checked by GSDeviceOGL during init and present.
+ 	extern bool Active;
+-	using Observer = u64 (*)(u32, u32, u64, GLuint, u32, u32, GLsync);
++	// Transient diagnostic ABI only; Rust never exports raw addresses.
++	struct ObserverDispatch
++	{
++		u32 version, size;
++		std::uintptr_t context, create, valid, status, error;
++	};
++	using Observer = u64 (*)(u32, u32, u64, GLuint, u32, u32, GLsync, const ObserverDispatch*);
+ 	void SetObserver(Observer observer);
+-	u64 Observe(u32 stage, u32 owner, u64 frame, GLuint texture, u32 width, u32 height, GLsync fence);
++	u64 Observe(u32 stage, u32 owner, u64 frame, GLuint texture, u32 width, u32 height, GLsync fence, std::uintptr_t creator = 0);
+ 
+ 	// Turns the handoff off. For the GS thread, which is the thread that reads
+ 	// Active: past a context loss there is no frontend context to publish into.
+@@ -109,12 +118,15 @@ namespace GLLibretro
+ 		u32 width = 0;
+ 		u32 height = 0;
+ 		u64 observation = 0; // Opaque Rust frame identity, diagnostic build only.
++		u64 read_lease = 0;
+ 	};
+ 	void PublishFrame(const Frame& frame);
+ 	bool ConsumeFrame(Frame* out_frame); // true if a new frame arrived since the last consume
+ 	// Complete on the frontend after its blit: flush the read fence before
+ 	// publishing it. The GS waits on that fence before reusing/deleting texture.
+ 	void CompleteFrame(const Frame& frame, GLsync read_fence);
++	// CPU acknowledgement: no frontend GPU image read was submitted.
++	bool AcknowledgeNoReader(Frame* frame);
+ 	void WaitForFrontend(GLuint texture); // GS owner, before any overwrite/delete
+ 	bool HasFrame();                     // same, without consuming it
+ 	// Non-reentrant notification only; the frontend consumes on its GL owner.
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
+index dddc795..851ca75 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
+@@ -22,9 +22,22 @@ namespace GLLibretro
+ 	// Installed before CPU/GS boot and retired only after their join.
+ 	static Observer s_observer = nullptr;
+ 	void SetObserver(Observer observer) { s_observer = observer; }
+-	u64 Observe(u32 stage, u32 owner, u64 frame, GLuint texture, u32 width, u32 height, GLsync fence)
++	u64 Observe(u32 stage, u32 owner, u64 frame, GLuint texture, u32 width, u32 height, GLsync fence, std::uintptr_t creator)
+ 	{
+-		return s_observer ? s_observer(stage, owner, frame, texture, width, height, fence) : frame;
++		if (!s_observer)
++			return frame;
++		ObserverDispatch dispatch{2, sizeof(ObserverDispatch), 0,
++			creator ? creator : reinterpret_cast<std::uintptr_t>(glFenceSync), reinterpret_cast<std::uintptr_t>(glIsSync),
++			reinterpret_cast<std::uintptr_t>(glGetSynciv), reinterpret_cast<std::uintptr_t>(glGetError)};
++#if defined(_WIN32)
++		dispatch.context = reinterpret_cast<std::uintptr_t>(GLContextWGL::CaptureCurrentContext());
++#else
++		// Use the already-loaded dispatch. CaptureCurrentContext reloads EGL
++		// entry points and is inappropriate for an observation on a GS owner.
++		dispatch.context = eglGetCurrentContext ? reinterpret_cast<std::uintptr_t>(eglGetCurrentContext()) : 0;
++#endif
++		static_assert(sizeof(GLsync) == sizeof(std::uintptr_t));
++		return s_observer(stage, owner, frame, texture, width, height, fence, &dispatch);
+ 	}
+ 
+ 	namespace
+@@ -151,6 +164,7 @@ namespace GLLibretro
+ 		u64 s_frame_serial = 0;
+ 		u64 s_frame_consumed = 0;
+ 		GLuint s_read_texture = 0;
++		u64 s_read_lease = 0, s_next_read_lease = 0;
+ 		// At most one per backbuffer, retired before its next write or deletion.
+ 		std::vector<Frame> s_frontend_reads;
+ 		bool s_pacing = false;
+@@ -190,6 +204,7 @@ namespace GLLibretro
+ 
+ 		s_frame_consumed = s_frame_serial;
+ 		*out_frame = s_frame;
++		out_frame->read_lease = s_read_lease = ++s_next_read_lease;
+ 		Observe(4, 2, s_frame.observation, s_frame.texture, s_frame.width, s_frame.height, nullptr);
+ 		s_read_texture = s_frame.texture;
+ 		// The caller owns the fence now; clearing it here keeps PublishFrame
+@@ -211,9 +226,35 @@ namespace GLLibretro
+ 		read.fence = read_fence;
+ 		s_frontend_reads.push_back(read);
+ 		s_read_texture = 0;
++		s_read_lease = 0;
+ 		s_frame_consumed_cv.notify_all();
+ 	}
+ 
++	bool AcknowledgeNoReader(Frame* frame)
++	{
++		std::unique_lock<std::mutex> lock(s_frame_mutex);
++		if (!frame || !frame->read_lease || frame->read_lease != s_read_lease || frame->texture != s_read_texture)
++		{
++			Observe(53, 2, 0, 0, 0, 0, nullptr);
++			return false;
++		}
++		// Keep exclusive CPU ownership until retirement. No forward GPU wait,
++		// donor attachment/read/blit, or reverse fence exists in this arm.
++		const GLsync fence = frame->fence;
++		frame->fence = nullptr;
++		frame->read_lease = 0;
++		lock.unlock();
++		Observe(52, 2, frame->observation, frame->texture, frame->width, frame->height, fence);
++		if (fence)
++			glDeleteSync(fence);
++		lock.lock();
++		s_read_texture = 0;
++		s_read_lease = 0;
++		Observe(51, 2, frame->observation, frame->texture, frame->width, frame->height, nullptr);
++		s_frame_consumed_cv.notify_all();
++		return true;
++	}
++
+ 	void WaitForFrontend(GLuint texture)
+ 	{
+ 		std::unique_lock<std::mutex> lock(s_frame_mutex);
+@@ -291,6 +332,7 @@ namespace GLLibretro
+ 		s_frame_serial = 0;
+ 		s_frame_consumed = 0;
+ 		s_read_texture = 0;
++		s_read_lease = 0;
+ 		s_frontend_reads.clear();
+ 		s_pacing = false;
+ 		s_frame_consumed_cv.notify_all();
+diff --git a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+index 051d324..816250f 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+@@ -1897,9 +1897,11 @@ void GSDeviceOGL::EndPresent()
+ 		frame.width = static_cast<u32>(bb->GetWidth());
+ 		frame.height = static_cast<u32>(bb->GetHeight());
+ 		frame.observation = GLLibretro::Observe(1, 1, 0, frame.texture, frame.width, frame.height, nullptr);
+-		frame.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++		const auto observer_fence_create = glFenceSync;
++		frame.fence = observer_fence_create(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++		GLLibretro::Observe(16, 1, frame.observation, frame.texture, frame.width, frame.height, frame.fence, reinterpret_cast<std::uintptr_t>(observer_fence_create));
+ 		glFlush();
+-		GLLibretro::Observe(2, 1, frame.observation, frame.texture, frame.width, frame.height, frame.fence);
++		GLLibretro::Observe(2, 1, frame.observation, frame.texture, frame.width, frame.height, frame.fence, reinterpret_cast<std::uintptr_t>(observer_fence_create));
+ 
+ 		m_libretro_bb_idx = (m_libretro_bb_idx + 1) % kLibretroBackbuffers;
+ 		GLLibretro::PublishFrame(frame);
+diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
+index 20b2f26..fce1ae3 100644
+--- a/pcsx2-libretro/Main.cpp
++++ b/pcsx2-libretro/Main.cpp
+@@ -2281,6 +2281,13 @@ RETRO_API void retro_run(void)
+ 		GLLibretro::Frame frame;
+ 		if (s_gl_hw_render.get_current_framebuffer && GLLibretro::ConsumeFrame(&frame))
+ 		{
++			// Build-only Rust policy, never inferred from fence validity.
++			if (GLLibretro::Observe(50, 2, frame.observation, frame.texture, frame.width, frame.height, nullptr) == 0)
++			{
++				GLLibretro::AcknowledgeNoReader(&frame);
++			}
++			else
++			{
+ 			// Sharing objects does not share ordering: the fence is what says
+ 			// the GS thread's rendering has actually landed rather than just
+ 			// been queued. Waiting on the server side costs this thread
+@@ -2315,15 +2322,18 @@ RETRO_API void retro_run(void)
+ 			// does not mean our asynchronous read has finished. Flush a fence
+ 			// before releasing this texture for the GS owner's next reuse.
+ 			GLLibretro::Observe(6, 2, frame.observation, frame.texture, frame.width, frame.height, nullptr);
+-			const GLsync read_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++			const auto observer_read_fence_create = glFenceSync;
++			const GLsync read_fence = observer_read_fence_create(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++			GLLibretro::Observe(17, 2, frame.observation, frame.texture, frame.width, frame.height, read_fence, reinterpret_cast<std::uintptr_t>(observer_read_fence_create));
+ 			glFlush();
+-			GLLibretro::Observe(7, 2, frame.observation, frame.texture, frame.width, frame.height, read_fence);
++			GLLibretro::Observe(7, 2, frame.observation, frame.texture, frame.width, frame.height, read_fence, reinterpret_cast<std::uintptr_t>(observer_read_fence_create));
+ 			GLLibretro::CompleteFrame(frame, read_fence);
+ 
+ 			// bottom_left_origin is set, so the frontend reads the lower-left
+ 			// frame.width x frame.height of its framebuffer - which is exactly
+ 			// where a GL blit to (0,0) lands.
+ 			glBindFramebuffer(GL_READ_FRAMEBUFFER, target_fbo);
++			}
+ 			last_gl_width = frame.width;
+ 			last_gl_height = frame.height;
+ 			video_cb(RETRO_HW_FRAME_BUFFER_VALID, frame.width, frame.height, 0);

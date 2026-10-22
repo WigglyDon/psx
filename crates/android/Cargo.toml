@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 default = ["storage-scan"]
 storage-scan = []
 graphics-observer = ["psx-player/graphics-observer"]
+no-game-image-reader = ["graphics-observer", "psx-player/no-game-image-reader"]
 
 [dependencies]
 psx-player = { path = "../player" }

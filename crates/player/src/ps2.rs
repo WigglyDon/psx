@@ -44,6 +44,14 @@ pub fn revision() -> &'static str {
                 "../../../patches/armsx2/0002-development-graphics-observer.patch"
             ))
         );
+        #[cfg(feature = "graphics-observer")]
+        let binding = format!(
+            "{binding}+matched:{:x}:{}",
+            Sha256::digest(include_bytes!(
+                "../../../patches/armsx2/0003-development-matched-reader.patch"
+            )),
+            crate::graphics_observer::mode()
+        );
         binding
     })
 }
@@ -486,7 +494,7 @@ impl Core {
         crate::graphics_observer::session_ready();
         #[cfg(feature = "graphics-observer")]
         {
-            type Observe = unsafe extern "C" fn(u32, u32, u64, u32, u32, u32, *mut c_void) -> u64;
+            type Observe = crate::graphics_observer::boundary::Callback;
             let set = symbol!(
                 "retro_psx_observer_set_callback",
                 unsafe extern "C" fn(Option<Observe>)
@@ -756,8 +764,7 @@ impl Drop for Core {
             (self.deinit)();
             #[cfg(feature = "graphics-observer")]
             {
-                type Observe =
-                    unsafe extern "C" fn(u32, u32, u64, u32, u32, u32, *mut c_void) -> u64;
+                type Observe = crate::graphics_observer::boundary::Callback;
                 if let Ok(set) = self.library.get::<unsafe extern "C" fn(Option<Observe>)>(
                     b"retro_psx_observer_set_callback\0",
                 ) {

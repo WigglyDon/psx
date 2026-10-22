@@ -200,7 +200,10 @@ impl Objects {
         if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
             return Err("Game framebuffer is incomplete".into());
         }
+        #[cfg(not(feature = "no-game-image-reader"))]
         gl.clear_color(0., 0., 0., 1.);
+        #[cfg(feature = "no-game-image-reader")]
+        gl.clear_color(0.02, 0.08, 0.12, 1.);
         gl.clear(glow::COLOR_BUFFER_BIT);
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         let program = gl.create_program()?;

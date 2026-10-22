@@ -52,6 +52,11 @@ The fixed [PS2 observer](graphics-observer.md) uses `PSX_GRAPHICS_OBSERVER=1`
 for an explicit diagnostic build and isolated scratch progress. It exposes no
 player option and is excluded from ordinary builds. A candidate build grants
 no device access; installation needs separate admission and actual rollback.
+The matched reference additionally sets
+`PSX_GRAPHICS_OBSERVER_MODE=no-game-image-reader`; both arms retain the same
+native binary and require mode-matched scratch markers. Retain each APK and
+unstripped libraries before building the other arm, then verify their exact
+source/patch/mode/signature bindings.
 
 `xtask` is Rust. It builds the unmodified PS1 upstream CMake target, statically
 links its C++ runtime, builds the Rust NativeActivity library, generates the
