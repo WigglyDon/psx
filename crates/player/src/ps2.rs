@@ -31,12 +31,20 @@ pub fn revision() -> &'static str {
     use sha2::{Digest, Sha256};
     static BINDING: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     BINDING.get_or_init(|| {
-        format!(
+        let binding = format!(
             "{REVISION}+{:x}",
             Sha256::digest(include_bytes!(
                 "../../../patches/armsx2/0001-host-pause-and-card-flush.patch"
             ))
-        )
+        );
+        #[cfg(feature = "graphics-observer")]
+        let binding = format!(
+            "{binding}+observer:{:x}",
+            Sha256::digest(include_bytes!(
+                "../../../patches/armsx2/0002-development-graphics-observer.patch"
+            ))
+        );
+        binding
     })
 }
 /// Reviewed adapter/card/graphics repairs retain state/archive fields. Loading forces
@@ -474,6 +482,17 @@ impl Core {
             };
         }
         let init = symbol!("retro_init", unsafe extern "C" fn());
+        #[cfg(feature = "graphics-observer")]
+        crate::graphics_observer::session_ready();
+        #[cfg(feature = "graphics-observer")]
+        {
+            type Observe = unsafe extern "C" fn(u32, u32, u64, u32, u32, u32, *mut c_void) -> u64;
+            let set = symbol!(
+                "retro_psx_observer_set_callback",
+                unsafe extern "C" fn(Option<Observe>)
+            );
+            set(Some(crate::graphics_observer::callback));
+        }
         let api = symbol!("retro_api_version", unsafe extern "C" fn() -> u32);
         if api() != 1 {
             return Err("The PS2 engine interface is unsupported.".into());
@@ -615,6 +634,20 @@ impl Core {
         unsafe {
             (self.run_fn)();
         }
+        #[cfg(feature = "graphics-observer")]
+        crate::graphics_observer::event(
+            10,
+            [
+                self.output().hardware_frames as i64,
+                self.output().frame_width as i64,
+                self.output().frame_height as i64,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
+        );
     }
     pub fn set_frame_waker(&self, waker: Waker) {
         self.shared.frames.set_waker(waker);
@@ -698,6 +731,8 @@ fn checkpoint_extent(bytes: &[u8]) -> Result<usize> {
 }
 impl Drop for Core {
     fn drop(&mut self) {
+        #[cfg(feature = "graphics-observer")]
+        crate::graphics_observer::retiring();
         unsafe {
             // The native setter waits for any in-flight notification. Keep
             // Shared and its platform waker alive until all workers retire.
@@ -719,6 +754,18 @@ impl Drop for Core {
                 self.context = false;
             }
             (self.deinit)();
+            #[cfg(feature = "graphics-observer")]
+            {
+                type Observe =
+                    unsafe extern "C" fn(u32, u32, u64, u32, u32, u32, *mut c_void) -> u64;
+                if let Ok(set) = self.library.get::<unsafe extern "C" fn(Option<Observe>)>(
+                    b"retro_psx_observer_set_callback\0",
+                ) {
+                    set(None);
+                }
+                crate::graphics_observer::event(40, [0; 8]);
+                crate::graphics_observer::session_ready();
+            }
         }
         match self.native_signals.restore() {
             Ok(count) => eprintln!("psx: retired {count} PS2 fault handlers"),
@@ -1035,9 +1082,15 @@ mod tests {
     fn reviewed_repairs_accept_only_known_states_with_the_same_firmware() {
         let previous = format!("{REVISION}+510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1+firmware:fixture");
         let current = format!("{}+firmware:fixture", revision());
-        assert!(compatible_checkpoint_binding(&previous, &current));
+        assert_eq!(
+            compatible_checkpoint_binding(&previous, &current),
+            !cfg!(feature = "graphics-observer")
+        );
         let previous_graphics = format!("{REVISION}+4650bdf4b18c1a892780c11fba002af17f02235b88079e5be9d98ee2f3913a43+firmware:fixture");
-        assert!(compatible_checkpoint_binding(&previous_graphics, &current));
+        assert_eq!(
+            compatible_checkpoint_binding(&previous_graphics, &current),
+            !cfg!(feature = "graphics-observer")
+        );
         assert!(!compatible_checkpoint_binding(
             &previous,
             &format!("{}+firmware:different", revision())

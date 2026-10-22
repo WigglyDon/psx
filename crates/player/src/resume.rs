@@ -232,6 +232,7 @@ mod tests {
             (prior.replacen("878bdd9e", "00000000", 1), false),
             (prior.replace(&suffix, "other firmware"), false),
         ] {
+            let allowed = allowed && !cfg!(feature = "graphics-observer");
             metadata.core = binding;
             let header = serde_json::to_vec(&metadata).unwrap();
             let mut old = MAGIC.to_vec();

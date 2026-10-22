@@ -65,6 +65,52 @@ pub fn verify_resources(apk: &Path) -> Result<()> {
     Ok(())
 }
 const PATCH: &str = "patches/armsx2/0001-host-pause-and-card-flush.patch";
+const OBSERVER_PATCH: &str = "patches/armsx2/0002-development-graphics-observer.patch";
+pub fn observer_enabled() -> bool {
+    env::var("PSX_GRAPHICS_OBSERVER").as_deref() == Ok("1")
+}
+pub fn warm_observer_cache() -> bool {
+    if !observer_enabled()
+        || !Path::new("build/armsx2-android/bin/armsx2_libretro.so").is_file()
+        || !Path::new("build/armsx2-deps/lib/libshaderc_combined.a").is_file()
+    {
+        return false;
+    }
+    let Some(source) =
+        env::var_os("PSX_PS2_CORE_SOURCE").and_then(|path| PathBuf::from(path).canonicalize().ok())
+    else {
+        return false;
+    };
+    fs::read_to_string("build/armsx2-android/CMakeCache.txt").is_ok_and(|cache| {
+        cache
+            .lines()
+            .any(|line| line == format!("CMAKE_HOME_DIRECTORY:INTERNAL={}", source.display()))
+    }) && output(command("git", ["rev-parse", "HEAD"]).current_dir(source))
+        .is_ok_and(|head| head.trim() == REVISION)
+}
+fn observer_diff(source: &Path) -> Result<Vec<u8>> {
+    // A separate temporary index derives the exact combined patch without
+    // changing the retained donor's real index or accepting unknown edits.
+    let index = env::current_dir()?.join("build/observer-native.index");
+    if index.exists() {
+        return Err("Unfinished observer index is preserved; inspect before reuse".into());
+    }
+    let git = |args: &[&str]| {
+        let mut c = command("git", args);
+        c.current_dir(source).env("GIT_INDEX_FILE", &index);
+        c
+    };
+    execute(&mut git(&["read-tree", REVISION]))?;
+    for path in [PATCH, OBSERVER_PATCH] {
+        execute(git(&["apply", "--cached"]).arg(Path::new(path).canonicalize()?))?;
+    }
+    let output = git(&["diff", "--cached", "--binary"]).output()?;
+    if !output.status.success() {
+        return Err("Could not derive observer source binding".into());
+    }
+    fs::remove_file(index)?;
+    Ok(output.stdout)
+}
 pub fn verify() -> Result<()> {
     let source = Path::new("vendor/armsx2");
     if hash(&source.join("COPYING.GPLv3"))? != CORE_LICENSE {
@@ -343,8 +389,22 @@ pub fn build() -> Result<()> {
     let source = env::var_os("PSX_PS2_CORE_SOURCE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("build/armsx2-source"));
-    let expected = fs::read(PATCH)?;
+    let mut expected = fs::read(PATCH)?;
     if source.join(".git").exists() {
+        if observer_enabled() {
+            let actual = command("git", ["diff", "--binary"])
+                .current_dir(&source)
+                .output()?
+                .stdout;
+            if actual == expected {
+                execute(
+                    command("git", ["apply"])
+                        .arg(Path::new(OBSERVER_PATCH).canonicalize()?)
+                        .current_dir(&source),
+                )?;
+            }
+            expected = observer_diff(&source)?;
+        }
         if output(command("git", ["rev-parse", "HEAD"]).current_dir(&source))?.trim() != REVISION
             || command("git", ["diff", "--binary"])
                 .current_dir(&source)
@@ -358,7 +418,10 @@ pub fn build() -> Result<()> {
         }
     } else {
         let marker = source.join(".psx-source-pin");
-        let binding = format!("{REVISION}\n{}\n", hash(Path::new(PATCH))?);
+        let mut binding = format!("{REVISION}\n{}\n", hash(Path::new(PATCH))?);
+        if observer_enabled() {
+            binding.push_str(&format!("observer:{}\n", hash(Path::new(OBSERVER_PATCH))?));
+        }
         if !source.exists() {
             if upstream.join(".psx-source-manifest").exists() {
                 copy_tree(upstream, &source)?;
@@ -375,6 +438,13 @@ pub fn build() -> Result<()> {
                     patch.as_os_str(),
                 ],
             ))?;
+            if observer_enabled() {
+                execute(
+                    command("git", ["apply", "--directory"])
+                        .arg(&source)
+                        .arg(Path::new(OBSERVER_PATCH).canonicalize()?),
+                )?;
+            }
             fs::write(&marker, &binding)?;
             // A marker alone would miss later edits in reusable source staging.
             let _ = fs::remove_file(source.join(".psx-source-manifest"));

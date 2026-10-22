@@ -158,3 +158,11 @@ checkpoint writes always record the complete new patch identity.
 
 Original file licenses remain applicable to these modifications. No upstream
 acceptance or device gameplay result is implied by this patch.
+
+`PSX_GRAPHICS_OBSERVER=1` additionally applies
+`0002-development-graphics-observer.patch`. Its native additions are numeric
+call sites, a frame token and callback glue; observation, error retention and
+bounded export live in Rust. Ordinary builds reject this second patch. It
+changes the diagnostic checkpoint binding without relaxing compatibility.
+See [the observer contract](../../docs/graphics-observer.md) for isolation,
+limitations and the separately admitted real-workload procedure.

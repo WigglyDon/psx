@@ -5,6 +5,12 @@ experience while qualifying a PS2 engine and shared direct-game launch.
 PS2 implementation and qualification are in progress; the existing PS1
 observations do not establish PS2 acceptance.
 
+Ordinary use remains pick a game and play, with no emulator tuning catalog or
+technical configuration flow. Engine/backend decisions belong to the product.
+Controller customization, volume and time remain ordinary player features. The
+[development graphics observer](graphics-observer.md) is explicitly compiled,
+private and isolated from normal progress; it exposes no player option.
+
 ## Product boundary
 
 psx is a native PS1 player with a small user experience. Rust owns the app.

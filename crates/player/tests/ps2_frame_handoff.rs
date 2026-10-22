@@ -7,6 +7,21 @@ use libloading::Library;
 use std::{fs, process::Command, sync::mpsc, sync::Mutex, time::Duration};
 
 static WAKE: Mutex<Option<mpsc::SyncSender<()>>> = Mutex::new(None);
+#[cfg(feature = "graphics-observer")]
+static OBSERVED: Mutex<Vec<(u32, u32, u64)>> = Mutex::new(Vec::new());
+#[cfg(feature = "graphics-observer")]
+unsafe extern "C" fn observe(
+    stage: u32,
+    owner: u32,
+    frame: u64,
+    _texture: u32,
+    _w: u32,
+    _h: u32,
+    _fence: *mut std::ffi::c_void,
+) -> u64 {
+    OBSERVED.lock().unwrap().push((stage, owner, frame));
+    frame
+}
 unsafe extern "C" fn wake() {
     if let Some(tx) = &*WAKE.lock().unwrap() {
         let _ = tx.try_send(());
@@ -38,7 +53,30 @@ fn published_frames_wake_without_waiting_for_a_frontend_tick_and_retire_cleanly(
         "{}",
         String::from_utf8_lossy(&patch.stderr)
     );
+    #[cfg(feature = "graphics-observer")]
+    assert!(Command::new("git")
+        .args([
+            "apply",
+            "--include=pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp"
+        ])
+        .arg(repo.join("patches/armsx2/0002-development-graphics-observer.patch"))
+        .current_dir(&temp)
+        .status()
+        .unwrap()
+        .success());
     let source = fs::read_to_string(temp.join(relative)).unwrap();
+    let observer = if cfg!(feature = "graphics-observer") {
+        source
+            .split_once("\t// Installed before CPU/GS boot")
+            .unwrap()
+            .1
+            .split_once("\n\tnamespace\n\t{")
+            .unwrap()
+            .0
+            .replacen(" and retired only after their join.", "", 1)
+    } else {
+        "\nstatic Observer s_observer=nullptr;\nvoid SetObserver(Observer observer) {s_observer=observer;}\n".to_owned()
+    };
     let (_, handoff) = source
         .split_once("// GS thread -> retro_run frame handoff")
         .unwrap();
@@ -46,12 +84,15 @@ fn published_frames_wake_without_waiting_for_a_frontend_tick_and_retire_cleanly(
     // is extracted verbatim from pinned GPL donor source plus our tracked patch.
     let fixture = format!(
         r#"
+// SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
+// SPDX-License-Identifier: GPL-3.0+
 #include <mutex>
 #include <condition_variable>
 #include <cstdint>
 #include <atomic>
 #include <vector>
 using u64 = std::uint64_t;
+using u32 = std::uint32_t;
 using GLuint = unsigned;
 using GLsync = void*;
 constexpr auto GL_TIMEOUT_IGNORED = ~std::uint64_t(0);
@@ -68,11 +109,16 @@ void glDeleteSync(GLsync fence) {{
 namespace GLLibretro {{
 bool Active = false;
 void ReleaseFrontendContext() {{}}
-struct Frame {{ unsigned texture = 0; GLsync fence = nullptr; unsigned width = 0, height = 0; }};
+struct Frame {{ unsigned texture = 0; GLsync fence = nullptr; unsigned width = 0, height = 0; u64 observation=0; }};
+using Observer=u64 (*)(unsigned,unsigned,u64,unsigned,unsigned,unsigned,GLsync);
+// The conditional body is extracted from the actual diagnostic patch.
+// Comment prefix retained here for the extracted first line:
+// Installed before CPU/GS boot{observer}
 {handoff}
+extern "C" void set_observer(GLLibretro::Observer observer) {{GLLibretro::SetObserver(observer);}}
 extern "C" void set_callback(void (*cb)()) {{ GLLibretro::SetFrameReadyCallback(cb); }}
 extern "C" void set_pacing(bool value) {{ GLLibretro::SetPacing(value); }}
-extern "C" void publish() {{ GLLibretro::Frame frame; frame.texture = 1; GLLibretro::PublishFrame(frame); }}
+extern "C" void publish() {{ GLLibretro::Frame frame; frame.texture = 1; frame.observation=77; GLLibretro::PublishFrame(frame); }}
 static GLLibretro::Frame consumed;
 extern "C" bool consume() {{ return GLLibretro::ConsumeFrame(&consumed); }}
 extern "C" void complete() {{ GLLibretro::CompleteFrame(consumed, reinterpret_cast<void*>(1)); }}
@@ -104,6 +150,15 @@ extern "C" void shutdown_handoff() {{ GLLibretro::Shutdown(); }}
     );
     unsafe {
         let library = Library::new(temp.join("fixture.so")).unwrap();
+        #[cfg(feature = "graphics-observer")]
+        {
+            type Observer =
+                unsafe extern "C" fn(u32, u32, u64, u32, u32, u32, *mut std::ffi::c_void) -> u64;
+            let set = *library
+                .get::<unsafe extern "C" fn(Option<Observer>)>(b"set_observer\0")
+                .unwrap();
+            set(Some(observe));
+        }
         let callback = *library
             .get::<unsafe extern "C" fn(Option<unsafe extern "C" fn()>)>(b"set_callback\0")
             .unwrap();
@@ -215,6 +270,19 @@ extern "C" void shutdown_handoff() {{ GLLibretro::Shutdown(); }}
         assert_eq!(deletes(), 2);
         assert_eq!(order_errors(), 0);
         shutdown();
+        #[cfg(feature = "graphics-observer")]
+        {
+            let observations = OBSERVED.lock().unwrap();
+            for expected in [(3, 1, 77), (4, 2, 77), (8, 1, 77)] {
+                assert!(observations.contains(&expected), "missing {expected:?}");
+            }
+            type Observer =
+                unsafe extern "C" fn(u32, u32, u64, u32, u32, u32, *mut std::ffi::c_void) -> u64;
+            let set = *library
+                .get::<unsafe extern "C" fn(Option<Observer>)>(b"set_observer\0")
+                .unwrap();
+            set(None);
+        }
     }
     fs::remove_dir_all(temp).unwrap();
 }

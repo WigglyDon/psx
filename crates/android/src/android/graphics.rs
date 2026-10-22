@@ -12,6 +12,15 @@ use std::ffi::{c_char, CStr};
 use text::Text;
 
 const API: egl::Instance<egl::Static> = egl::Instance::new(egl::Static);
+#[cfg(feature = "graphics-observer")]
+fn observer_binding() -> (usize, usize) {
+    (
+        API.get_current_context()
+            .map_or(0, |context| context.as_ptr() as usize),
+        API.get_current_surface(egl::DRAW)
+            .map_or(0, |surface| surface.as_ptr() as usize),
+    )
+}
 const VERTEX_FLOATS: usize = 16;
 const SHEET_RADIUS: f32 = 3.;
 pub struct Graphics {
@@ -70,6 +79,8 @@ impl Graphics {
     /// EGL and all GL calls live on android_main, the sole core owner. A tiny
     /// pbuffer preserves the context while Android replaces its window surface.
     pub unsafe fn new() -> Result<Self, String> {
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::initialize(proc_address, observer_binding);
         let display = API
             .get_display(egl::DEFAULT_DISPLAY)
             .ok_or("No EGL display")?;
@@ -118,6 +129,8 @@ impl Graphics {
                 return Err(error);
             }
         };
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::event(43, [0; 8]);
         Ok(Self {
             display,
             config,
@@ -329,6 +342,8 @@ impl Graphics {
         };
         if bind(previous).is_ok() {
             self.objects.destroy();
+            #[cfg(feature = "graphics-observer")]
+            psx_player::graphics_observer::sample(41, [0; 8]);
         } else {
             // A lost old context cannot accept glDelete*. EGL destruction
             // below reclaims that group's objects without entering it.
@@ -342,6 +357,8 @@ impl Graphics {
         }
         let _ = API.destroy_context(self.display, previous);
         result?;
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::event(43, [0; 8]);
         log::info!("Replaced player EGL context after runtime retirement");
         Ok(())
     }
@@ -363,6 +380,8 @@ impl Graphics {
         API.swap_interval(self.display, 0)
             .map_err(|e| e.to_string())?;
         self.surface = Some(surface);
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::event(44, [0; 8]);
         self.resize()?;
         Ok(())
     }
@@ -418,9 +437,37 @@ impl Graphics {
         visuals: &Visuals,
     ) -> Result<(), RenderError> {
         if self.surface.is_none() {
+            #[cfg(feature = "graphics-observer")]
+            psx_player::graphics_observer::event(
+                11,
+                [
+                    frame.map_or(0, |frame| frame.0) as i64,
+                    frame.map_or(0, |frame| frame.1) as i64,
+                    1024,
+                    1024,
+                    self.width as i64,
+                    self.height as i64,
+                    0,
+                    2,
+                ],
+            );
             return Ok(());
         }
         self.check_context()?;
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::sample(
+            11,
+            [
+                frame.map_or(0, |frame| frame.0) as i64,
+                frame.map_or(0, |frame| frame.1) as i64,
+                1024,
+                1024,
+                self.width as i64,
+                self.height as i64,
+                i64::from(frame.is_some_and(|(w, h, _)| w > 0 && h > 0 && w <= 1024 && h <= 1024)),
+                0,
+            ],
+        );
         let gl = &self.objects.gl;
         // The donor caches its current program, including across duplicate
         // frames. Restore the actual program after frontend drawing rather
@@ -459,6 +506,20 @@ impl Graphics {
                 let right = (self.content.x + (r.x + r.w) * density).round() as i32;
                 let bottom_edge = (self.content.y + (r.y + r.h) * density).round() as i32;
                 gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(self.objects.fbo));
+                #[cfg(feature = "graphics-observer")]
+                psx_player::graphics_observer::sample(
+                    15,
+                    [
+                        w as i64,
+                        h as i64,
+                        1024,
+                        1024,
+                        x as i64,
+                        top as i64,
+                        right as i64,
+                        bottom_edge as i64,
+                    ],
+                );
                 let (bottom, top_source) = if bottom_left {
                     (0, h as i32)
                 } else {
@@ -479,6 +540,20 @@ impl Graphics {
                 gl.bind_framebuffer(glow::FRAMEBUFFER, None);
             }
         }
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::sample(
+            12,
+            [
+                frame.map_or(0, |frame| frame.0) as i64,
+                frame.map_or(0, |frame| frame.1) as i64,
+                1024,
+                1024,
+                self.width as i64,
+                self.height as i64,
+                i64::from(frame.is_some_and(|(w, h, _)| w > 0 && h > 0 && w <= 1024 && h <= 1024)),
+                0,
+            ],
+        );
         let w = self.content.w / density;
         let h = self.content.h / density;
         let origin = [self.content.x / density, self.content.y / density];
@@ -714,18 +789,42 @@ impl Graphics {
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.bind_sampler(0, saved_sampler);
         gl.disable(glow::BLEND);
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::sample(13, [0; 8]);
         self.check_context()?;
-        API.swap_buffers(self.display, self.surface.unwrap())
-            .map_err(RenderError::Egl)
+        // Retain the actual returned EGL failure, never a later error query.
+        let swapped = API.swap_buffers(self.display, self.surface.unwrap());
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::event(
+            14,
+            [
+                i64::from(swapped.is_ok()),
+                swapped.as_ref().err().map_or(0, |error| *error as i32) as i64,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
+        );
+        swapped.map_err(RenderError::Egl)
     }
 
     unsafe fn check_context(&self) -> Result<(), RenderError> {
+        #[cfg(feature = "graphics-observer")]
+        if let Some(code) = psx_player::graphics_observer::take_fatal() {
+            return Err(RenderError::Gl(code));
+        }
         // Check only at the frontend handoff, on its GL owner. A pending
         // argument/state error is not device loss. OOM makes GL state undefined;
         // context loss cannot be repaired by waiting for another window event.
         // Bound the drain even if a failed driver repeats the same error.
         for _ in 0..8 {
-            match self.objects.gl.get_error() {
+            let error = self.objects.gl.get_error();
+            #[cfg(feature = "graphics-observer")]
+            psx_player::graphics_observer::existing_error(error);
+            match error {
                 glow::NO_ERROR => break,
                 code @ (glow::CONTEXT_LOST | glow::OUT_OF_MEMORY) => {
                     return Err(RenderError::Gl(code));
@@ -753,6 +852,8 @@ impl Drop for Graphics {
             let _ = self.detach();
             if self.restore_current().is_ok() {
                 self.objects.destroy();
+                #[cfg(feature = "graphics-observer")]
+                psx_player::graphics_observer::sample(41, [0; 8]);
             }
             let _ = API.make_current(self.display, None, None, None);
             let _ = API.destroy_surface(self.display, self.pbuffer);

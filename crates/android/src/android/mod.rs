@@ -188,6 +188,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     let root = app
         .internal_data_path()
         .ok_or("App storage is unavailable.")?;
+    let root = psx_player::graphics_observer::storage_root(&root).map_err(|e| e.to_string())?;
     fs::create_dir_all(root.join("system")).map_err(|e| e.to_string())?;
     fs::create_dir_all(root.join("saves")).map_err(|e| e.to_string())?;
     let platform = unsafe { Platform::new(&app)? };
@@ -596,10 +597,17 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 Err(error) => player.render_failed(error),
             }
         }
+        #[cfg(feature = "graphics-observer")]
+        psx_player::graphics_observer::service(&player.root, false);
     }
     player.stop_sound();
     player.cancel_work.store(true, Ordering::Relaxed);
     let result = player.unload(false);
+    #[cfg(feature = "graphics-observer")]
+    {
+        psx_player::graphics_observer::service(&player.root, true);
+        psx_player::graphics_observer::join_export();
+    }
     player.platform.focus(&app, false);
     player.platform.background(&app, false);
     result
@@ -679,6 +687,8 @@ impl Player {
                     self.platform.focus(app, false);
                 }
                 self.checkpoint_interruption()?;
+                #[cfg(feature = "graphics-observer")]
+                psx_player::graphics_observer::service(&self.root, true);
             }
             MainEvent::SaveState { .. } => {
                 self.checkpoint_interruption()?;

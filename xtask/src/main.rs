@@ -40,7 +40,17 @@ fn run() -> Result<()> {
         _ => None,
     };
     let _growth = match operation.as_deref() {
-        Some("apk" | "ps2") => Some(storage::Growth::begin(&root, 8 * storage::GIB)?),
+        // A source-matched warm diagnostic build reuses the existing native
+        // objects/dependencies (<1 GiB here), not the 8 GiB cold-build peak.
+        // Keep the full shared reserve and check again between every step.
+        Some("apk" | "ps2") => Some(storage::Growth::begin(
+            &root,
+            if ps2::warm_observer_cache() {
+                3 * storage::GIB
+            } else {
+                8 * storage::GIB
+            },
+        )?),
         Some("firmware") => Some(storage::Growth::begin(&root, storage::GIB)?),
         Some("notices") => Some(storage::Growth::begin(&root, 64 * 1024 * 1024)?),
         _ => None,
@@ -497,6 +507,9 @@ fn apk() -> Result<()> {
         ],
     );
     let scoped_storage = env::var_os("PSX_SCOPED_STORAGE").is_some();
+    if ps2::observer_enabled() {
+        rust.args(["--features", "graphics-observer"]);
+    }
     if scoped_storage {
         rust.arg("--no-default-features");
     }
@@ -612,6 +625,28 @@ public final class PlaybackService extends android.app.Service {
     ))?;
     notices()?;
     ps2::resources()?;
+    let observer_manifest = Path::new("build/apk/assets/development-observer.json");
+    if ps2::observer_enabled() {
+        let revision = if Path::new(".git").exists() {
+            output(&mut command("git", ["rev-parse", "HEAD"]))?
+                .trim()
+                .to_owned()
+        } else {
+            serde_json::from_slice::<serde_json::Value>(&fs::read("SOURCE-CHECK.json")?)?
+                ["projectRevision"]
+                .as_str()
+                .ok_or("Missing source identity")?
+                .to_owned()
+        };
+        fs::write(
+            observer_manifest,
+            serde_json::to_vec_pretty(
+                &serde_json::json!({"projectRevision":revision,"developmentOnly":true,"scratch":"observer-scratch-v1","normalAdapterSha256":hash(Path::new("patches/armsx2/0001-host-pause-and-card-flush.patch"))?,"observerPatchSha256":hash(Path::new("patches/armsx2/0002-development-graphics-observer.patch"))?,"observerRustSha256":hash(Path::new("crates/player/src/graphics_observer.rs"))?,"maxExportBytes":786432}),
+            )?,
+        )?;
+    } else if observer_manifest.exists() {
+        fs::remove_file(observer_manifest)?;
+    }
     execute(&mut command(
         build.join("aapt2"),
         [

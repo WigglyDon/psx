@@ -17,6 +17,11 @@ retain its valuable implementation and qualify the pinned
 ARMSX2 libretro ARM64 candidate for PS2 before expanding the host boundary.
 Retain its original C/C++ and exact dependency/license provenance.
 
+Ordinary use is pick a game and play. Choose the qualified engine, backend and
+compatibility policy internally; do not add a core/backend selector or emulator
+tuning catalog. Development observation is a build-only capability with isolated
+scratch progress, never a player setting or an ordinary-release execution path.
+
 The active Master engineering correction on #2 permits targeted core repairs,
 boot/HLE work and justified Rust subsystem replacements for concrete product
 needs. Prefer the smallest coherent, testable solution wherever it belongs;

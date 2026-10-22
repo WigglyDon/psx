@@ -5,6 +5,7 @@ pub mod controller_profiles;
 pub mod engine;
 pub mod files;
 mod firmware;
+pub mod graphics_observer;
 pub mod input;
 pub mod library;
 mod native_signals;

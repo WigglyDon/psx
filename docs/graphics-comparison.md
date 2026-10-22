@@ -1,5 +1,9 @@
 # PS2 shared-context comparison
 
+The accepted small comparison is followed by the implemented
+[development full-path observer](graphics-observer.md). Do not repeat the
+passing generated probe as a substitute for its real-workload observation.
+
 [PLAYER-2's focused graphics disposition](https://github.com/WigglyDon/psx/issues/2#issuecomment-6333844620)
 requires separating a graphics failure from its later submission/wait symptoms.
 The returned `552d7da` trial and its exact identities are recorded in
@@ -187,13 +191,14 @@ All prior receipts remain preserved. Final process retirement, fixture/directory
 removal, physical OFF and lease release were verified; no security-lock claim.
 The Fold, application, saves and retained rollback artifacts were untouched.
 
-## Prepared next observation scope (off-device only)
+## Full-path observation following this comparison
 
 The missing distinction is now **real GS output before handoff versus its copy
 and final application presentation**, using the application's actual loader,
 UID and NativeActivity window. Another generated clear/pbuffer pass cannot
-answer it. The following source boundaries were reviewed for the next packet;
-no observation build, configuration option or further device session is enabled:
+answer it. The [implemented observer](graphics-observer.md) follows these
+boundaries under the subsequent Master disposition; physical use still needs
+its exact separate admission:
 
 | Owner/boundary | Observation needed |
 | --- | --- |
@@ -220,8 +225,7 @@ requires a separately reviewed matched full-renderer or private pixel-observatio
 comparison, rather than inferring a driver cause. Instrumentation can perturb
 timing and must be labeled accordingly.
 
-This is a precise next scope, not an implemented/qualified observer or a requested
-physical trial. A later real-workload build needs its own exact patch/APK/source
+The real-workload build needs its own exact patch/APK/source
 binding, actual current-data backup/rollback and private-input authority before
 any separately admitted test. PS1 recovery and the last valid PS2 checkpoint/card
 must remain authoritative; no new checkpoint may replace them after a reported
