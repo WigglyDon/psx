@@ -507,6 +507,16 @@ reference crosses native threads. The binding and library remain alive until
 native context destruction and CPU/GS teardown finish. Both bindings acquire
 the same process core lease, inside the entry's durable writer lease.
 
+On ordinary PS2 game closure, Rust retires the frame notification, pauses and
+unloads the VM (joining CPU/GS), then calls the context-destroy callback while
+the frontend context remains current. Normal GS closure destroys its shared
+worker context; invoking the donor's context-loss callback first deliberately
+abandons that context because it assumes the frontend display is going away.
+The player's EGL display instead survives game switches. Partial startup still
+retires whichever VM/context stages actually completed, before native deinit,
+fault-handler restoration and library release. This ordering is separate from
+qualification of actual GPU-driver rendering and warm console switching.
+
 The native GS handoff publishes one frame and waits for its consumption.
 A narrow C-ABI notification wakes Rust's existing event-loop owner immediately;
 an atomic pending bit coalesces signals and survives attaching the platform

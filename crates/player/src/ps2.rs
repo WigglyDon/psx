@@ -703,16 +703,19 @@ impl Drop for Core {
             (self.frame_callback_fn)(None);
             if self.loaded {
                 let _ = self.pause(true);
+                // Our EGL display/share group survives a game switch. Join
+                // the CPU/GS owners first so their normal live-context path
+                // frees resources and destroys the shared worker context.
+                // context_destroy is the donor's context-loss path; calling
+                // it first deliberately abandons that context instead.
+                (self.unload)();
+                self.loaded = false;
             }
             if self.context {
                 if let Some(destroy) = self.output().hw.and_then(|hw| hw.destroy) {
                     destroy();
                 }
                 self.context = false;
-            }
-            if self.loaded {
-                (self.unload)();
-                self.loaded = false;
             }
             (self.deinit)();
         }
@@ -1019,6 +1022,10 @@ pub fn card_identity(root: &Path) -> std::io::Result<Vec<u8>> {
 #[cfg(all(test, target_os = "linux"))]
 #[path = "ps2_checkpoint_test.rs"]
 mod checkpoint_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "ps2_teardown_test.rs"]
+mod teardown_tests;
 
 #[cfg(test)]
 mod tests {
