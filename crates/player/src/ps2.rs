@@ -39,18 +39,19 @@ pub fn revision() -> &'static str {
         )
     })
 }
-/// Reviewed adapter/card repairs retain state/archive fields. Loading forces
+/// Reviewed adapter/card/graphics repairs retain state/archive fields. Loading forces
 /// normal card renegotiation, never replacement of current media. Future edits
 /// disable this exact compatibility exception.
 pub fn compatible_checkpoint_binding(saved: &str, current: &str) -> bool {
-    const BEFORE: [&str; 5] = [
+    const BEFORE: [&str; 6] = [
         "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
         "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
         "23a0b217e21a9442dde06b009aa6911f782c083a5ff5c37593b415d615309765",
         "9f5bf1a2a6d6aa228d7789eb0e38bc7cb62c94c98ca12e6a88d36fd8899c01ac",
         "510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1",
+        "4650bdf4b18c1a892780c11fba002af17f02235b88079e5be9d98ee2f3913a43",
     ];
-    const AFTER: &str = "4650bdf4b18c1a892780c11fba002af17f02235b88079e5be9d98ee2f3913a43";
+    const AFTER: &str = "90b35554198d3cd87cb8be3e17747fd4bda348f2262627c471cc338afd5ff3a9";
     if revision() != format!("{REVISION}+{AFTER}") {
         return false;
     }
@@ -1031,10 +1032,12 @@ mod teardown_tests;
 mod tests {
     use super::*;
     #[test]
-    fn reviewed_card_repair_accepts_only_known_states_with_the_same_firmware() {
+    fn reviewed_repairs_accept_only_known_states_with_the_same_firmware() {
         let previous = format!("{REVISION}+510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1+firmware:fixture");
         let current = format!("{}+firmware:fixture", revision());
         assert!(compatible_checkpoint_binding(&previous, &current));
+        let previous_graphics = format!("{REVISION}+4650bdf4b18c1a892780c11fba002af17f02235b88079e5be9d98ee2f3913a43+firmware:fixture");
+        assert!(compatible_checkpoint_binding(&previous_graphics, &current));
         assert!(!compatible_checkpoint_binding(
             &previous,
             &format!("{}+firmware:different", revision())
@@ -1045,7 +1048,7 @@ mod tests {
         ));
         assert!(!compatible_checkpoint_binding(
             &previous,
-            &current.replace("4650bdf4", "ffffffff")
+            &current.replace("90b35554", "ffffffff")
         ));
     }
     #[test]

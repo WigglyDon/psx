@@ -29,6 +29,21 @@ not qualify a future Vulkan host. A focused Linux test applies this patch to
 the pinned donor and compiles its actual handoff with mechanical GL stubs;
 it checks notification, consumption and shutdown, not GPU execution or speed.
 
+The GLES backbuffer ring also needs reverse ordering. `ConsumeFrame` releases
+the producer's pacing wait before the frontend has queued its texture blit;
+three buffers alone do not prevent reuse before that read completes. The
+frontend now flushes a completion fence after the blit. Before overwriting,
+resizing or deleting that particular backbuffer, the GS owner waits for the
+frontend to publish its fence, then queues a server-side wait and retires it.
+Other backbuffers remain available. With pacing disabled, an unread frame is
+withdrawn before its texture is overwritten. The existing handoff mutex owns
+these transfers; fences remain bounded by the three retained backbuffers.
+No per-frame CPU `glFinish`, new rendering backend or emulated-state change is
+introduced. The actual-helper fixture verifies delayed completion, different
+backbuffer use, exactly-once wait/deletion and unread-frame withdrawal. Device
+graphics stability and performance remain unverified for this repair.
+See [Khronos synchronization guidance](https://wikis.khronos.org/opengl/Synchronization).
+
 Time-scale updates release the frame handoff before the blocking CPU callback
 and update only the existing nominal scalar/limiter deadline, without a full
 VM settings reload or pause/resume transition. Zero in this C ABI selects the
@@ -136,8 +151,8 @@ other unsafe-setting diagnostics remain. Those rendering repairs, frame
 notification, capture/packaging and the reply-padding correction change no
 emulated state or archive fields. The card repairs do change wire/restore
 behavior. Rust permits only the exact prior `878bdd9e…`, `92542cb6…`,
-`23a0b217…`, `9f5bf1a2…` and `510a3f5e…` patches to resume into this exact
-`4650bdf4…` patch, retaining other input/card/payload checks. A future native edit disables
+`23a0b217…`, `9f5bf1a2…`, `510a3f5e…` and `4650bdf4…` patches to resume into this exact
+`90b35554…` patch, retaining other input/card/payload checks. A future native edit disables
 that explicit exception. New
 checkpoint writes always record the complete new patch identity.
 

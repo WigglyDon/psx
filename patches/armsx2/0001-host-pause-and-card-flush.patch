@@ -1,5 +1,5 @@
 diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
-index 24210fb06..fcd15e2ad 100644
+index 24210fb06..eeb5700a1 100644
 --- a/pcsx2-libretro/Main.cpp
 +++ b/pcsx2-libretro/Main.cpp
 @@ -77,6 +77,9 @@
@@ -50,7 +50,21 @@ index 24210fb06..fcd15e2ad 100644
  	{
  		auto lock = Host::GetSettingsLock();
  
-@@ -2357,6 +2384,141 @@ RETRO_API size_t retro_serialize_size(void)
+@@ -2282,6 +2309,13 @@ RETRO_API void retro_run(void)
+ 			glBlitFramebuffer(0, 0, frame.width, frame.height, 0, 0, frame.width, frame.height,
+ 				GL_COLOR_BUFFER_BIT, GL_NEAREST);
+ 
++			// The opposite direction needs ordering too: picking up a frame
++			// does not mean our asynchronous read has finished. Flush a fence
++			// before releasing this texture for the GS owner's next reuse.
++			const GLsync read_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++			glFlush();
++			GLLibretro::CompleteFrame(frame, read_fence);
++
+ 			// bottom_left_origin is set, so the frontend reads the lower-left
+ 			// frame.width x frame.height of its framebuffer - which is exactly
+ 			// where a GL blit to (0,0) lands.
+@@ -2357,6 +2391,141 @@ RETRO_API size_t retro_serialize_size(void)
  	return VMManager::HasValidVM() ? kSerializeSize : 0;
  }
  
@@ -192,7 +206,7 @@ index 24210fb06..fcd15e2ad 100644
  RETRO_API bool retro_serialize(void* data, size_t size)
  {
  	if (!VMManager::HasValidVM())
-@@ -2384,7 +2546,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
+@@ -2384,7 +2553,9 @@ RETRO_API bool retro_serialize(void* data, size_t size)
  			Console.ErrorFmt("retro_serialize: DownloadState failed: {}", error.GetDescription());
  			return;
  		}
@@ -204,18 +218,22 @@ index 24210fb06..fcd15e2ad 100644
  			Console.ErrorFmt("retro_serialize: ZipToBuffer failed: {}", error.GetDescription());
  	}, true);
 diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
-index 532ccf780..c278ff9f3 100644
+index 532ccf780..cafd2530e 100644
 --- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
 +++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
-@@ -144,6 +144,7 @@ namespace GLLibretro
+@@ -143,7 +143,11 @@ namespace GLLibretro
+ 		Frame s_frame;
  		u64 s_frame_serial = 0;
  		u64 s_frame_consumed = 0;
++		GLuint s_read_texture = 0;
++		// At most one per backbuffer, retired before its next write or deletion.
++		std::vector<Frame> s_frontend_reads;
  		bool s_pacing = false;
 +		void (*s_frame_ready_callback)() = nullptr;
  	} // namespace
  
  	void PublishFrame(const Frame& frame)
-@@ -158,6 +159,8 @@ namespace GLLibretro
+@@ -158,6 +162,8 @@ namespace GLLibretro
  
  		s_frame = frame;
  		s_frame_serial++;
@@ -224,7 +242,71 @@ index 532ccf780..c278ff9f3 100644
  
  		// Block the GS thread until retro_run picks the frame up (or pacing
  		// gets aborted for shutdown): one presented frame per retro_run.
-@@ -186,6 +189,14 @@ namespace GLLibretro
+@@ -168,11 +174,12 @@ namespace GLLibretro
+ 	bool ConsumeFrame(Frame* out_frame)
+ 	{
+ 		std::lock_guard<std::mutex> lock(s_frame_mutex);
+-		if (s_frame_serial == s_frame_consumed || s_frame.texture == 0)
++		if (s_frame_serial == s_frame_consumed || s_frame.texture == 0 || s_read_texture != 0)
+ 			return false;
+ 
+ 		s_frame_consumed = s_frame_serial;
+ 		*out_frame = s_frame;
++		s_read_texture = s_frame.texture;
+ 		// The caller owns the fence now; clearing it here keeps PublishFrame
+ 		// from also retiring it.
+ 		s_frame.fence = nullptr;
+@@ -180,12 +187,64 @@ namespace GLLibretro
+ 		return true;
+ 	}
+ 
++	void CompleteFrame(const Frame& frame, GLsync read_fence)
++	{
++		std::lock_guard<std::mutex> lock(s_frame_mutex);
++		// Consume/complete are paired on the single frontend GL owner. Until
++		// completion, the producer cannot overwrite this texture even if it
++		// laps all three backbuffers or pacing is disabled for interruption.
++		Frame read;
++		read.texture = frame.texture;
++		read.fence = read_fence;
++		s_frontend_reads.push_back(read);
++		s_read_texture = 0;
++		s_frame_consumed_cv.notify_all();
++	}
++
++	void WaitForFrontend(GLuint texture)
++	{
++		std::unique_lock<std::mutex> lock(s_frame_mutex);
++		// With pacing disabled a published but unread frame can be lapped.
++		// Withdraw it before overwriting, so ConsumeFrame cannot acquire it
++		// after this check. Its producer fence is still ours to delete.
++		if (s_frame.texture == texture && s_frame_serial != s_frame_consumed)
++		{
++			if (s_frame.fence)
++				glDeleteSync(s_frame.fence);
++			s_frame = Frame();
++			s_frame_consumed = s_frame_serial;
++		}
++		s_frame_consumed_cv.wait(lock, [texture]() { return s_read_texture != texture; });
++		for (auto it = s_frontend_reads.begin(); it != s_frontend_reads.end(); ++it)
++		{
++			if (it->texture != texture)
++				continue;
++			const GLsync fence = it->fence;
++			s_frontend_reads.erase(it);
++			lock.unlock();
++			if (fence)
++			{
++				glWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
++				glDeleteSync(fence);
++			}
++			return;
++		}
++	}
++
+ 	bool HasFrame()
+ 	{
+ 		std::lock_guard<std::mutex> lock(s_frame_mutex);
  		return s_frame_serial != s_frame_consumed && s_frame.texture != 0;
  	}
  
@@ -239,13 +321,36 @@ index 532ccf780..c278ff9f3 100644
  	void SetPacing(bool enabled)
  	{
  		std::lock_guard<std::mutex> lock(s_frame_mutex);
+@@ -216,6 +275,8 @@ namespace GLLibretro
+ 		s_frame = Frame();
+ 		s_frame_serial = 0;
+ 		s_frame_consumed = 0;
++		s_read_texture = 0;
++		s_frontend_reads.clear();
+ 		s_pacing = false;
+ 		s_frame_consumed_cv.notify_all();
+ 	}
 diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
-index 0981d06a1..02a8fee78 100644
+index 0981d06a1..5224d0143 100644
 --- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
 +++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
-@@ -105,6 +105,8 @@ namespace GLLibretro
+@@ -60,6 +60,8 @@ namespace GLLibretro
+ 	inline void Deactivate() {}
+ 	inline void PublishFrame(const Frame&) {}
+ 	inline bool ConsumeFrame(Frame*) { return false; }
++	inline void CompleteFrame(const Frame&, GLsync) {}
++	inline void WaitForFrontend(GLuint) {}
+ 	inline bool HasFrame() { return false; }
+ 	inline void SetPacing(bool) {}
+ 	inline void AbortPacing() {}
+@@ -104,7 +106,13 @@ namespace GLLibretro
+ 	};
  	void PublishFrame(const Frame& frame);
  	bool ConsumeFrame(Frame* out_frame); // true if a new frame arrived since the last consume
++	// Complete on the frontend after its blit: flush the read fence before
++	// publishing it. The GS waits on that fence before reusing/deleting texture.
++	void CompleteFrame(const Frame& frame, GLsync read_fence);
++	void WaitForFrontend(GLuint texture); // GS owner, before any overwrite/delete
  	bool HasFrame();                     // same, without consuming it
 +	// Non-reentrant notification only; the frontend consumes on its GL owner.
 +	void SetFrameReadyCallback(void (*callback)());
@@ -253,10 +358,31 @@ index 0981d06a1..02a8fee78 100644
  	// Frame pacing: when enabled, PublishFrame blocks the GS thread until
  	// retro_run consumes the frame - the frontend's retro_run cadence becomes
 diff --git a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
-index 6e853f423..02c6bdd05 100644
+index 6e853f423..7edb142bb 100644
 --- a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
 +++ b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
-@@ -2440,7 +2440,12 @@ std::string GSDeviceOGL::GenGlslHeader(const std::string_view entry, GLenum type
+@@ -1606,7 +1606,11 @@ void GSDeviceOGL::DestroyResources()
+ 	// published texture, so stop handing it new ones first.
+ 	GLLibretro::AbortPacing();
+ 	for (std::unique_ptr<GSTextureOGL>& bb : m_libretro_bb)
++	{
++		if (bb)
++			GLLibretro::WaitForFrontend(bb->GetID());
+ 		bb.reset();
++	}
+ 	m_libretro_bb_idx = 0;
+ 
+ 	if (m_palette_ss != 0)
+@@ -1825,6 +1829,8 @@ GSDevice::PresentResult GSDeviceOGL::DoBeginPresent(bool frame_skip)
+ 	if (libretro)
+ 	{
+ 		std::unique_ptr<GSTextureOGL>& bb = m_libretro_bb[m_libretro_bb_idx];
++		if (bb)
++			GLLibretro::WaitForFrontend(bb->GetID());
+ 		if (!bb || bb->GetWidth() != present_size.x || bb->GetHeight() != present_size.y)
+ 		{
+ 			bb = std::make_unique<GSTextureOGL>(
+@@ -2440,7 +2446,12 @@ std::string GSDeviceOGL::GenGlslHeader(const std::string_view entry, GLenum type
  
          if (m_features.framebuffer_fetch)
          {

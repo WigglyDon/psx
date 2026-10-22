@@ -549,6 +549,15 @@ and uses the frontend GL context. The callback performs no GL, VM or file work,
 and is retired under the handoff mutex before host/library teardown. Android's
 stock `AndroidAppWaker` stays in its platform adapter. The portable binding uses
 only `std::task::Waker` and ephemeral state, never durable platform handles.
+Consumption transfers a texture read, not GPU completion. After blitting, the
+frontend flushes a read-completion fence through the existing handoff mutex.
+Before reusing, resizing or deleting that backbuffer, the GS owner waits for
+the fence to be published and queues a server-side wait before further writes.
+Other backbuffers can progress. An unread frame lapped with pacing disabled
+is withdrawn before overwrite. Return fences are bounded by the existing
+three backbuffers and retired on their GS owner; no per-frame CPU finish or
+new runtime is introduced. Host fixtures check ownership and fence calls,
+while GPU correctness and performance require device validation.
 PS2's native CPU limiter owns wall-time pacing; a second fixed frontend frame
 clock must not make an otherwise ready producer wait another frame interval.
 An 8 ms housekeeping bound services input/audio without waiting for a picture.
