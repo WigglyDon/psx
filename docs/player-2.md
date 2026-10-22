@@ -52,6 +52,11 @@ one-consumer ownership and interruption. GPU ordering and actual speed/audio
 still require device validation. Presentation mean/max duration is reported
 separately from frontend calls and native achieved emulation speed.
 
+The returned reverse-fence trial still failed PS2 graphics. Its exact binding,
+retained-evidence limits and generated shared-context comparison are recorded in
+[graphics-comparison.md](graphics-comparison.md). The comparison is off-device
+diagnostic preparation, not qualification of PS2 rendering or a new device lease.
+
 Rust explicitly retains existing sessions' disabled MTVU mode. The pinned
 adapter defaults it to enabled, but `gifFreeze` records a mode difference
 without implementing the transition on load. Adopting that default needs a

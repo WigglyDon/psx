@@ -11,6 +11,10 @@ serde_json = "1.0.149"
 sha2 = "0.10.9"
 libloading = "=0.8.9"
 
+[dev-dependencies]
+glow = "=0.17.0"
+khronos-egl = { version = "=6.0.0", features = ["dynamic"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
