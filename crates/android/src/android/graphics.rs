@@ -223,6 +223,21 @@ impl Graphics {
             ]
         }
     }
+    pub fn restore_current(&self) -> Result<(), String> {
+        let changed = API.get_current_context() != Some(self.context);
+        let surface = self.surface.unwrap_or(self.pbuffer);
+        API.make_current(
+            self.display,
+            Some(surface),
+            Some(surface),
+            Some(self.context),
+        )
+        .map_err(|e| format!("The player's graphics context could not resume: {e}"))?;
+        if changed {
+            log::info!("Restored player EGL context after native teardown");
+        }
+        Ok(())
+    }
     pub unsafe fn attach(
         &mut self,
         window: &ndk::native_window::NativeWindow,

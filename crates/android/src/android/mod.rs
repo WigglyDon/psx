@@ -2458,6 +2458,9 @@ impl Player {
             );
         }
         self.close()?;
+        // Native teardown may unbind its EGL context. The platform owns this
+        // thread's context; establish it before the next core queries or uses GL.
+        self.graphics.restore_current()?;
         let session = Runtime::restoring(&self.root, SavedSession { game: id.clone() })
             .map_err(|e| e.to_string())?;
         // Per-entry settings and firmware selection share the card/state writer.

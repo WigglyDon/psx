@@ -40,6 +40,11 @@ restoration, the stopped library mapping is retained until process exit so a
 remaining handler cannot enter unmapped code. This adds no guest fault handler
 and changes no checkpoint or card format.
 
+After an engine closes, Android explicitly makes the player's own EGL context
+and current surface (or its pbuffer) current again before a new engine queries
+GL or initializes resources. Native teardown does not own the next runtime's
+platform context binding.
+
 SwanStation is the pinned Android prototype candidate. Its suitability for
 the eventual two-store product remains conditional on the checks in
 [distribution.md](distribution.md). Keep player behavior in shared Rust and
