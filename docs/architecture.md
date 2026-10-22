@@ -57,6 +57,18 @@ the existing graphics owner directly. Folding/surface replacement within a
 live game still preserves its context and runtime. This adds no process or
 live core; actual driver recovery and switching require device qualification.
 
+At the frontend handoff, bounded GL error checks distinguish reported context
+loss or out-of-memory from ordinary argument/state errors. EGL context loss
+is also retained as a typed error. On these failures Rust releases input and
+audio, finishes any already captured checkpoint, flushes cards and retires the
+runtime before rebuilding graphics and showing the error sheet. It captures
+no new machine state after a reported graphics fault and leaves the previous
+checkpoint unchanged; newer cards can therefore make that checkpoint unavailable
+instead of being rolled back. Other surface errors wait for Android's window
+lifecycle. A successful swap or an empty GL error queue does not prove that a
+driver produced a valid picture; silent driver failures remain a qualification
+limit. This does not retry an incompatible game automatically.
+
 SwanStation is the pinned Android prototype candidate. Its suitability for
 the eventual two-store product remains conditional on the checks in
 [distribution.md](distribution.md). Keep player behavior in shared Rust and

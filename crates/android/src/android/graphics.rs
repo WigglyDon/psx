@@ -39,6 +39,24 @@ struct Objects {
     text: Text,
 }
 
+pub enum RenderError {
+    Gl(u32),
+    Egl(egl::Error),
+}
+impl RenderError {
+    pub fn requires_reset(&self) -> bool {
+        matches!(self, Self::Gl(_) | Self::Egl(egl::Error::ContextLost))
+    }
+}
+impl std::fmt::Display for RenderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Gl(code) => write!(f, "Graphics context stopped (GL {code:#06x})"),
+            Self::Egl(error) => write!(f, "Display changed: {error}"),
+        }
+    }
+}
+
 unsafe extern "C" fn proc_address(name: *const c_char) -> Option<unsafe extern "C" fn()> {
     if name.is_null() {
         return None;
@@ -324,7 +342,7 @@ impl Graphics {
         }
         let _ = API.destroy_context(self.display, previous);
         result?;
-        log::info!("Replaced player EGL context after PS2 closure");
+        log::info!("Replaced player EGL context after runtime retirement");
         Ok(())
     }
     pub unsafe fn attach(
@@ -398,10 +416,11 @@ impl Graphics {
         menu: Option<&Menu>,
         editor: Option<&Editor>,
         visuals: &Visuals,
-    ) -> Result<(), String> {
+    ) -> Result<(), RenderError> {
         if self.surface.is_none() {
             return Ok(());
         }
+        self.check_context()?;
         let gl = &self.objects.gl;
         // The donor caches its current program, including across duplicate
         // frames. Restore the actual program after frontend drawing rather
@@ -695,8 +714,26 @@ impl Graphics {
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.bind_sampler(0, saved_sampler);
         gl.disable(glow::BLEND);
+        self.check_context()?;
         API.swap_buffers(self.display, self.surface.unwrap())
-            .map_err(|e| format!("Display changed: {e}"))
+            .map_err(RenderError::Egl)
+    }
+
+    unsafe fn check_context(&self) -> Result<(), RenderError> {
+        // Check only at the frontend handoff, on its GL owner. A pending
+        // argument/state error is not device loss. OOM makes GL state undefined;
+        // context loss cannot be repaired by waiting for another window event.
+        // Bound the drain even if a failed driver repeats the same error.
+        for _ in 0..8 {
+            match self.objects.gl.get_error() {
+                glow::NO_ERROR => break,
+                code @ (glow::CONTEXT_LOST | glow::OUT_OF_MEMORY) => {
+                    return Err(RenderError::Gl(code));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     pub fn text_rows(&self, body: &str, width: f32) -> Vec<Row> {

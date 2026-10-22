@@ -8,7 +8,7 @@ use android_activity::{
     input::{InputEvent, KeyAction, Keycode, MotionAction},
     AndroidApp, InputStatus, MainEvent, PollEvent,
 };
-use graphics::Graphics;
+use graphics::{Graphics, RenderError};
 use platform::{Event, Platform, PICK_FIRMWARE, PICK_GAME, PICK_PS2_FIRMWARE, PICK_STORAGE};
 use psx_player::{
     artwork::Artwork,
@@ -565,7 +565,10 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         if player.dirty && player.activity.surface && player.activity.foreground && present_due {
             player.next_present = now + Duration::from_secs_f64(1. / 60.);
             let before = Instant::now();
-            if let Err(error) = unsafe {
+            // A failed presentation sets dirty again for its recovery/error
+            // screen. Do not erase that request after handling the failure.
+            player.dirty = false;
+            let rendered = unsafe {
                 player.graphics.render(
                     player.density,
                     &player.layout,
@@ -574,22 +577,23 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                     player.editor.as_ref(),
                     &player.visuals,
                 )
-            } {
-                player.fail(error);
-                player.activity.surface = false;
-            }
+            };
             let elapsed = before.elapsed();
-            player.presents += 1;
-            player.present_time += elapsed;
-            player.max_present_time = player.max_present_time.max(elapsed);
-            player.dirty = false;
-            // One save worker at a time; rapid toggles coalesce to the latest
-            // intent. Neither pause nor resume waits for that worker.
-            if player.checkpoint_after_present && player.checkpoint_work.is_none() {
-                player.checkpoint_after_present = false;
-                if let Err(error) = player.queue_checkpoint() {
-                    player.fail(error);
+            match rendered {
+                Ok(()) => {
+                    player.presents += 1;
+                    player.present_time += elapsed;
+                    player.max_present_time = player.max_present_time.max(elapsed);
+                    // One save worker at a time; rapid toggles coalesce to the
+                    // latest intent. Pause/resume never waits for that worker.
+                    if player.checkpoint_after_present && player.checkpoint_work.is_none() {
+                        player.checkpoint_after_present = false;
+                        if let Err(error) = player.queue_checkpoint() {
+                            player.fail(error);
+                        }
+                    }
                 }
+                Err(error) => player.render_failed(error),
             }
         }
     }
@@ -2805,6 +2809,39 @@ impl Player {
     }
     fn close(&mut self) -> Result<(), String> {
         self.unload(true)
+    }
+    fn render_failed(&mut self, error: RenderError) {
+        if !error.requires_reset() {
+            self.fail(error.to_string());
+            self.activity.surface = false;
+            return;
+        }
+        log::error!("{error}; retiring the runtime before graphics recovery");
+        let recover = (|| -> Result<(), String> {
+            // Finish a snapshot already captured before the reported fault,
+            // but never capture a new machine state from a lost context. Keep
+            // the preceding checkpoint unchanged, even if newer cards make
+            // it unavailable. The normal close still flushes and joins owners.
+            self.checkpoint_after_present = false;
+            self.checkpoint_dirty = false;
+            self.activity.user_paused = true;
+            self.interrupt()?;
+            self.finish_checkpoint()?;
+            self.checkpoint_valid = false;
+            let ps2 = matches!(self.core, Some(Core::Ps2(..)));
+            self.close()?;
+            if !ps2 {
+                unsafe { self.graphics.replace_context()? };
+            }
+            Ok(())
+        })();
+        match recover {
+            Ok(()) => self.fail("Graphics stopped. Existing memory cards and saved sessions are kept. Reopen the game to try again.".into()),
+            Err(cause) => {
+                self.fail(format!("Graphics stopped. Close and reopen psx. {cause}"));
+                self.activity.surface = false;
+            }
+        }
     }
     fn unload(&mut self, clear_active: bool) -> Result<(), String> {
         let had_game = self.core.is_some();
