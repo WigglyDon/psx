@@ -197,3 +197,35 @@ restoration, Home, physicalOFF and original shared-lease release were verified.
 This accepted localization increment is neither a compliant early-stop run nor
 a driver/GPU-health certification. The new matched comparison must qualify its
 own corrected observation/operator rather than reuse that trial as its control.
+
+## Corrected no-reader observation
+
+On 2026-10-24, application source `123e831e4afb6c7cec2d8e05a030e3cd82a72bba`
+ran the real full-renderer reference, APK `44d21ffe…`, native `12a9aabc…`,
+matched patch `020b4c2c…`. It acknowledged/presented/swapped through frame467
+with copied-frame milestone0. First retained failure was producer stage16,
+frame468, at11.788855s: a non-null newly created fence was invalid through both
+native and Rust validity-query routes **before the existing flush and publication**.
+ABI/current-context and all four dispatch comparisons matched. Sampled GL error
+slots were zero; the previous frame's pre/post fence samples were valid. Stage2
+retained the invalid result31microseconds later with matching pre/post identity.
+These bounded observations do not identify a driver cause.
+
+The reference thus reproduced a producer-fence failure without frontend game-image
+attachment/sampling/copy or a reverse read fence. Those image reads are not a
+necessary condition for this reproduction. Common GS execution, context/setup,
+producer-sync retirement/CPU acknowledgement, observation and remaining UI/swap
+still exist; the modes have different timing. Source123e831 includes552d7da's
+ownership repair, but this reference does not exercise or accept the normal
+frontend-read ordering path that repair protects.
+
+The first-stop signal was reason1/frame468/consumed467. Actual-owner retirement
+began about140ms after the failing sample; external retirement was verified
+13.801s after launch, within30s. The normal arm was suppressed; no repeat ran.
+Two numeric exports total144,942bytes, with10,705/10,715 dropped events, so this
+is not a complete GPU history. No images were captured or visual-flicker claim
+made. Exact original APK/full normal-data restoration, Home, app stopped,
+physicalOFF/bootcomplete and shared-lease release were verified at22:10:29UTC;
+whole custody lasted41.019s. This is a diagnostic result, not a production fix,
+gameplay/saving/performance acceptance or PLAYER-2 completion. The issue handback
+owns full artifact/operator bindings; raw evidence remains private.
