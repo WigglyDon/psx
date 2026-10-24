@@ -1012,12 +1012,16 @@ fn main() -> Result<()> {
     std::env::set_current_dir(&work)?;
     let op = std::env::args()
         .nth(1)
-        .ok_or("Usage: source-update audit | retire | update | verify")?;
+        .ok_or("Usage: source-update audit | retire | update | finish | verify")?;
     let (inv, payload) = baseline()?;
     match op.as_str() {
         "audit" => stage(false, &inv, &payload),
         "retire" => stage(true, &inv, &payload),
         "update" => update(&inv, &payload),
+        "finish" => {
+            stage(true, &inv, &payload)?;
+            update(&inv, &payload)
+        }
         "verify" => verify_target(&inv, &payload),
         _ => Err("Unknown operation".into()),
     }

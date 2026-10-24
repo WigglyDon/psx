@@ -192,6 +192,9 @@ it in a second acquisition of the same lock. Cached compiler dependencies can
 be read in place without rebuilding the accepted APK/native inputs. The actual
 operator recipe and private volume binding belong to its local admission,
 not public source. Normal internal commands above require internal admission.
+When both the residual-stage retirement and source update are admitted, `finish`
+performs those two existing operations under one lease and one predecessor
+validation. Unmatched stage entries remain preserved.
 
 ## Release source bundle
 
