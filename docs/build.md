@@ -175,6 +175,24 @@ predecessor and target hashes and complete-readback result. Frozen APKs and
 symbols are reused without being relabeled or rebuilt. An interrupted output
 stays explicitly incomplete; existing output is not silently overwritten.
 
+For an admitted independent ext4 workspace, set `PSX_SOURCE_WORKSPACE` to its
+existing private project directory, `PSX_SOURCE_VOLUME_UUID` and
+`PSX_SOURCE_VOLUME_MOUNT` to the qualified binding, and
+`PSX_SOURCE_CAPACITY_LEASE` to the custodian's existing external lock. Supply all
+four or none. The tool acquires that lease, checks UUID/type/mount and private
+ownership, and refuses missing or changed storage without an internal fallback.
+Git and predecessor inputs stay anchored to the source checkout; new archives
+and receipts use the admitted workspace. Growth checks measure that filesystem,
+retaining the shared 12 GiB floor. Internal Btrfs policy is unchanged.
+
+Compiler targets, `TMPDIR`, test fixtures and logs must also use the admitted
+project directory, under the same capacity lease for each writing phase. The
+tool itself owns that lease while its archive/audit operation runs; do not wrap
+it in a second acquisition of the same lock. Cached compiler dependencies can
+be read in place without rebuilding the accepted APK/native inputs. The actual
+operator recipe and private volume binding belong to its local admission,
+not public source. Normal internal commands above require internal admission.
+
 ## Release source bundle
 
 From a clean, reviewed Git checkout, run `cargo xtask source`. This exports

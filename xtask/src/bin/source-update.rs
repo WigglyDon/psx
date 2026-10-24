@@ -9,7 +9,10 @@ use std::{
     io::{Read, Write},
     os::{
         fd::AsRawFd,
-        unix::{ffi::OsStrExt, fs::MetadataExt},
+        unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, OpenOptionsExt},
+        },
     },
     path::{Path, PathBuf},
     process::Command,
@@ -383,7 +386,93 @@ fn output(c: &mut Command) -> Result<Vec<u8>> {
     Ok(o.stdout)
 }
 fn git(args: &[&str]) -> Result<Vec<u8>> {
-    output(Command::new("git").args(args))
+    output(
+        Command::new("git")
+            .args(args)
+            .current_dir(source_root())
+            .env("GIT_OPTIONAL_LOCKS", "0"),
+    )
+}
+fn source_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("project root")
+        .to_path_buf()
+}
+fn external_setting(key: &str) -> Result<PathBuf> {
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("Missing admitted workspace setting {key}; no fallback").into())
+}
+fn output_root() -> Result<PathBuf> {
+    let keys = [
+        "PSX_SOURCE_WORKSPACE",
+        "PSX_SOURCE_VOLUME_UUID",
+        "PSX_SOURCE_VOLUME_MOUNT",
+        "PSX_SOURCE_CAPACITY_LEASE",
+    ];
+    if keys.iter().all(|k| std::env::var_os(k).is_none()) {
+        return Ok(source_root().canonicalize()?);
+    }
+    let root = external_setting(keys[0])?;
+    let uuid = std::env::var(keys[1])?;
+    let mount = external_setting(keys[2])?;
+    let lease = external_setting(keys[3])?;
+    if root.canonicalize()? != root
+        || mount.canonicalize()? != mount
+        || root == mount
+        || !root.starts_with(&mount)
+        || lease.starts_with(&mount)
+    {
+        return Err("Unqualified or redirected external workspace; no fallback".into());
+    }
+    let listing: Value = serde_json::from_slice(&output(
+        Command::new("findmnt")
+            .args(["--json", "--target"])
+            .arg(&root)
+            .args(["--output", "UUID,FSTYPE,TARGET"]),
+    )?)?;
+    let fs = listing["filesystems"]
+        .as_array()
+        .filter(|v| v.len() == 1)
+        .and_then(|v| v.first())
+        .ok_or("Missing unique mounted workspace")?;
+    if uuid.is_empty()
+        || fs["uuid"] != uuid
+        || fs["fstype"] != "ext4"
+        || fs["target"].as_str() != mount.to_str()
+    {
+        return Err("Workspace UUID/type/mount changed or absent; no fallback".into());
+    }
+    let m = fs::symlink_metadata(&root)?;
+    if !m.is_dir()
+        || m.is_symlink()
+        || m.mode() & 0o777 != 0o700
+        || m.uid() != fs::metadata(source_root())?.uid()
+    {
+        return Err("Workspace ownership/private mode mismatch".into());
+    }
+    Ok(root)
+}
+fn capacity_lease() -> Result<Option<File>> {
+    if std::env::var_os("PSX_SOURCE_WORKSPACE").is_none() {
+        output_root()?;
+        return Ok(None);
+    }
+    let path = external_setting("PSX_SOURCE_CAPACITY_LEASE")?;
+    let m = fs::symlink_metadata(&path)?;
+    if !m.is_file()
+        || m.is_symlink()
+        || path.canonicalize()? != path
+        || m.mode() & 0o777 != 0o600
+        || m.uid() != fs::metadata(source_root())?.uid()
+    {
+        return Err("Unqualified existing capacity lease".into());
+    }
+    let file = OpenOptions::new().read(true).write(true).open(path)?;
+    file.try_lock()
+        .map_err(|e| format!("Shared workspace capacity busy: {e}"))?;
+    Ok(Some(file))
 }
 fn gzip_check(path: &Path) -> Result<()> {
     output(Command::new("gzip").arg("-t").arg(path))?;
@@ -393,7 +482,9 @@ fn name(rev: &str) -> String {
     format!("psx-source-{}", &rev[..12])
 }
 fn base_path() -> PathBuf {
-    Path::new("build").join(format!("{}.tar.gz", name(BASE)))
+    source_root()
+        .join("build")
+        .join(format!("{}.tar.gz", name(BASE)))
 }
 fn baseline() -> Result<(Inventory, Payloads)> {
     let p = base_path();
@@ -535,7 +626,7 @@ fn validate(inv: &Inventory, payload: &Payloads, revision: &str) -> Result<()> {
         "docs/build.md",
         "vendor/armsx2/COPYING.GPLv3",
         "vendor/swanstation/LICENSE",
-        "vendor/openbios/LICENSE",
+        "vendor/openbios/source/LICENSE",
         "LICENSE",
         "Cargo.lock",
     ] {
@@ -622,13 +713,19 @@ fn replacements(payload: &Payloads) -> Result<Payloads> {
     Ok(out)
 }
 fn durable(path: &Path, value: &Value) -> Result<()> {
-    let mut f = OpenOptions::new().write(true).create_new(true).open(path)?;
+    output_root()?;
+    let mut f = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
     f.write_all(&serde_json::to_vec_pretty(value)?)?;
     f.sync_all()?;
     File::open(path.parent().ok_or("parent")?)?.sync_all()?;
     Ok(())
 }
 fn update(inv: &Inventory, payload: &Payloads) -> Result<()> {
+    output_root()?;
     let root = std::env::current_dir()?;
     let _growth = storage::Growth::begin(&root, storage::GIB / 2)?;
     let replacements = replacements(payload)?;
@@ -655,6 +752,7 @@ fn update(inv: &Inventory, payload: &Payloads) -> Result<()> {
     let file = OpenOptions::new()
         .create_new(true)
         .write(true)
+        .mode(0o600)
         .open(&partial)?;
     let (written, _) = scan(
         &base_path(),
@@ -666,6 +764,7 @@ fn update(inv: &Inventory, payload: &Payloads) -> Result<()> {
         return Err("Writer inventory differs".into());
     }
     file.sync_all()?;
+    output_root()?;
     storage::between_steps()?;
     gzip_check(&partial)?;
     let (actual, metadata) = scan(&partial, &name(TARGET), &Payloads::new(), None)?;
@@ -693,6 +792,7 @@ fn update(inv: &Inventory, payload: &Payloads) -> Result<()> {
         );
     }
     let utility_binary_sha = hash(&std::env::current_exe()?)?;
+    output_root()?;
     // No-overwrite durable publication, only after separate full readback.
     fs::hard_link(&partial, &final_path)?;
     File::open("build")?.sync_all()?;
@@ -700,6 +800,7 @@ fn update(inv: &Inventory, payload: &Payloads) -> Result<()> {
     let mut side = OpenOptions::new()
         .create_new(true)
         .write(true)
+        .mode(0o600)
         .open(&checksum)?;
     writeln!(side, "{sha}  {}.tar.gz", name(TARGET))?;
     side.sync_all()?;
@@ -762,7 +863,7 @@ fn stage_tree(root: &Path) -> Result<Inventory> {
     Ok(out)
 }
 fn stage(retire: bool, inv: &Inventory, payload: &Payloads) -> Result<()> {
-    let root = std::env::current_dir()?;
+    let root = source_root().canonicalize()?;
     let parent = root.join("build/source-bundles");
     let stage = parent.join(name(TARGET));
     if parent.canonicalize()? != parent {
@@ -816,10 +917,10 @@ fn stage(retire: bool, inv: &Inventory, payload: &Payloads) -> Result<()> {
         .as_nanos();
     let receipt =
         Path::new(".local/storage-retention").join(format!("source-123e831-partial-{stamp}.json"));
-    let failure = Path::new(".local/observer-123e831-source-final.log");
+    let failure = root.join(".local/observer-123e831-source-final.log");
     durable(
         &receipt,
-        &json!({"phase":"audited-before-removal","retire":retire,"targetRevision":TARGET,"marker":TARGET,"failureLog":failure,"failureLogSha256":hash(failure)?,"independentArchiveSha256":BASE_SHA,"inventory":before,"proven":proven,"protected":before.keys().filter(|p|!proven.contains_key(*p)).collect::<Vec<_>>()}),
+        &json!({"phase":"audited-before-removal","retire":retire,"targetRevision":TARGET,"marker":TARGET,"failureLog":failure,"failureLogSha256":hash(&failure)?,"independentArchiveSha256":BASE_SHA,"inventory":before,"proven":proven,"protected":before.keys().filter(|p|!proven.contains_key(*p)).collect::<Vec<_>>()}),
     )?;
     println!(
         "{} entries audited; {} independently proven; receipt {}",
@@ -903,12 +1004,12 @@ fn stage(retire: bool, inv: &Inventory, payload: &Payloads) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("project root")?;
-    std::env::set_current_dir(root)?;
-    let root = root.canonicalize()?;
-    let _lock = storage::Lock::acquire(&root)?;
+    let _capacity = capacity_lease()?;
+    let work = output_root()?;
+    let _lock = storage::Lock::acquire(&source_root().canonicalize()?)?;
+    // Existing growth checks measure the admitted output filesystem. Immutable
+    // inputs and Git operations remain anchored to the retained source tree.
+    std::env::set_current_dir(&work)?;
     let op = std::env::args()
         .nth(1)
         .ok_or("Usage: source-update audit | retire | update | verify")?;
@@ -955,8 +1056,7 @@ mod focused {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
+            let p = output_root()
                 .unwrap()
                 .join("build")
                 .join(format!("source-update-fixture-{}-{n}", std::process::id()));
