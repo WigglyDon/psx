@@ -145,6 +145,57 @@ UI. Keep raw device logs and media private.
 An AAB/store package and physical iOS check are later delivery work; this APK
 does not establish either store's acceptance.
 
+## Narrow streaming source update
+
+`source-update` is a Linux-only development host utility for the reviewed
+`09e27cd` → `123e831` source increment. It uses the installed BSD-licensed
+[libarchive 3 ABI](https://github.com/libarchive/libarchive/tree/v3.8.7), plus
+the existing Rust dependencies, Git and gzip; its focused fixtures use GNU tar.
+It requires `libarchive.so.13`, which is a host dependency and is not packaged
+in Android. No new archive crate or dependency source expansion is needed.
+
+After the normal storage check and coordinated slot:
+
+```sh
+cargo build --release --locked -p xtask --bin source-update
+cargo test --locked -p xtask --bin source-update
+target/release/source-update audit
+target/release/source-update retire
+# Commit/review the utility before canonical archive publication.
+target/release/source-update update
+target/release/source-update verify
+```
+
+This utility and its executable fixtures require focused runtime validation
+before archive use; type checking alone is insufficient. Its archive target is
+the fixed `123e831` commit, not the packaging utility's later revision. The
+target's existing build recipes, full dependencies, resources and licenses
+remain self-contained. The receipt separately records the utility revision,
+predecessor and target hashes and complete-readback result. Frozen APKs and
+symbols are reused without being relabeled or rebuilt. An interrupted output
+stays explicitly incomplete; existing output is not silently overwritten.
+
+For an admitted independent ext4 workspace, set `PSX_SOURCE_WORKSPACE` to its
+existing private project directory, `PSX_SOURCE_VOLUME_UUID` and
+`PSX_SOURCE_VOLUME_MOUNT` to the qualified binding, and
+`PSX_SOURCE_CAPACITY_LEASE` to the custodian's existing external lock. Supply all
+four or none. The tool acquires that lease, checks UUID/type/mount and private
+ownership, and refuses missing or changed storage without an internal fallback.
+Git and predecessor inputs stay anchored to the source checkout; new archives
+and receipts use the admitted workspace. Growth checks measure that filesystem,
+retaining the shared 12 GiB floor. Internal Btrfs policy is unchanged.
+
+Compiler targets, `TMPDIR`, test fixtures and logs must also use the admitted
+project directory, under the same capacity lease for each writing phase. The
+tool itself owns that lease while its archive/audit operation runs; do not wrap
+it in a second acquisition of the same lock. Cached compiler dependencies can
+be read in place without rebuilding the accepted APK/native inputs. The actual
+operator recipe and private volume binding belong to its local admission,
+not public source. Normal internal commands above require internal admission.
+When both the residual-stage retirement and source update are admitted, `finish`
+performs those two existing operations under one lease and one predecessor
+validation. Unmatched stage entries remain preserved.
+
 ## Release source bundle
 
 From a clean, reviewed Git checkout, run `cargo xtask source`. This exports

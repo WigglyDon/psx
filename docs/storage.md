@@ -91,6 +91,31 @@ silently deleting that work. Inspect the failed operation and recover it
 under the project's current assignment. Source checking should stream or
 extract selected files rather than expand another complete bundle.
 
+The narrow Linux host tool `source-update` implements the reviewed `09e27cd`
+to `123e831` transformation using the installed libarchive 3 ABI. It verifies
+the fixed predecessor digest, reads members sequentially, substitutes the four
+immutable target files and two revision metadata files, and verifies a separate
+streamed readback before publishing a complete archive. Cargo configuration,
+native manifests and dependency source bodies stay in that archive; the update
+does not need an extracted predecessor. Unsafe/duplicate names, unsupported
+types, escaping links, truncated streams and failed writes refuse publication.
+An incomplete output is retained instead of being treated as a canonical bundle.
+
+Its `audit` and `retire` operations are restricted to the one recorded unfinished
+target stage. They retain full content/type/mode/link/identity and failure
+receipts first, compare proposed entries against the verified archive plus
+immutable target objects, and preserve unknown or differing entries. A growth
+refusal does not authorize a compiler or archive retry. Existing installed
+comparison/inventory tools can bootstrap the explicitly authorized retention
+when a new utility executable itself cannot be admitted; they must retain the
+same independent proof, recheck and project-lock boundaries. Source repositories,
+canonical/failed archives, binaries, symbols and private inputs are excluded.
+
+The target revision remains `123e831` regardless of the later utility commit.
+The publication receipt records that utility revision separately. This narrow
+route does not change the normal source builder or qualify the shared host for
+other workloads. See [build.md](build.md) for its invocation and validation gate.
+
 ## Protected work and other artifacts
 
 Never automatically expire games, proprietary firmware, memory cards, saves,
