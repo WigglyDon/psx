@@ -22,6 +22,10 @@ mod storage;
 const BASE: &str = "09e27cdb8ad000836ba47220179d7b563790940d";
 const TARGET: &str = "123e831e4afb6c7cec2d8e05a030e3cd82a72bba";
 const BASE_SHA: &str = "6ba74c41f828a4d9f5dcda8919fc9a504ef17a5145e3cd3ae43088a0d512b521";
+const TOOL_SOURCE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/bin/source-update.rs"
+));
 const CHANGED: [&str; 4] = [
     "crates/player/src/graphics_observer.rs",
     "crates/player/tests/observer_stop.rs",
@@ -680,6 +684,15 @@ fn update(inv: &Inventory, payload: &Payloads) -> Result<()> {
             "Commit packaging utility before canonical publication; partial retained".into(),
         );
     }
+    let utility_source_sha = digest(TOOL_SOURCE);
+    if hash(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src/bin/source-update.rs"))?
+        != utility_source_sha
+    {
+        return Err(
+            "Executed utility differs from current committed source; partial retained".into(),
+        );
+    }
+    let utility_binary_sha = hash(&std::env::current_exe()?)?;
     // No-overwrite durable publication, only after separate full readback.
     fs::hard_link(&partial, &final_path)?;
     File::open("build")?.sync_all()?;
@@ -693,7 +706,7 @@ fn update(inv: &Inventory, payload: &Payloads) -> Result<()> {
     File::open("build")?.sync_all()?;
     durable(
         Path::new(".local/source-update-123e831-complete.json"),
-        &json!({"phase":"verified-complete","targetRevision":TARGET,"utilityRevision":utility.trim(),"utilitySourceSha256":hash(Path::new(file!()))?,"predecessorRevision":BASE,"predecessorSha256":BASE_SHA,"archive":final_path,"archiveSha256":sha,"archiveBytes":file.metadata()?.len(),"members":actual.len(),"replacements":replacements.keys().collect::<Vec<_>>(),"streamedReadback":true}),
+        &json!({"phase":"verified-complete","targetRevision":TARGET,"utilityRevision":utility.trim(),"utilitySourceSha256":utility_source_sha,"utilityBinarySha256":utility_binary_sha,"predecessorRevision":BASE,"predecessorSha256":BASE_SHA,"archive":final_path,"archiveSha256":sha,"archiveBytes":file.metadata()?.len(),"members":actual.len(),"replacements":replacements.keys().collect::<Vec<_>>(),"streamedReadback":true}),
     )?;
     fs::remove_file(&partial)?;
     File::open("build")?.sync_all()?;
