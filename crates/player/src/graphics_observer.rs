@@ -569,8 +569,10 @@ mod enabled {
         frame
     }
     /// # Safety
-    /// The caller owns the current GL context. Any non-null fence must still
-    /// belong to its live share group; no callback may outlive native teardown.
+    /// GPU stages require the caller's current GL context. Stage 23 reports
+    /// only a CPU handoff miss, with a null fence and no context requirement.
+    /// Any non-null fence must still belong to its live share group; no callback
+    /// may outlive native teardown.
     #[allow(clippy::too_many_arguments)]
     pub unsafe extern "C" fn callback(
         stage: u32,
@@ -584,6 +586,23 @@ mod enabled {
     ) -> u64 {
         if stage == 50 {
             return u64::from(!cfg!(feature = "no-game-image-reader"));
+        }
+        if stage == 23 {
+            // ConsumeFrame's empty/duplicate/busy branch transfers no GPU
+            // object. It can run before the GS owner loads native GLAD/EGL.
+            // Retain the CPU event without requiring or querying GL dispatch.
+            emit(
+                owner,
+                frame,
+                texture,
+                stage,
+                width,
+                height,
+                [0; 32],
+                [0, 0, 0, 0, 0, 0, 0, -2],
+                false,
+            );
+            return frame;
         }
         if stage == 53 {
             request_stop(StopReason::Ownership);

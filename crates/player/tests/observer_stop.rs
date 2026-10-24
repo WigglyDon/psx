@@ -24,6 +24,15 @@ unsafe extern "C" fn proc(_: *const std::ffi::c_char) -> Option<unsafe extern "C
 #[test]
 fn same_lease_request_wakes_owner_and_writes_bounded_signal_without_frontend_service() {
     assert!(std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "idle_consume_before_native_dispatch_fixture",
+            "--ignored"
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "missing_context_callback_fixture", "--ignored"])
         .status()
         .unwrap()
@@ -69,6 +78,50 @@ fn same_lease_request_wakes_owner_and_writes_bounded_signal_without_frontend_ser
             assert!(std::fs::metadata(path).unwrap().len() <= observer::EXPORT_LIMIT as u64);
         }
     }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "isolated startup observer process, invoked by the contract test"]
+fn idle_consume_before_native_dispatch_fixture() {
+    unsafe extern "C" fn no_gl(_: *const std::ffi::c_char) -> Option<unsafe extern "C" fn()> {
+        panic!("An empty CPU handoff must not load or query GL");
+    }
+    // ConsumeFrame may report its empty CPU slot before the GS thread loads
+    // native EGL/GLAD dispatch. The callback carries no frame or GPU ownership.
+    observer::initialize(no_gl, || (0, 0));
+    let root = std::env::temp_dir().join(format!("psx-observer-idle-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let owner = Arc::new(Owner(AtomicUsize::new(0)));
+    observer::start(&root, Waker::from(owner.clone())).unwrap();
+    let dispatch = observer::boundary::Dispatch {
+        version: 2,
+        size: std::mem::size_of::<observer::boundary::Dispatch>() as u32,
+        ..Default::default()
+    };
+    unsafe {
+        assert_eq!(
+            observer::callback(23, 2, 0, 0, 0, 0, std::ptr::null_mut(), &dispatch),
+            0
+        );
+    }
+    assert!(
+        !observer::stop_requested(),
+        "No published frame is not a context failure"
+    );
+    assert_eq!(owner.0.load(Ordering::SeqCst), 0);
+    observer::join_export();
+    assert!(!root.join("first-stop.json").exists());
+    let export =
+        observer::operator::decode_snapshot(&std::fs::read(root.join("observer-1.json")).unwrap())
+            .unwrap();
+    assert!(export["first_failure"].is_null());
+    assert!(export["first_terminal"].is_null());
+    assert!(export["tail"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["stage"] == 23));
     std::fs::remove_dir_all(root).unwrap();
 }
 

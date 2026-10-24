@@ -104,6 +104,11 @@ validity-entry equality, native validity (-2 unqueried), pre/post identity
 (0 pre, 1 matching post, -1 mismatch, -2 other stage), status-entry equality,
 error-entry equality. Other Rust stages retain their existing detail schema.
 An additional error event uses detail[7]=1; missing context has detail[7]=-1.
+Stage 23 is a CPU-only empty/duplicate/busy handoff observation: it transfers no
+frame or GPU ownership and can precede native GLAD/EGL initialization. Its state
+is unqueried, with detail[7]=-2; unavailable native dispatch here is not a context
+failure. Actual consume, producer/copy/fence and presentation stages still require
+their current owning context and retain the existing diagnostic stop checks.
 Post-query errors are collected separately and preserve fatal forwarding.
 Successful FBO/swap samples are not proof of correct pixels.
 

@@ -23,6 +23,13 @@ unsafe extern "C" fn observe(
     let dispatch = &*dispatch;
     assert_eq!(dispatch.version, 2);
     assert_eq!(dispatch.size as usize, std::mem::size_of_val(dispatch));
+    if stage == 23 && dispatch.context == 0 {
+        let result = psx_player::graphics_observer::callback(
+            stage, owner, frame, _texture, _w, _h, _fence, dispatch,
+        );
+        assert!(!psx_player::graphics_observer::stop_requested());
+        return result;
+    }
     assert_eq!(dispatch.context, usize::MAX - 2048);
     if stage == 52 {
         assert_eq!(_fence as usize, usize::MAX - 4096);
@@ -136,7 +143,9 @@ void glFenceSync() {{}}
 void glIsSync() {{}}
 void glGetSynciv() {{}}
 void glGetError() {{}}
-void* eglGetCurrentContext() {{ return reinterpret_cast<void*>(UINTPTR_MAX-2048); }}
+static bool context_ready = false;
+void* eglGetCurrentContext() {{ return context_ready ? reinterpret_cast<void*>(UINTPTR_MAX-2048) : nullptr; }}
+extern "C" void enable_context() {{ context_ready = true; }}
 constexpr auto GL_TIMEOUT_IGNORED = ~std::uint64_t(0);
 static std::atomic<unsigned> read_waits = 0, read_deletes = 0, bad_order = 0;
 void glWaitSync(GLsync fence, unsigned, std::uint64_t) {{
@@ -232,6 +241,22 @@ extern "C" void shutdown_handoff() {{ GLLibretro::Shutdown(); }}
         let order_errors = *library
             .get::<unsafe extern "C" fn() -> u32>(b"order_errors\0")
             .unwrap();
+        #[cfg(feature = "graphics-observer")]
+        {
+            unsafe extern "C" fn no_gl(
+                _: *const std::ffi::c_char,
+            ) -> Option<unsafe extern "C" fn()> {
+                panic!("An empty native CPU handoff must not query GL");
+            }
+            psx_player::graphics_observer::initialize(no_gl, || (0, 0));
+            // Execute the actual patched ConsumeFrame before any producer or
+            // native current context exists, with the real Rust observer.
+            assert!(!consume());
+            assert!(!psx_player::graphics_observer::stop_requested());
+        }
+        library
+            .get::<unsafe extern "C" fn()>(b"enable_context\0")
+            .unwrap()();
         let (tx, rx) = mpsc::sync_channel(1);
         *WAKE.lock().unwrap() = Some(tx);
         pacing(true);
