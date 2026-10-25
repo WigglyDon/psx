@@ -9,6 +9,8 @@ pub const SCRATCH: &str = "observer-scratch-v1";
 
 #[cfg(feature = "graphics-observer")]
 pub mod boundary;
+#[cfg(feature = "producer-local-output-sync")]
+pub mod common;
 #[cfg(feature = "graphics-observer")]
 mod control;
 #[cfg(feature = "graphics-observer")]
@@ -76,6 +78,8 @@ mod enabled {
         pub streams: StreamProgress,
         #[cfg(feature = "producer-local-output-sync")]
         pub output_sync: output_sync::Progress,
+        #[cfg(feature = "producer-local-output-sync")]
+        pub common: common::Progress,
     }
     #[derive(Clone, Default, Serialize)]
     pub struct StreamProgress {
@@ -123,6 +127,8 @@ mod enabled {
                     },
                     #[cfg(feature = "producer-local-output-sync")]
                     output_sync: output_sync::Progress::default(),
+                    #[cfg(feature = "producer-local-output-sync")]
+                    common: common::Progress::default(),
                 },
                 keys: Vec::with_capacity(128),
                 next: 0,
@@ -247,6 +253,7 @@ mod enabled {
             #[cfg(feature = "producer-local-output-sync")]
             {
                 snapshot.output_sync = output_sync::snapshot();
+                snapshot.common = common::snapshot();
             }
             snapshot
         }
@@ -262,6 +269,35 @@ mod enabled {
     static PROC: AtomicUsize = AtomicUsize::new(0);
     static BINDING: AtomicUsize = AtomicUsize::new(0);
     static START: OnceLock<Instant> = OnceLock::new();
+    #[cfg(feature = "producer-local-output-sync")]
+    pub fn elapsed_micros() -> u64 {
+        START.get().map_or(0, |s| s.elapsed().as_micros() as u64)
+    }
+    #[cfg(feature = "producer-local-output-sync")]
+    pub fn current_context_token() -> u32 {
+        let binding = BINDING.load(Ordering::Acquire);
+        let context = if binding == 0 {
+            0
+        } else {
+            unsafe { std::mem::transmute::<usize, fn() -> (usize, usize)>(binding)().0 }
+        };
+        context_token(context)
+    }
+    #[cfg(feature = "producer-local-output-sync")]
+    pub fn context_token(context: usize) -> u32 {
+        RECORDER
+            .get()
+            .and_then(|r| r.lock().ok().map(|mut r| r.token(1, context, false)))
+            .unwrap_or(0)
+    }
+    #[cfg(feature = "producer-local-output-sync")]
+    pub fn native_result_event(owner: u32, frame: u64, detail: [i64; 8]) {
+        emit(owner, frame, 0, 70, 0, 0, [0; 32], detail, true);
+    }
+    #[cfg(feature = "producer-local-output-sync")]
+    pub fn native_error(code: u32) {
+        retain_fatal(code);
+    }
     pub fn produced() -> u64 {
         FRAME.load(Ordering::Acquire)
     }
@@ -308,6 +344,8 @@ mod enabled {
     }
     pub fn retiring() {
         RETIRING.store(1, Ordering::Release);
+        #[cfg(feature = "producer-local-output-sync")]
+        common::retiring();
         event(39, [0; 8]);
     }
     pub fn session_ready() {
@@ -548,6 +586,8 @@ mod enabled {
                 let error = gl.get_error();
                 *item = error as i64;
                 retain_fatal(error);
+                #[cfg(feature = "producer-local-output-sync")]
+                common::existing_error(owner,error,stage,frame);
                 if error == 0 {
                     break;
                 }
@@ -673,6 +713,8 @@ mod enabled {
                 let code = gl.get_error();
                 *item = code as i64;
                 retain_fatal(code);
+                #[cfg(feature = "producer-local-output-sync")]
+                common::existing_error(owner,code,stage+100,frame);
                 if code == 0 {
                     break;
                 }

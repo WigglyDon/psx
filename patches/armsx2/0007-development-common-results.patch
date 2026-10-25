@@ -1,0 +1,647 @@
+diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
+index 8002ffcce..d280e4e3c 100644
+--- a/pcsx2-libretro/Main.cpp
++++ b/pcsx2-libretro/Main.cpp
+@@ -2696,4 +2696,9 @@ extern "C" RETRO_API void retro_psx_observer_set_output_callback(GLLibretro::Out
+ {
+ 	GLLibretro::SetOutputCallback(callback);
+ }
++
++extern "C" RETRO_API void retro_psx_observer_set_result_callback(GSObservation::Callback callback)
++{
++    GSObservation::SetCallback(callback);
++}
+ #endif
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLContextEGL.cpp b/pcsx2/GS/Renderers/OpenGL/GLContextEGL.cpp
+index 303d7ffb9..6ee8a8f94 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLContextEGL.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLContextEGL.cpp
+@@ -2,6 +2,7 @@
+ // SPDX-License-Identifier: GPL-3.0+
+ 
+ #include "GS/Renderers/OpenGL/GLContextEGL.h"
++#include "GS/Renderers/OpenGL/GLLibretro.h"
+ 
+ #include "common/Assertions.h"
+ #include "common/Console.h"
+@@ -588,7 +589,8 @@ void GLContextEGL::DestroyContext()
+ 
+ 	if (m_context != EGL_NO_CONTEXT)
+ 	{
+-		eglDestroyContext(m_display, m_context);
++		const EGLBoolean destroyed = eglDestroyContext(m_display, m_context);
++		GSObservation::Result(14, 0, reinterpret_cast<std::uintptr_t>(m_context), destroyed == EGL_TRUE);
+ 		m_context = EGL_NO_CONTEXT;
+ 	}
+ }
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
+index 472b3e645..973d57c45 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
+@@ -16,6 +16,15 @@
+ #include <mutex>
+ #include <vector>
+ 
++namespace GSObservation
++{
++    static Callback s_result_callback = nullptr;
++    void SetCallback(Callback callback) { s_result_callback = callback; }
++    u32 Result(u32 op, u32 kind, std::uintptr_t key, u64 a, u64 b, u64 c, u64 d, u64 e)
++    {
++        return s_result_callback ? s_result_callback(op,kind,key,a,b,c,d,e) : 0;
++    }
++}
+ namespace GLLibretro
+ {
+ 	bool Active = false;
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
+index 9b1575530..5d8a9d4b1 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
++++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
+@@ -165,3 +165,25 @@ namespace GLLibretro
+ } // namespace GLLibretro
+ 
+ #endif // ENABLE_LIBRETRO
++
++// Build-only call-site transport. Recording and failure policy live in Rust.
++namespace GSObservation
++{
++using Callback = u32 (*)(u32, u32, std::uintptr_t, u64, u64, u64, u64, u64);
++void SetCallback(Callback callback);
++u32 Result(u32 operation, u32 kind = 0, std::uintptr_t key = 0,
++    u64 a = 0, u64 b = 0, u64 c = 0, u64 d = 0, u64 e = 0);
++inline bool Unsafe() { return Result(15) != 0; }
++// Exactly one original destructive read. Its caller receives the same value.
++inline GLenum Error(u32 site, bool probe = false)
++{
++    const GLenum result = glGetError();
++    Result(2, 0, 0, result, site, probe ? 1 : 0);
++    return result;
++}
++struct Phase
++{
++    explicit Phase(u32 phase) { Result(0, 0, 0, phase); }
++    ~Phase() { Result(1); }
++};
++}
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLProgram.cpp b/pcsx2/GS/Renderers/OpenGL/GLProgram.cpp
+index e4df271ab..fb76e0e68 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLProgram.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLProgram.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "Config.h"
+ #include "GS/Renderers/OpenGL/GLProgram.h"
++#include "GS/Renderers/OpenGL/GLLibretro.h"
+ 
+ #include "common/Assertions.h"
+ #include "common/Console.h"
+@@ -38,6 +39,7 @@ GLProgram::~GLProgram()
+ GLuint GLProgram::CompileShader(GLenum type, const std::string_view source)
+ {
+ 	GLuint id = glCreateShader(type);
++	GSObservation::Result(3, 0, 0, type, 0, 0, 0, id != 0);
+ 
+ 	std::array<const GLchar*, 1> sources = {{source.data()}};
+ 	std::array<GLint, 1> source_lengths = {{static_cast<GLint>(source.size())}};
+@@ -46,6 +48,7 @@ GLuint GLProgram::CompileShader(GLenum type, const std::string_view source)
+ 
+ 	GLint status = GL_FALSE;
+ 	glGetShaderiv(id, GL_COMPILE_STATUS, &status);
++	GSObservation::Result(9, 0, 0, status == GL_TRUE, type);
+ 
+ 	GLint info_log_length = 0;
+ 	glGetShaderiv(id, GL_INFO_LOG_LENGTH, &info_log_length);
+@@ -128,11 +131,14 @@ bool GLProgram::CompileCompute(const std::string_view glsl)
+ 
+ bool GLProgram::CreateFromBinary(const void* data, u32 data_length, u32 data_format)
+ {
++	GSObservation::Phase probe(8); // Optional cache validation may fall back to source compilation.
+ 	GLuint prog = glCreateProgram();
++	GSObservation::Result(3, 0, 0, 0, 0, 0, 0, prog != 0);
+ 	glProgramBinary(prog, static_cast<GLenum>(data_format), data, data_length);
+ 
+ 	GLint link_status;
+ 	glGetProgramiv(prog, GL_LINK_STATUS, &link_status);
++	GSObservation::Result(11, 0, 0, link_status == GL_TRUE); // Optional cache candidate, not required compilation.
+ 	if (link_status != GL_TRUE)
+ 	{
+ 		Console.Error("Failed to create GL program from binary: status %d", link_status);
+@@ -225,6 +231,7 @@ bool GLProgram::Link()
+ 
+ 	GLint status = GL_FALSE;
+ 	glGetProgramiv(m_program_id, GL_LINK_STATUS, &status);
++	GSObservation::Result(10, 0, reinterpret_cast<std::uintptr_t>(this), status == GL_TRUE);
+ 
+ 	GLint info_log_length = 0;
+ 
+@@ -266,6 +273,12 @@ void GLProgram::Bind() const
+ 
+ void GLProgram::Destroy()
+ {
++	if (GSObservation::Unsafe())
++	{
++		m_vertex_shader_id = 0; m_fragment_shader_id = 0; m_program_id = 0;
++		m_uniform_locations.clear();
++		return; // EGL context destruction owns names after a reported fatal result.
++	}
+ 	if (m_vertex_shader_id != 0)
+ 	{
+ 		glDeleteShader(m_vertex_shader_id);
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
+index 6c9510587..5518c7d89 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
+@@ -2,6 +2,7 @@
+ // SPDX-License-Identifier: GPL-3.0+
+ 
+ #include "GS/Renderers/OpenGL/GLStreamBuffer.h"
++#include "GS/Renderers/OpenGL/GLLibretro.h"
+ 
+ #include "common/BitUtils.h"
+ #include "common/AlignedMalloc.h"
+@@ -63,10 +64,13 @@ GLStreamBuffer::GLStreamBuffer(GLenum target, GLuint buffer_id, u32 size)
+ 	, m_size(size)
+ 	, m_generation(s_stream_generation.fetch_add(1, std::memory_order_relaxed) + 1)
+ {
++	GSObservation::Result(3, 2, m_buffer_id, 0, m_target, 0, m_size, m_buffer_id != 0);
+ }
+ 
+ GLStreamBuffer::~GLStreamBuffer()
+ {
++	GSObservation::Result(4, 2, m_buffer_id, GSObservation::Unsafe() ? 0 : 1);
++	if (GSObservation::Unsafe()) return;
+ 	glDeleteBuffers(1, &m_buffer_id);
+ }
+ 
+@@ -109,18 +113,20 @@ namespace
+ 
+ 		static std::unique_ptr<GLStreamBuffer> Create(GLenum target, u32 size)
+ 		{
+-			glGetError();
++			GSObservation::Phase probe(8);
++			GSObservation::Error(10, true);
++			if (GSObservation::Unsafe()) return {};
+ 
+ 			GLuint buffer_id;
+ 			glGenBuffers(1, &buffer_id);
+ 			glBindBuffer(target, buffer_id);
+ 			glBufferData(target, size, nullptr, GL_STREAM_DRAW);
+ 
+-			GLenum err = glGetError();
++			GLenum err = GSObservation::Error(11, true);
+ 			if (err != GL_NO_ERROR)
+ 			{
+-				glBindBuffer(target, 0);
+-				glDeleteBuffers(1, &buffer_id);
++				GSObservation::Result(3, 2, 0, 0, target, 0, size, 0);
++				if (!GSObservation::Unsafe()) { glBindBuffer(target, 0); glDeleteBuffers(1, &buffer_id); }
+ 				return {};
+ 			}
+ 
+@@ -166,18 +172,20 @@ namespace
+ 
+ 		static std::unique_ptr<GLStreamBuffer> Create(GLenum target, u32 size)
+ 		{
+-			glGetError();
++			GSObservation::Phase probe(8);
++			GSObservation::Error(12, true);
++			if (GSObservation::Unsafe()) return {};
+ 
+ 			GLuint buffer_id;
+ 			glGenBuffers(1, &buffer_id);
+ 			glBindBuffer(target, buffer_id);
+ 			glBufferData(target, size, nullptr, GL_STREAM_DRAW);
+ 
+-			GLenum err = glGetError();
++			GLenum err = GSObservation::Error(13, true);
+ 			if (err != GL_NO_ERROR)
+ 			{
+-				glBindBuffer(target, 0);
+-				glDeleteBuffers(1, &buffer_id);
++				GSObservation::Result(3, 2, 0, 0, target, 0, size, 0);
++				if (!GSObservation::Unsafe()) { glBindBuffer(target, 0); glDeleteBuffers(1, &buffer_id); }
+ 				return {};
+ 			}
+ 
+@@ -207,6 +215,7 @@ namespace
+ 
+ 		virtual ~SyncingStreamBuffer() override
+ 		{
++			if (GSObservation::Unsafe()) return;
+ 			// A failed dependency grants no reuse. Teardown still owns every
+ 			// remaining non-null fence, including the wrapped portion.
+ 			for (GLsync& sync : m_sync_objects)
+@@ -312,6 +321,7 @@ namespace
+ 	public:
+ 		~BufferStorageStreamBuffer() override
+ 		{
++			if (GSObservation::Unsafe()) return;
+ 			glBindBuffer(m_target, m_buffer_id);
+ 			glUnmapBuffer(m_target);
+ 			glBindBuffer(m_target, 0);
+@@ -355,7 +365,9 @@ namespace
+ 
+ 		static std::unique_ptr<GLStreamBuffer> Create(GLenum target, u32 size, bool coherent = true)
+ 		{
+-			glGetError();
++			GSObservation::Phase probe(8);
++			GSObservation::Error(14, true);
++			if (GSObservation::Unsafe()) return {};
+ 
+ 			GLuint buffer_id;
+ 			glGenBuffers(1, &buffer_id);
+@@ -368,15 +380,16 @@ namespace
+ 			else if (GLAD_GL_EXT_buffer_storage)
+ 				glBufferStorageEXT(target, size, nullptr, flags);
+ 
+-			GLenum err = glGetError();
++			GLenum err = GSObservation::Error(15, true);
+ 			if (err != GL_NO_ERROR)
+ 			{
+-				glBindBuffer(target, 0);
+-				glDeleteBuffers(1, &buffer_id);
++				GSObservation::Result(3, 2, 0, 0, target, 0, size, 0);
++				if (!GSObservation::Unsafe()) { glBindBuffer(target, 0); glDeleteBuffers(1, &buffer_id); }
+ 				return {};
+ 			}
+ 
+ 			u8* mapped_ptr = static_cast<u8*>(glMapBufferRange(target, 0, size, map_flags));
++			GSObservation::Result(5, 2, buffer_id, mapped_ptr != nullptr, 0, size, size, coherent ? 1 : 2);
+ 			pxAssertRel(mapped_ptr, "Persistent buffer was mapped");
+ 
+ 			return std::unique_ptr<GLStreamBuffer>(
+diff --git a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+index d46896a6d..d58e9d09c 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+@@ -311,6 +311,7 @@ std::vector<GSAdapterInfo> GSDeviceOGL::GetAdapterInfo()
+ 
+ GSTexture* GSDeviceOGL::CreateSurface(GSTexture::Usage usage, int width, int height, int levels, GSTexture::Format format)
+ {
++	if (GSObservation::Unsafe()) return nullptr;
+ 	GL_PUSH("Create surface");
+ 	pxAssert(GLAD_GL_ARB_shader_image_load_store || !GSTexture::IsShaderWrite(usage));
+ 	return new GSTextureOGL(usage, width, height, levels, format);
+@@ -339,6 +340,7 @@ void GSDeviceOGL::SetVSyncMode(GSVSyncMode mode, bool allow_present_throttle)
+ 
+ bool GSDeviceOGL::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
+ {
++	GSObservation::Phase phase(7);
+ 	if (!GSDevice::Create(vsync_mode, allow_present_throttle))
+ 		return false;
+ 
+@@ -867,9 +869,17 @@ bool GSDeviceOGL::AbandonContext(bool still_valid)
+ // Runs once: whichever of the two gets here first does the work.
+ void GSDeviceOGL::DestroyDeviceObjects()
+ {
++	GSObservation::Phase phase(9);
+ 	if (m_objects_destroyed)
+ 		return;
+ 	m_objects_destroyed = true;
++	if (GSObservation::Unsafe())
++	{
++		GLLibretro::Deactivate();
++		GLLibretro::AbortPacing();
++		GSDevice::Destroy();
++		return; // GL members defer to actual context destruction, not glDelete*.
++	}
+ 
+ #ifdef __ANDROID__
+ 	GSRemotePlay::g_renderer_captures.store(false, std::memory_order_release);
+@@ -940,6 +950,7 @@ bool GSDeviceOGL::CreateTextureFX()
+ 
+ bool GSDeviceOGL::CheckFeatures()
+ {
++	GSObservation::Phase phase(8);
+ 	bool vendor_id_amd = false;
+ 	bool vendor_id_nvidia = false;
+ 	bool vendor_id_intel = false;
+@@ -1808,6 +1819,7 @@ void GSDeviceOGL::CollectDriverReport(GSDriverReport::BackendReport& out) const
+ 
+ GSDevice::PresentResult GSDeviceOGL::DoBeginPresent(bool frame_skip)
+ {
++	if (GSObservation::Unsafe()) return PresentResult::FrameSkipped;
+ 	if (frame_skip)
+ 		return PresentResult::FrameSkipped;
+ 
+@@ -1883,9 +1895,10 @@ GSDevice::PresentResult GSDeviceOGL::DoBeginPresent(bool frame_skip)
+ 
+ void GSDeviceOGL::EndPresent()
+ {
++	if (GSObservation::Unsafe()) return;
+ 	if (GLStreamBuffer::Failed())
+ 		return;
+-	RenderImGui();
++	{ GSObservation::Phase overlay(5); RenderImGui(); }
+ 	if (GLStreamBuffer::Failed())
+ 		return;
+ 
+@@ -1894,6 +1907,7 @@ void GSDeviceOGL::EndPresent()
+ 
+ 	if (GLLibretro::Active)
+ 	{
++		GSObservation::Phase output(6);
+ 		GLLibretro::RetireCreatorOutputs();
+ 		if (!GLLibretro::CreatorOutputAllowed())
+ 			return;
+@@ -1912,6 +1926,7 @@ void GSDeviceOGL::EndPresent()
+ 		if (!GLLibretro::RetainCreatorOutput(&frame))
+ 			return;
+ 		GLLibretro::Observe(16, 1, frame.observation, frame.texture, frame.width, frame.height, frame.fence, reinterpret_cast<std::uintptr_t>(observer_fence_create));
++		if (GSObservation::Unsafe()) return;
+ 		glFlush();
+ 		GLLibretro::Observe(2, 1, frame.observation, frame.texture, frame.width, frame.height, frame.fence, reinterpret_cast<std::uintptr_t>(observer_fence_create));
+ 
+@@ -2191,6 +2206,7 @@ static void DrawElementsInRange(GLenum mode, u32 vertex_count, GLsizei count, co
+ 
+ void GSDeviceOGL::DrawIndexedPrimitive(int offset, int count)
+ {
++	if (GSObservation::Result(13, 0, 0, static_cast<u64>(offset), static_cast<u64>(count), m_index.count)) return;
+ 	if (GLStreamBuffer::Failed())
+ 		return;
+ 	g_perfmon.Put(GSPerfMon::DrawCalls, 1);
+@@ -2935,6 +2951,8 @@ void GSDeviceOGL::DoStretchRect(GSTexture* sTex, const GSVector4& sRect, GSTextu
+ 
+ void GSDeviceOGL::PresentRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, PresentShader shader, float shaderTime, Filter filter)
+ {
++	GSObservation::Phase phase(4);
++	if (GSObservation::Unsafe()) return;
+ 	CommitClear(sTex, true);
+ 
+ 	const GSVector2i ds(dTex ? dTex->GetSize() : GSVector2i(GetWindowWidth(), GetWindowHeight()));
+@@ -3586,7 +3604,9 @@ void GSDeviceOGL::SetupDATE(GSTexture* rt, GSTexture* ds, SetDATM datm, const GS
+ 
+ __fi static void WriteToStreamBuffer(GLStreamBuffer* sb, u32 index, u32 align, const void* data, u32 size)
+ {
++	if (GSObservation::Result(13, 2, sb->GetGLBufferId(), 0, size, sb->GetSize())) return;
+ 	const auto res = sb->Map(align, size);
++	GSObservation::Result(5, 2, sb->GetGLBufferId(), res.pointer != nullptr, res.buffer_offset, size, sb->GetSize());
+ 	if (!res.pointer)
+ 		return;
+ 	std::memcpy(res.pointer, data, size);
+@@ -3631,8 +3651,10 @@ void GSDeviceOGL::IASetVAO(GLuint vao)
+ 
+ void GSDeviceOGL::IASetVertexBuffer(const void* vertices, size_t count, size_t align_multiplier)
+ {
++	if (GSObservation::Result(13, 2, m_vertex_stream_buffer->GetGLBufferId(), 0, count, m_vertex_stream_buffer->GetSize() / sizeof(GSVertexPT1))) return;
+ 	const u32 size = static_cast<u32>(count) * sizeof(GSVertexPT1);
+ 	auto res = m_vertex_stream_buffer->Map(sizeof(GSVertexPT1) * align_multiplier, size);
++	GSObservation::Result(5, 2, m_vertex_stream_buffer->GetGLBufferId(), res.pointer != nullptr, res.buffer_offset, size, m_vertex_stream_buffer->GetSize());
+ 	if (!res.pointer)
+ 		return;
+ 	std::memcpy(res.pointer, vertices, size);
+@@ -3643,8 +3665,10 @@ void GSDeviceOGL::IASetVertexBuffer(const void* vertices, size_t count, size_t a
+ 
+ void GSDeviceOGL::SetIndexBuffer(std::unique_ptr<GLStreamBuffer>& buffer, const void* index, size_t count)
+ {
++	if (GSObservation::Result(13, 2, buffer->GetGLBufferId(), 0, count, buffer->GetSize() / sizeof(u16))) return;
+ 	const u32 size = static_cast<u32>(count) * sizeof(u16);
+ 	auto res = buffer->Map(sizeof(u16), size);
++	GSObservation::Result(5, 2, buffer->GetGLBufferId(), res.pointer != nullptr, res.buffer_offset, size, buffer->GetSize());
+ 	if (!res.pointer)
+ 		return;
+ 	m_index.start = res.index_aligned;
+@@ -3842,6 +3866,7 @@ void GSDeviceOGL::RenderImGui()
+ 		{
+ 			const u32 size = static_cast<u32>(cmd_list->VtxBuffer.Size) * sizeof(ImDrawVert);
+ 			auto res = m_vertex_stream_buffer->Map(sizeof(ImDrawVert), size);
++			GSObservation::Result(5, 2, m_vertex_stream_buffer->GetGLBufferId(), res.pointer != nullptr, res.buffer_offset, size, m_vertex_stream_buffer->GetSize());
+ 			if (!res.pointer)
+ 				return;
+ 			std::memcpy(res.pointer, cmd_list->VtxBuffer.Data, size);
+@@ -3854,6 +3879,8 @@ void GSDeviceOGL::RenderImGui()
+ 		for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
+ 		{
+ 			const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
++			if (GSObservation::Result(13, 2, m_index_stream_buffer->GetGLBufferId(), pcmd->IdxOffset, pcmd->ElemCount, cmd_list->IdxBuffer.Size)) return;
++			if (GSObservation::Result(13, 0, 0, pcmd->VtxOffset, 0, cmd_list->VtxBuffer.Size)) return;
+ 			pxAssert(!pcmd->UserCallback);
+ 
+ 			const GSVector4 clip = GSVector4::load<false>(&pcmd->ClipRect);
+@@ -4147,6 +4174,8 @@ static constexpr std::array<GLenum, 3> s_gl_blend_ops = { {
+ 
+ void GSDeviceOGL::DoRenderHW(GSHWDrawConfig& config)
+ {
++	GSObservation::Phase phase(1);
++	if (GSObservation::Unsafe()) return;
+ 	if (!GLState::scissor.eq(config.scissor))
+ 	{
+ 		glScissor(config.scissor.x, config.scissor.y, config.scissor.width(), config.scissor.height());
+@@ -4688,7 +4717,7 @@ void GSDeviceOGL::PushDebugGroup(const char* fmt, ...)
+ 		glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0xBAD, -1, buf.c_str());
+ 
+ 		// Make sure the calls succeed first.
+-		if (glGetError() == GL_NO_ERROR)
++		if (GSObservation::Error(20) == GL_NO_ERROR)
+ 			s_debugGroupDepth++;
+ 	}
+ #endif
+@@ -5024,14 +5053,14 @@ bool GSDeviceOGL::RemotePlayCreateHardware(RemotePlayHardware& hardware, u32 wid
+ 	hardware.image = image;
+ 
+ 	// Through the scratch unit the emulated DSA calls use, and given back to what it held.
+-	while (glGetError() != GL_NO_ERROR)
++	while (GSObservation::Error(21, true) != GL_NO_ERROR)
+ 	{
+ 	}
+ 	glGenTextures(1, &hardware.texture);
+ 	glActiveTexture(GL_TEXTURE7);
+ 	glBindTexture(GL_TEXTURE_2D, hardware.texture);
+ 	glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, static_cast<GLeglImageOES>(image));
+-	const bool bound = glGetError() == GL_NO_ERROR;
++	const bool bound = GSObservation::Error(22, true) == GL_NO_ERROR;
+ 	glBindTexture(GL_TEXTURE_2D, GLState::tex_unit[7]);
+ 	if (!bound)
+ 	{
+diff --git a/pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp
+index 7c4735cf6..ce4a5095a 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp
+@@ -2,6 +2,7 @@
+ // SPDX-License-Identifier: GPL-3.0+
+ 
+ #include "GS/Renderers/OpenGL/GSDeviceOGL.h"
++#include "GS/Renderers/OpenGL/GLLibretro.h"
+ #include "GS/Renderers/OpenGL/GSTextureOGL.h"
+ #include "GS/Renderers/OpenGL/GLState.h"
+ #include "GS/GSExtra.h"
+@@ -209,6 +210,7 @@ GSTextureOGL::GSTextureOGL(Usage usage, int width, int height, int levels, Forma
+ 
+ 	// Create a gl object (texture isn't allocated here)
+ 	glCreateTextures(GL_TEXTURE_2D, 1, &m_texture_id);
++	GSObservation::Result(3, 1, reinterpret_cast<std::uintptr_t>(this), m_size.x, m_size.y, m_gl_format, m_mipmap_levels, m_texture_id != 0);
+ 	if (m_format == Format::UNorm8)
+ 	{
+ 		// Emulate DX behavior, beside it avoid special code in shader to differentiate
+@@ -217,10 +219,13 @@ GSTextureOGL::GSTextureOGL(Usage usage, int width, int height, int levels, Forma
+ 	}
+ 
+ 	glTextureStorage2D(m_texture_id, m_mipmap_levels, m_gl_format, m_size.x, m_size.y);
++	GSObservation::Result(19, 1, reinterpret_cast<std::uintptr_t>(this), m_size.x, m_size.y, m_gl_format, m_mipmap_levels);
+ }
+ 
+ GSTextureOGL::~GSTextureOGL()
+ {
++	GSObservation::Result(4, 1, reinterpret_cast<std::uintptr_t>(this), GSObservation::Unsafe() ? 0 : 1);
++	if (GSObservation::Unsafe()) return;
+ 	// Textures aren't cleared from attachments on deletion.
+ 	GSDeviceOGL::GetInstance()->OMUnbindTexture(this);
+ 
+@@ -241,6 +246,9 @@ void* GSTextureOGL::GetNativeHandle() const
+ 
+ bool GSTextureOGL::DoUpdate(const GSVector4i& r, const void* data, int pitch, int layer)
+ {
++	GSObservation::Phase phase(2);
++	if (GSObservation::Unsafe()) return false;
++	GSObservation::Result(12, 1, reinterpret_cast<std::uintptr_t>(this), r.width(), r.height(), pitch, layer);
+ 	pxAssert(!IsDepthStencil());
+ 
+ 	if (layer >= m_mipmap_levels)
+@@ -294,6 +302,7 @@ bool GSTextureOGL::DoUpdate(const GSVector4i& r, const void* data, int pitch, in
+ 	else
+ 	{
+ 		const auto map = sb->Map(TEXTURE_UPLOAD_ALIGNMENT, map_size);
++		GSObservation::Result(5, 2, sb->GetGLBufferId(), map.pointer != nullptr, map.buffer_offset, map_size, sb->GetSize());
+ 		if (!map.pointer)
+ 			return false;
+ 		StringUtil::StrideMemCpy(map.pointer, preferred_pitch, data, pitch, r.width() << m_int_shift, r.height());
+@@ -318,6 +327,8 @@ bool GSTextureOGL::DoUpdate(const GSVector4i& r, const void* data, int pitch, in
+ 
+ bool GSTextureOGL::DoMap(GSMap& m, const GSVector4i* _r, int layer)
+ {
++	GSObservation::Phase phase(2);
++	if (GSObservation::Unsafe()) return false;
+ 	if (layer >= m_mipmap_levels || IsCompressedFormat())
+ 		return false;
+ 
+@@ -342,6 +353,7 @@ bool GSTextureOGL::DoMap(GSMap& m, const GSVector4i* _r, int layer)
+ 		g_perfmon.Put(GSPerfMon::TextureUploads, 1);
+ 
+ 		const auto map = sb->Map(TEXTURE_UPLOAD_ALIGNMENT, upload_size);
++		GSObservation::Result(5, 2, sb->GetGLBufferId(), map.pointer != nullptr, map.buffer_offset, upload_size, sb->GetSize());
+ 		if (!map.pointer)
+ 			return false;
+ 		m.bits = static_cast<u8*>(map.pointer);
+@@ -362,6 +374,8 @@ bool GSTextureOGL::DoMap(GSMap& m, const GSVector4i* _r, int layer)
+ 
+ void GSTextureOGL::Unmap()
+ {
++	GSObservation::Phase phase(2);
++	if (GSObservation::Unsafe()) return;
+ 	if (GLStreamBuffer::Failed())
+ 		return;
+ 	if (IsTexture() || IsRenderTarget())
+@@ -392,6 +406,7 @@ void GSTextureOGL::Unmap()
+ 
+ void GSTextureOGL::GenerateMipmap()
+ {
++	if (GSObservation::Unsafe()) return;
+ 	pxAssert(m_mipmap_levels > 1);
+ 	GSDeviceOGL::GetInstance()->CommitClear(this, true);
+ 	glGenerateTextureMipmap(m_texture_id);
+@@ -419,6 +434,8 @@ GSDownloadTextureOGL::GSDownloadTextureOGL(u32 width, u32 height, GSTexture::For
+ 
+ GSDownloadTextureOGL::~GSDownloadTextureOGL()
+ {
++	GSObservation::Result(4, m_buffer_id ? 3 : 4, reinterpret_cast<std::uintptr_t>(this), GSObservation::Unsafe() && m_buffer_id ? 0 : 1);
++	if (GSObservation::Unsafe() && m_buffer_id) return;
+ 	if (m_buffer_id != 0)
+ 	{
+ 		if (m_sync)
+@@ -441,6 +458,8 @@ GSDownloadTextureOGL::~GSDownloadTextureOGL()
+ 
+ std::unique_ptr<GSDownloadTextureOGL> GSDownloadTextureOGL::Create(u32 width, u32 height, GSTexture::Format format)
+ {
++	GSObservation::Phase phase(3);
++	if (GSObservation::Unsafe()) return {};
+ 	const u32 buffer_size = GetBufferSize(width, height, format, TEXTURE_UPLOAD_PITCH_ALIGNMENT);
+ 
+ 	const bool use_buffer_storage = (GLAD_GL_VERSION_4_4 || GLAD_GL_ARB_buffer_storage || GLAD_GL_EXT_buffer_storage) &&
+@@ -460,11 +479,13 @@ std::unique_ptr<GSDownloadTextureOGL> GSDownloadTextureOGL::Create(u32 width, u3
+ 			glBufferStorageEXT(GL_PIXEL_PACK_BUFFER, buffer_size, nullptr, flags);
+ 
+ 		u8* buffer_map = static_cast<u8*>(glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, buffer_size, map_flags));
++		GSObservation::Result(5, 3, buffer_id, buffer_map != nullptr, 0, buffer_size, buffer_size, (GLAD_GL_VERSION_4_4 || GLAD_GL_ARB_buffer_storage) ? 1 : 2);
+ 
+ 		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+ 
+ 		if (!buffer_map)
+ 		{
++			GSObservation::Result(3, 3, 0, width, height, static_cast<u32>(format), buffer_size, 0);
+ 			Console.Error("Failed to map persistent download buffer");
+ 			glDeleteBuffers(1, &buffer_id);
+ 			return {};
+@@ -474,23 +495,29 @@ std::unique_ptr<GSDownloadTextureOGL> GSDownloadTextureOGL::Create(u32 width, u3
+ 		ret->m_buffer_id = buffer_id;
+ 		ret->m_buffer_size = buffer_size;
+ 		ret->m_map_pointer = buffer_map;
++		GSObservation::Result(3, 3, reinterpret_cast<std::uintptr_t>(ret.get()), width, height, static_cast<u32>(format), buffer_size, 1);
+ 		return ret;
+ 	}
+ 
+ 	// Fallback to glReadPixels() + CPU buffer.
+ 	u8* cpu_buffer = static_cast<u8*>(_aligned_malloc(buffer_size, VECTOR_ALIGNMENT));
++	if (!cpu_buffer) GSObservation::Result(3, 4, 0, width, height, static_cast<u32>(format), buffer_size, 0);
+ 	if (!cpu_buffer)
+ 		return {};
+ 
+ 	std::unique_ptr<GSDownloadTextureOGL> ret(new GSDownloadTextureOGL(width, height, format));
+ 	ret->m_cpu_buffer = cpu_buffer;
+ 	ret->m_map_pointer = cpu_buffer;
++	GSObservation::Result(3, 4, reinterpret_cast<std::uintptr_t>(ret.get()), width, height, static_cast<u32>(format), buffer_size, 1);
+ 	return ret;
+ }
+ 
+ void GSDownloadTextureOGL::DoCopyFromTexture(
+ 	const GSVector4i& drc, GSTexture* stex, const GSVector4i& src, u32 src_level, bool use_transfer_pitch)
+ {
++	GSObservation::Phase phase(3);
++	if (GSObservation::Unsafe()) return;
++	GSObservation::Result(6, m_cpu_buffer ? 4 : 3, reinterpret_cast<std::uintptr_t>(this), drc.width(), drc.height(), src.width(), src.height(), m_buffer_size);
+ 	GSTextureOGL* const glTex = static_cast<GSTextureOGL*>(stex);
+ 	GSDeviceOGL::GetInstance()->CommitClear(glTex, true);
+ 
+@@ -536,6 +563,7 @@ void GSDownloadTextureOGL::DoCopyFromTexture(
+ 			glDeleteSync(m_sync);
+ 
+ 		m_sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++		GSObservation::Result(7, 3, reinterpret_cast<std::uintptr_t>(this), m_sync != nullptr);
+ 		m_needs_flush = true;
+ 	}
+ 
+@@ -560,25 +588,33 @@ void GSDownloadTextureOGL::Unmap()
+ 
+ void GSDownloadTextureOGL::Flush()
+ {
++	GSObservation::Phase phase(3);
++	if (GSObservation::Unsafe()) return;
++	GSObservation::Result(16, m_cpu_buffer ? 4 : 3, reinterpret_cast<std::uintptr_t>(this), m_needs_flush, m_sync != nullptr);
+ 	// If we're using CPU buffers, we did the readback synchronously...
+ 	if (!m_needs_flush || !m_sync)
+ 		return;
+ 
+ 	m_needs_flush = false;
+ 
+-	glClientWaitSync(m_sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
++	const GLenum result = glClientWaitSync(m_sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
++	GSObservation::Result(8, 3, reinterpret_cast<std::uintptr_t>(this), result, 1);
+ 	glDeleteSync(m_sync);
+ 	m_sync = {};
+ }
+ 
+ bool GSDownloadTextureOGL::Poll()
+ {
++	GSObservation::Phase phase(3);
++	if (GSObservation::Unsafe()) return false;
++	GSObservation::Result(17, m_cpu_buffer ? 4 : 3, reinterpret_cast<std::uintptr_t>(this), m_needs_flush, m_sync != nullptr);
+ 	// No sync object means the readback already went through a CPU buffer synchronously.
+ 	if (!m_needs_flush || !m_sync)
+ 		return true;
+ 
+ 	// Zero timeout: this is a test, not a wait.
+ 	const GLenum result = glClientWaitSync(m_sync, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
++	GSObservation::Result(8, 3, reinterpret_cast<std::uintptr_t>(this), result, 0);
+ 	if (result != GL_ALREADY_SIGNALED && result != GL_CONDITION_SATISFIED)
+ 		return false;
+ 

@@ -205,3 +205,19 @@ creator-only retirement. Source tests do not establish a GPU cause or fix.
 buffer generation and real create/wait/map/unmap observations. Its callback,
 instance fields and call sites are absent from ordinary builds. All retained
 donor copyright and license terms apply to these modifications.
+
+The same creator-owned reference now also applies
+`0007-development-common-results.patch` under Master6398308448. It forwards
+existing error reads and operation results, coarse phase scopes, audited
+allocation/release requests and required download/readback selection/results
+to the existing Rust observer. No extra GL error read, pixel readback, fence,
+wait, finish, driver layer or player option is added. It preserves the value
+returned to each original native caller, including optional binary-cache
+rejection and nonblocking poll timeout. Native fault guards skip audited GL
+cleanup after a reported OOM/context loss; actual EGL destruction is recorded
+separately. Names/maps are not proof of completed storage and requested byte
+estimates are not physical GPU usage. The source fixture compiles the retained
+error-consuming factory check, download Flush/Poll and retirement method with
+controlled results. Runtime selection and the historical cause remain separate
+questions. Ordinary/historical stacks exclude0007. The necessary ABI remains
+in the retained handoff header; substantive recording/policy stays Rust.

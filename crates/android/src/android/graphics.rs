@@ -353,7 +353,13 @@ impl Graphics {
             }
         };
         if bind(previous).is_ok() {
-            self.objects.destroy();
+            #[cfg(feature = "producer-local-output-sync")]
+            let safe = !psx_player::graphics_observer::output_sync::context_unavailable();
+            #[cfg(not(feature = "producer-local-output-sync"))]
+            let safe = true;
+            if safe {
+                self.objects.destroy();
+            }
             #[cfg(feature = "graphics-observer")]
             psx_player::graphics_observer::sample(41, [0; 8]);
         } else {
@@ -867,13 +873,21 @@ impl Drop for Graphics {
         unsafe {
             let _ = self.detach();
             if self.restore_current().is_ok() {
-                self.objects.destroy();
+                #[cfg(feature = "producer-local-output-sync")]
+                let safe = !psx_player::graphics_observer::output_sync::context_unavailable();
+                #[cfg(not(feature = "producer-local-output-sync"))]
+                let safe = true;
+                if safe {
+                    self.objects.destroy();
+                }
                 #[cfg(feature = "graphics-observer")]
                 psx_player::graphics_observer::sample(41, [0; 8]);
             }
             let _ = API.make_current(self.display, None, None, None);
             let _ = API.destroy_surface(self.display, self.pbuffer);
             let _destroyed = API.destroy_context(self.display, self.context);
+            #[cfg(feature = "producer-local-output-sync")]
+            psx_player::graphics_observer::common::frontend_destroyed(_destroyed.is_ok());
             #[cfg(feature = "producer-local-output-sync")]
             if _destroyed.is_ok() {
                 psx_player::graphics_observer::output_sync::share_group_destroyed();

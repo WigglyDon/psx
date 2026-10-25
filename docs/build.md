@@ -60,10 +60,10 @@ source/patch/mode/signature bindings.
 
 The separately authorized creator-owned reference sets
 `PSX_GRAPHICS_OBSERVER_MODE=producer-local-output-sync` with the observer flag.
-It adds native patch0006 and the matching Rust feature; the APK manifest binds
-both its patch and Rust ownership policy. Historical normal/no-reader binaries
+It adds native patches0006/0007 and the matching Rust feature; the APK manifest binds
+the ownership/result patches and Rust policies. Historical normal/no-reader binaries
 remain frozen and are not controls to rerun without a new dispatch. This new
-mode retains the real GS workload but transfers only metadata to the frontend.
+reference retains the real GS workload but transfers only metadata to the frontend.
 Use its exact scratch marker, preserve symbols and verify complete matching
 source before any separately admitted single run.
 

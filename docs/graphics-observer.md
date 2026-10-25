@@ -353,3 +353,76 @@ closed its live ownership. This closes the cross-context output-sync branch
 for this reproduction. Do not repeat the variant or infer a driver root cause.
 Further off-device work moves to the common GS rendering/submission/context
 path; no new physical scope or production workaround follows from this result.
+
+## Common renderer result observation
+
+Master6398308448 keeps the same creator-owned reference and adds native
+patch0007. It is not a new handoff policy or player setting. Rust records
+existing native results through the existing observer and its bounded writer.
+The ordinary and historical native stacks exclude this extension.
+
+The retained creator-owned run's first fence failure was at11.589871s.
+Owner retirement began at11.727401s, native close was recorded at11.864115s,
+and the frontend stage41 sample returned `GL_OUT_OF_MEMORY` at11.916541s,
+after `Graphics` had attempted its UI-object cleanup. That is a later error
+observation, not the time/cause of an allocation failure or evidence of exhausted
+phone RAM. The same bounded application log retains two submission warnings.
+Its wall-clock timestamps have no exact established mapping to the observer's
+monotonic epoch. Native stdout is relayed by a logger thread; that logger's
+thread identifier cannot identify the original graphics caller. Neither warning
+order relative to individual observer events nor a causal command is inferred.
+
+Source audit found six destructive error reads in the stream factories and
+three sites in debug-group/optional remote-hardware paths. The new wrapper
+returns exactly the flag each original read consumed, once; it does not read
+another flag, suppress fallback or reinterpret a cache miss as required shader
+failure. Factory/capability and binary-cache probes are labeled separately.
+Existing Rust error samples also feed the record after their original fatal
+forwarding. Native fatal flags use the same typed latch before requesting a
+diagnostic stop. First runtime failure, first nonzero/probe error, first failed
+request/dependency and first fatal result survive later retirement errors.
+
+| Audited boundary | Added evidence; no new error query |
+| --- | --- |
+| `GSDeviceOGL::Create`, `CheckFeatures`, `DoRenderHW` | Initialization, probe and rendering entries/exits |
+| `GSTextureOGL::DoUpdate`/`DoMap`/`Unmap` | Upload phase, requested shape/pitch and existing stream-map results |
+| `PresentRect`, donor overlay call, output interval | Composition, overlay entry/exit and output phase; original fence samples retained |
+| Stream constructors/destructors and mapped-write callers | Adopted GL capacity, actual map results, ranges and lifetime totals |
+| `GSTextureOGL` storage request/destruction | Dimensions, sized format, levels, requested bytes and logical lifetime; GL storage calls return void |
+| `GLProgram` compile/link/cache checks | Existing compile/link returns, with optional cache rejection distinct from required compilation |
+| `GSDownloadTextureOGL` create/copy/flush/poll | CPU/PBO selection, actual map/fence/wait results and independent call/result totals |
+| Owner retirement, existing native/frontend EGL destruction | Retirement phase and actual destruction results; no per-object deletion claim after a fatal flag |
+
+Download counters and the first selection/dependency survive tail eviction.
+A nonblocking timeout remains pending. Entry into a required copy is an attempt,
+not proof that pixels were read successfully. No new readback, fence, wait,
+finish, per-draw error poll or global interception is introduced. Non-null
+names/maps do not prove completed GL storage. Missing paths remain unknown;
+zero download entries can exclude that path only for an actual qualified run.
+
+Accounting covers native texture requests, adopted stream GL buffers, download
+GL buffers and download CPU staging. It excludes other CPU memory, programs,
+framebuffers, samplers and driver allocations. Checked texel/block/mipmap sums
+and explicit unknown formats describe requested bytes, not physical GPU usage
+or free RAM. Live ownership is bounded to512 entries; native destruction keys
+to its actual context, and context-based reclamation also needs successful
+frontend destruction. CPU staging is never credited to EGL reclamation.
+Untracked resources/releases, unknown byte estimates, overflow and omissions
+remain explicit. Resource generations and opaque caller-thread/context tokens
+replace private names/addresses. Generation0 marks a pre-adoption or untracked
+operation. Progress tags identify the most recent output frame, not the exact
+guest draw that issued a command.
+
+Only32 recent result records are retained, alongside fixed non-evicting totals
+and first failures; existing256KiB/three-export limits remain. After recorded
+OOM/context loss, the diagnostic avoids subsequent ordinary object probing and
+audited GL cleanup and records actual context destruction separately. Successful
+paths and original native return values remain. These source checks do not
+explain the prior failure; observation and retirement timing can change.
+
+A single fresh admitted run is conditional on exact package/symbol/source
+bindings and discriminating result coverage. If it exposes only the same output
+fence failure, this observational route ends. Prepare the smallest source-matched
+full-renderer donor/host comparison off-device with explicit equivalence limits
+and cost; a new physical comparison needs its own disposition. Do not append
+another ownership or single-fence variant. The Fold remains excluded.

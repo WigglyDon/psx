@@ -135,7 +135,7 @@ against that exact complete `123e831` archive, not the older four-file delta.
 It permits at most64 regular project-file additions/modifications, bounded to
 16MiB combined, with unchanged dependency locks/configuration/exported trees.
 It derives bodies/modes from immutable Git objects, supplies missing ordinary
-parent directories, binds the six native patches in release metadata, and
+parent directories, binds the seven native patches in release metadata, and
 independently streams the complete output through the existing project/native/
 Cargo validation. Every unchanged member is compared with the verified input.
 Executable source, target revision and utility revision are recorded separately.

@@ -70,6 +70,7 @@ const MATCHED_PATCH: &str = "patches/armsx2/0003-development-matched-reader.patc
 const STREAM_PATCH: &str = "patches/armsx2/0004-stream-buffer-failure.patch";
 const STREAM_OBSERVER_PATCH: &str = "patches/armsx2/0005-development-stream-observer.patch";
 const CREATOR_OUTPUT_PATCH: &str = "patches/armsx2/0006-development-creator-output.patch";
+const COMMON_RESULTS_PATCH: &str = "patches/armsx2/0007-development-common-results.patch";
 pub fn observer_mode() -> Result<&'static str> {
     match env::var("PSX_GRAPHICS_OBSERVER_MODE").as_deref() {
         Err(_) | Ok("normal") => Ok("normal"),
@@ -168,6 +169,7 @@ fn active_patches() -> Vec<&'static str> {
         patches.extend([OBSERVER_PATCH, MATCHED_PATCH, STREAM_OBSERVER_PATCH]);
         if env::var("PSX_GRAPHICS_OBSERVER_MODE").as_deref() == Ok("producer-local-output-sync") {
             patches.push(CREATOR_OUTPUT_PATCH);
+            patches.push(COMMON_RESULTS_PATCH);
         }
     }
     patches
@@ -484,6 +486,14 @@ pub fn build() -> Result<()> {
                     OBSERVER_PATCH,
                     MATCHED_PATCH,
                     STREAM_OBSERVER_PATCH,
+                ],
+                vec![
+                    PATCH,
+                    STREAM_PATCH,
+                    OBSERVER_PATCH,
+                    MATCHED_PATCH,
+                    STREAM_OBSERVER_PATCH,
+                    CREATOR_OUTPUT_PATCH,
                 ],
                 patches.clone(),
             ]);

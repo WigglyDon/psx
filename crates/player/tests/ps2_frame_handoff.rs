@@ -112,6 +112,17 @@ fn published_frames_wake_without_waiting_for_a_frontend_tick_and_retire_cleanly(
             String::from_utf8_lossy(&result.stderr)
         );
     }
+    #[cfg(feature = "producer-local-output-sync")]
+    assert!(Command::new("git")
+        .args([
+            "apply",
+            "--include=pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp"
+        ])
+        .arg(repo.join("patches/armsx2/0007-development-common-results.patch"))
+        .current_dir(&temp)
+        .status()
+        .unwrap()
+        .success());
     let source = fs::read_to_string(temp.join(relative)).unwrap();
     let observer = if cfg!(feature = "graphics-observer") {
         source

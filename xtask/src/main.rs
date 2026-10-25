@@ -687,6 +687,9 @@ public final class PlaybackService extends android.app.Service {
                 "creatorOutputObserver":u32::from(ps2::observer_mode()?=="producer-local-output-sync"),
                 "creatorOutputPatchSha256":if ps2::observer_mode()?=="producer-local-output-sync" {Some(hash(Path::new("patches/armsx2/0006-development-creator-output.patch"))?)}else{None},
                 "creatorOutputRustSha256":if ps2::observer_mode()?=="producer-local-output-sync" {Some(hash(Path::new("crates/player/src/graphics_observer/output_sync.rs"))?)}else{None},
+                "commonRendererObserver":u32::from(ps2::observer_mode()?=="producer-local-output-sync"),
+                "commonRendererPatchSha256":if ps2::observer_mode()?=="producer-local-output-sync" {Some(hash(Path::new("patches/armsx2/0007-development-common-results.patch"))?)}else{None},
+                "commonRendererRustSha256":if ps2::observer_mode()?=="producer-local-output-sync" {Some(hash(Path::new("crates/player/src/graphics_observer/common.rs"))?)}else{None},
                 "maxExportBytes":790528
             }))?,
         )?;
@@ -924,6 +927,21 @@ fn verify_apk() -> Result<()> {
                     && ps2::observer_mode()? == "producer-local-output-sync")
             {
                 return Err("Creator output capability differs from exact build mode".into());
+            }
+            let result_export = symbols.lines().any(|line| {
+                let c: Vec<_> = line.split_whitespace().collect();
+                c.len() >= 8
+                    && c[3] == "FUNC"
+                    && c[4] == "GLOBAL"
+                    && c[5] == "DEFAULT"
+                    && c[6] != "UND"
+                    && c[7] == "retro_psx_observer_set_result_callback"
+            });
+            if result_export
+                != (ps2::observer_enabled()
+                    && ps2::observer_mode()? == "producer-local-output-sync")
+            {
+                return Err("Common renderer observer capability differs from exact mode".into());
             }
             for required in [
                 "retro_psx_ready",

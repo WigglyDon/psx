@@ -108,6 +108,7 @@ pub fn run(target: &str) -> Result<()> {
         "0004-stream-buffer-failure.patch",
         "0005-development-stream-observer.patch",
         "0006-development-creator-output.patch",
+        "0007-development-common-results.patch",
     ] {
         patches.insert(
             p.into(),

@@ -566,3 +566,30 @@ output-sync operations. Those cross-context operations are therefore not
 necessary for this reproduction; this diagnostic branch is closed. The next
 off-device question concerns common GS rendering/submission/context behavior,
 not another output-sync reference run or a speculative production workaround.
+
+## PLAYER-2 common renderer result preparation
+
+Master6398308448 accepts and closes the creator-owned comparison. Its first
+output-fence failure remains distinct from the later frontend cleanup OOM;
+the retained submission warnings do not establish a causal command or driver
+cause. The [common result observation map](graphics-observer.md#common-renderer-result-observation)
+records the precise earlier timeline, existing error consumers, observation
+coverage, unknown paths and interpretation limits.
+
+The same development reference now observes existing native error/operation
+results, coarse renderer/retirement phases, requested allocation lifetimes and
+actual required download/readback selection/results. Generated fixtures use
+the retained error-consuming factory check, download Flush/Poll and teardown
+method. They distinguish a native-consumed flag, optional cache/probe failure,
+normal asynchronous timeout, required dependency failure and later cleanup
+OOM. Rust cases additionally cover context-bound resource identity, request
+overflow/ranges, eviction/omission and bounded export. A separate stop fixture
+requires the original typed fatal latch to win before the observation's
+dependency stop and remain immutable during later retirement. These are
+source fixtures, not evidence that those paths ran in the historical workload.
+
+Exact final package/symbol/source qualification and any fresh admitted physical
+result remain separate. No new common-result device trial is claimed here.
+Only the same fence failure after clean added observations ends this route;
+it calls for an off-device full-renderer donor/host comparison preparation,
+not another handoff-policy variant or repeat.

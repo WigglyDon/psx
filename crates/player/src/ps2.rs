@@ -72,6 +72,13 @@ pub fn revision() -> &'static str {
                 "../../../patches/armsx2/0006-development-creator-output.patch"
             ))
         );
+        #[cfg(feature = "producer-local-output-sync")]
+        let binding = format!(
+            "{binding}+common-results:{:x}",
+            Sha256::digest(include_bytes!(
+                "../../../patches/armsx2/0007-development-common-results.patch"
+            ))
+        );
         binding
     })
 }
@@ -550,6 +557,13 @@ impl Core {
                 unsafe extern "C" fn(Option<Output>)
             );
             set(Some(crate::graphics_observer::output_sync::callback));
+            crate::graphics_observer::common::begin();
+            type ResultObserve = extern "C" fn(u32, u32, usize, u64, u64, u64, u64, u64) -> u32;
+            let results = symbol!(
+                "retro_psx_observer_set_result_callback",
+                unsafe extern "C" fn(Option<ResultObserve>)
+            );
+            results(Some(crate::graphics_observer::common::callback));
         }
         let api = symbol!("retro_api_version", unsafe extern "C" fn() -> u32);
         if api() != 1 {
@@ -835,6 +849,15 @@ impl Drop for Core {
             #[cfg(feature = "producer-local-output-sync")]
             {
                 crate::graphics_observer::output_sync::native_joined();
+                type ResultObserve = extern "C" fn(u32, u32, usize, u64, u64, u64, u64, u64) -> u32;
+                if let Ok(set) = self
+                    .library
+                    .get::<unsafe extern "C" fn(Option<ResultObserve>)>(
+                        b"retro_psx_observer_set_result_callback\0",
+                    )
+                {
+                    set(None);
+                }
                 type Output = unsafe extern "C" fn(
                     *mut crate::graphics_observer::output_sync::Command,
                 ) -> u32;

@@ -39,6 +39,12 @@ fn signal(root: &std::path::Path) -> serde_json::Value {
 fn same_lease_request_wakes_owner_and_writes_bounded_signal_without_frontend_service() {
     #[cfg(feature = "producer-local-output-sync")]
     assert!(std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "native_fatal_result_stop_fixture", "--ignored"])
+        .status()
+        .unwrap()
+        .success());
+    #[cfg(feature = "producer-local-output-sync")]
+    assert!(std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "output_ownership_stop_fixture", "--ignored"])
         .status()
         .unwrap()
@@ -98,6 +104,41 @@ fn same_lease_request_wakes_owner_and_writes_bounded_signal_without_frontend_ser
         }
     }
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(feature = "producer-local-output-sync")]
+#[test]
+#[ignore]
+fn native_fatal_result_stop_fixture() {
+    let root = std::env::temp_dir().join(format!("psx-native-fatal-stop-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    observer::initialize(proc, || (0, 0));
+    observer::output_sync::begin().unwrap();
+    observer::common::begin();
+    let owner = Arc::new(Owner(AtomicUsize::new(0)));
+    observer::start(&root, Waker::from(owner.clone())).unwrap();
+    observer::common::callback(observer::common::ERROR, 0, 0, 0x505, 123, 0, 0, 0);
+    let first = signal(&root);
+    assert_eq!(
+        first["reason"], 6,
+        "instrumentation must not replace the original typed fatal stop with its dependency stop"
+    );
+    assert_eq!(observer::take_fatal(), Some(0x505));
+    assert_eq!(observer::take_fatal(), None);
+    observer::retiring();
+    observer::common::callback(observer::common::ERROR, 0, 0, 0x507, 124, 0, 0, 0);
+    assert_eq!(
+        observer::take_fatal(),
+        None,
+        "cleanup must not manufacture a new runtime fatal"
+    );
+    assert_eq!(
+        observer::common::snapshot().first_fatal.unwrap().values[0],
+        0x505
+    );
+    observer::join_export();
+    assert_eq!(signal(&root), first);
+    assert_eq!(owner.0.load(Ordering::SeqCst), 1);
 }
 
 #[cfg(feature = "producer-local-output-sync")]
