@@ -1,22 +1,26 @@
 # Development PS2 graphics observation
 
-The [active Master disposition](https://github.com/WigglyDon/psx/issues/2#issuecomment-6348349808)
-authorizes a matched full-renderer comparison. This is development observation,
-not PS2 acceptance, a production rendering repair, or a driver diagnosis. Do not
-repeat the passing generated probe.
+The [matched full-renderer comparison](https://github.com/WigglyDon/psx/issues/2#issuecomment-6348349808)
+is closed. The [producer-operation dispatch](https://github.com/WigglyDon/psx/issues/2#issuecomment-6390726958)
+authorized a separate source repair and one bounded observation, now completed
+as recorded below. This is development observation, not PS2 acceptance or a
+driver diagnosis. Do not repeat the generated probe or the closed comparison.
 
 ## Build and isolation
 
 `PSX_GRAPHICS_OBSERVER=1 cargo xtask apk` selects the normal observation arm.
 Adding `PSX_GRAPHICS_OBSERVER_MODE=no-game-image-reader` selects the reference.
 Unknown modes are refused. Both use the same source base and native binary:
-unchanged adapter `0001`, historical observer `0002`, then separate matched
-observer/ownership glue `0003`. Rust owns the fixed build-mode decision, sampling,
+adapter `0001`, historical observer `0002`, then separate matched
+observer/ownership glue `0003`. The producer increment also includes repair
+`0004` in ordinary and diagnostic builds, and observation `0005` only in
+diagnostic builds. Rust owns the fixed build-mode decision, sampling,
 aggregation, stop transport and final presentation. No setting, fallback,
 permission, backend, shader, resolution or guest-clock change is introduced.
-Ordinary builds compile neither observer nor comparison path; their PS2 revision
-binding and rendering behavior remain unchanged. Diagnostic revisions include
-all patch hashes and the mode. No checkpoint compatibility exception is added.
+Ordinary builds compile neither observer nor comparison path. The stream repair
+changes their failure handling and exact revision binding while preserving
+successful synchronization scheduling. Diagnostic revisions include all patch
+hashes and the mode. No checkpoint compatibility exception is added.
 The builder derives the expected combined diff using a separate index and
 refuses unknown native changes. Retain the historical executed artifacts.
 
@@ -266,3 +270,13 @@ boundary, then verify baseline data/APK restoration and resource return. Report
 source proof, actual selected path, first operation/result and historical symptom
 separately. Successful waits followed by a later invalid fence do not explain
 the old failure; disappearance in one instrumented run does not establish a fix.
+
+The one admitted producer run is now complete. It selected seven persistent
+buffers and recorded one non-null stream-fence creation, but no client wait
+before retirement. A later output fence was invalid before its existing flush.
+The source wait-result repair therefore has not explained this reproduction;
+there were no successful waits to report either. The creation's individual
+range/frame event was evicted, while its counter and all selection records
+survived. No repeated run or normal arm follows from this result. See
+[verification](verification.md#player-2-admitted-producer-observation) and the
+[sanitized handback](https://github.com/WigglyDon/psx/issues/2#issuecomment-6392928084).

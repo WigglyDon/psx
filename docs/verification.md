@@ -435,9 +435,56 @@ sources and logs remain retained; the broad first player pass was122passed,
 one outdated compatibility expectation failed and three subprocess fixtures
 were ignored. Its corrected state-binding case passed separately.
 
-These are off-device source/ownership checks. Historical implementation
-selection, actual producer wait outcomes, native APK packaging and a new
-physical reference run remain unqualified at this increment. They establish
-neither the historical graphics cause nor a PS2 gameplay/performance fix.
+These source/ownership checks alone establish neither the historical graphics
+cause nor a PS2 gameplay/performance fix. Subsequent packaging and the one
+admitted producer observation are recorded below; they do not retroactively
+establish implementation selection in the historical run.
 [PLAYER-2 #2](https://github.com/WigglyDon/psx/issues/2) owns current dispatch,
 exact artifact bindings and any separately admitted hardware result.
+
+## PLAYER-2 admitted producer observation
+
+Application source `091ba9423ea6734fc5c1b0583936195fdb2426c2` produced the
+no-game-image-reader diagnostic APK SHA256
+`98d9fc1fcbe8affcdf9987a322e714f4e7c97c196f7837b0a6bd5ba92ff238c1`.
+Independent stripping of retained native and Rust symbols reproduced the exact
+packaged libraries. Original signing identity and packaged PS1 bytes matched.
+The complete matching source archive SHA256 is
+`b190ee82a517fce61a6fa5b46c2c7816020fcc618fe71c2ee12065e433aefa94`:
+204,607,668 bytes, 42,310 members, independently validated by streaming readback.
+No dependency expansion or cold engine rebuild was needed. Seven host-only
+operator checks passed before admission. The
+[source/build handback](https://github.com/WigglyDon/psx/issues/2#issuecomment-6392828602)
+owns full patch/library/symbol bindings; later documentation revisions do not
+change the executed application/source-archive revision.
+
+On 2026-10-25 UTC, one separately admitted fresh-process actual-workload boot
+selected seven persistent stream buffers. Both exports recorded one non-null
+stream-fence creation, zero null creations and zero client waits. Map/unmap
+counters were 865/865 and 949/949; no stream failure was recorded. All seven
+selection records survived, but the individual creation range/frame event had
+left the bounded tail. Non-null creation is not proof of a valid/signaled fence.
+
+The first retained graphics failure was stage16/order10967, producer frame462,
+11.679813s from observer epoch: a non-null output fence invalid through both
+query routes before the existing flush/publication. Sampled context/dispatch
+identities matched and error slots were zero. Stage2 retained invalidity47us
+later. The bounded app log also reported submission failures with errno35;
+precise cross-clock ordering and a driver cause were not established. Producer
+reached464 during queued retirement, acknowledgement/swap stayed461 and donor
+image copies stayed0. Owner retirement began137576us after the first failure;
+external retirement was verified13.200219273s after launch, within30s.
+
+The persistent factory path is confirmed for this run, but its wait branch was
+not entered. The source failure-handling defect is demonstrated and repaired;
+it has not explained the reproduced pre-flush output-fence symptom. No further
+physical trial, backend workaround or broader producer repair followed.
+
+Actual custody lasted37.247301722s. Exact original APK and full normal
+game-excluding data hashes passed before update and after rollback. Scratch was
+removed; original Home, stopped app, boot completion, physical display off and
+released/free inactive physical lease were verified. No pending restoration or
+owned clients remained; host evidence was separately flushed and returned.
+The Fold was untouched. No normal arm, repeat, screenshots/readback, sound,
+ordinary save or sustained-performance acceptance is claimed. See the
+[sanitized result and return](https://github.com/WigglyDon/psx/issues/2#issuecomment-6392928084).
