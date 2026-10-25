@@ -32,7 +32,9 @@ pub fn reference(result: &Value, snapshot: &Value, harness_source: &str) -> Resu
     )?;
     require(null(result, "result"), "reference fault or missing result")?;
     require(
-        result["host_page"] == 4096 && result["egl_selection_matches_frozen_query"] == true,
+        result["host_page"] == 4096
+            && result["egl_selection_matches_frozen_query"] == true
+            && result["window_setup_complete"] == true,
         "page/EGL selection equivalence unqualified",
     )?;
     let window = result["window"]
@@ -234,7 +236,8 @@ mod tests {
         for (k, v) in SETTINGS {
             e["settings_queries"][k] = json!(v);
         }
-        let r = json!({"version":1,"minimal_host":true,"harness_source":"fixture","frozen_native":NATIVE_SHA,"frozen_player":PLAYER_SOURCE,"result":null,"host_page":4096,"window":[1080,2280],"expected_window":[1080,2280],"gles":[3,2],"egl_selection_matches_frozen_query":true,"egl_attributes":[1,8,8,8,8,0,0,0,5,64,3],"elapsed_since_guest_launch":22.0,"evidence":e});
+        let mut r = json!({"version":1,"minimal_host":true,"harness_source":"fixture","frozen_native":NATIVE_SHA,"frozen_player":PLAYER_SOURCE,"result":null,"host_page":4096,"window":[1080,2280],"expected_window":[1080,2280],"gles":[3,2],"egl_selection_matches_frozen_query":true,"egl_attributes":[1,8,8,8,8,0,0,0,5,64,3],"elapsed_since_guest_launch":22.0,"evidence":e});
+        r["window_setup_complete"] = json!(true);
         let mut p =
             serde_json::to_value(crate::graphics_observer::output_sync::Progress::default())
                 .unwrap();
@@ -268,6 +271,7 @@ mod tests {
             "/evidence/deinitialized",
             "/evidence/native_signals_restored",
             "/egl_selection_matches_frozen_query",
+            "/window_setup_complete",
         ] {
             let mut bad = r.clone();
             *bad.pointer_mut(path).unwrap() = json!(false);

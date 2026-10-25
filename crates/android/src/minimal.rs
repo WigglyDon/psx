@@ -2,7 +2,7 @@
 use android_activity::{AndroidApp, MainEvent, PollEvent, WindowManagerFlags};
 use glow::HasContext;
 use jni::{
-    objects::{JObject, JString},
+    objects::{JObject, JString, JValue},
     JavaVM,
 };
 use khronos_egl as egl;
@@ -15,13 +15,89 @@ use std::{
     ffi::{c_char, CStr},
     fs,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     task::{Wake, Waker},
     time::{Duration, Instant},
 };
 const API: egl::Instance<egl::Static> = egl::Instance::new(egl::Static);
 type Result<T> = std::result::Result<T, String>;
 struct AppWake(android_activity::AndroidAppWaker);
+#[derive(Default)]
+struct WindowSetup {
+    done: AtomicBool,
+    error: Mutex<Option<String>>,
+}
+fn configure_window(app: &AndroidApp, waker: Waker) -> Arc<WindowSetup> {
+    let state = Arc::new(WindowSetup::default());
+    let done = state.clone();
+    let java_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let result = unsafe { window_on_java_thread(&java_app) };
+        if let Err(error) = result {
+            *done.error.lock().unwrap() = Some(error);
+        }
+        done.done.store(true, Ordering::Release);
+        waker.wake_by_ref();
+    }));
+    state
+}
+unsafe fn window_on_java_thread(app: &AndroidApp) -> Result<()> {
+    let vm = JavaVM::from_raw(app.vm_as_ptr() as _).map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let result = env.with_local_frame(32, |env| -> jni::errors::Result<()> {
+        let activity = JObject::from_raw(app.activity_as_ptr() as _);
+        let result = (|| -> jni::errors::Result<()> {
+            let window = env
+                .call_method(&activity, "getWindow", "()Landroid/view/Window;", &[])?
+                .l()?;
+            // Exact modern frozen-player edge-to-edge/window-bars policy.
+            env.call_method(
+                &window,
+                "setDecorFitsSystemWindows",
+                "(Z)V",
+                &[JValue::Bool(0)],
+            )?;
+            let view = env
+                .call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?
+                .l()?;
+            let controller = env
+                .call_method(
+                    &view,
+                    "getWindowInsetsController",
+                    "()Landroid/view/WindowInsetsController;",
+                    &[],
+                )?
+                .l()?;
+            if controller.is_null() {
+                return Err(jni::errors::Error::NullPtr(
+                    "attached window insets controller",
+                ));
+            }
+            env.call_method(
+                &controller,
+                "setSystemBarsBehavior",
+                "(I)V",
+                &[JValue::Int(1)],
+            )?;
+            for kind in ["statusBars", "navigationBars"] {
+                let mask = env
+                    .call_static_method("android/view/WindowInsets$Type", kind, "()I", &[])?
+                    .i()?;
+                env.call_method(&controller, "hide", "(I)V", &[JValue::Int(mask)])?;
+            }
+            Ok(())
+        })();
+        let _ = activity.into_raw();
+        result
+    });
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
+    result.map_err(|e| e.to_string())
+}
 impl Wake for AppWake {
     fn wake(self: Arc<Self>) {
         self.0.wake();
@@ -395,6 +471,9 @@ pub fn run(app: AndroidApp) -> Result<()> {
     let mut attributes = Vec::new();
     let mut gles = [0; 2];
     let mut selection_matches_frozen_query = false;
+    let mut setup: Option<Arc<WindowSetup>> = None;
+    let mut setup_completed = None;
+    let mut geometry_settled = None;
     let result = (|| -> Result<()> {
         loop {
             if observe::stop_requested() {
@@ -448,6 +527,32 @@ pub fn run(app: AndroidApp) -> Result<()> {
                 let Some(window) = app.native_window() else {
                     continue;
                 };
+                let state = setup.get_or_insert_with(|| configure_window(&app, waker.clone()));
+                if !state.done.load(Ordering::Acquire) {
+                    continue;
+                }
+                if let Some(error) = state
+                    .error
+                    .lock()
+                    .map_err(|_| "window setup state")?
+                    .clone()
+                {
+                    return Err(error);
+                }
+                let completed = *setup_completed.get_or_insert_with(Instant::now);
+                let observed = [window.width(), window.height()];
+                if observed != expected {
+                    geometry_settled = None;
+                    if completed.elapsed() > Duration::from_secs(2) {
+                        geometry = observed;
+                        return Err("window equivalence mismatch after layout".into());
+                    }
+                    continue;
+                }
+                let settled = *geometry_settled.get_or_insert_with(Instant::now);
+                if settled.elapsed() < Duration::from_millis(32) {
+                    continue;
+                }
                 let g = unsafe { Graphics::new(window) }?;
                 geometry = g.geometry;
                 gles = g.gles;
@@ -513,6 +618,7 @@ pub fn run(app: AndroidApp) -> Result<()> {
         "result":result.as_ref().err(),"window":geometry,"expected_window":expected,
         "gles":gles,"egl_attributes":attributes,
         "egl_selection_matches_frozen_query":selection_matches_frozen_query,
+        "window_setup_complete":setup.as_ref().is_some_and(|s|s.done.load(Ordering::Acquire)&&s.error.lock().is_ok_and(|e|e.is_none())),
         "host_page":unsafe{libc::sysconf(libc::_SC_PAGESIZE)},
         "elapsed_since_guest_launch":launch.map(|t|t.elapsed().as_secs_f64()),"evidence":evidence,
         "removed":["player UI","compositing","collection/session","checkpoint worker","audio output device"],

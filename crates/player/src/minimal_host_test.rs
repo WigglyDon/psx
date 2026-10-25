@@ -193,6 +193,9 @@ fn bounded_input_settings_and_real_graphics_requirements() {
         "context_unavailable",
         "join_export",
         "from_secs(20)",
+        "run_on_java_main_thread",
+        "setDecorFitsSystemWindows",
+        "setSystemBarsBehavior",
     ] {
         assert!(src.contains(required), "{required}");
     }
