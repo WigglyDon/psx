@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.machinerhythm.psx.rendererreference" android:versionCode="1" android:versionName="0.1-diagnostic">
+  <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="36" />
+  <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+  <application android:label="PSX renderer reference" android:allowBackup="false" android:hasCode="false" android:extractNativeLibs="true" android:theme="@android:style/Theme.Material.NoActionBar" android:enableOnBackInvokedCallback="false">
+    <activity android:name="android.app.NativeActivity" android:exported="true" android:launchMode="singleTask" android:resizeableActivity="true" android:screenOrientation="fullUser" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|density|uiMode" android:windowSoftInputMode="stateAlwaysHidden">
+      <meta-data android:name="android.app.lib_name" android:value="psx" />
+      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+    </activity>
+  </application>
+</manifest>

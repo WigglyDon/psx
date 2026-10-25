@@ -1416,3 +1416,8 @@ mod tests {
         assert!(qualification_settings(old, false).contains("DisableFramebufferFetch = true"));
     }
 }
+
+// Minimal-host callback equivalence test hook. Production source above is frozen.
+#[cfg(all(test, feature = "producer-local-output-sync"))]
+#[path = "minimal_equivalence_test.rs"]
+mod minimal_equivalence;

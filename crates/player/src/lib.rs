@@ -8,6 +8,8 @@ mod firmware;
 pub mod graphics_observer;
 pub mod input;
 pub mod library;
+#[cfg(feature = "producer-local-output-sync")]
+pub mod minimal_host;
 mod native_signals;
 pub mod phone_buttons;
 pub mod producer_failure;
