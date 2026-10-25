@@ -27,6 +27,7 @@ pub enum StopReason {
     Fatal = 6,
     Operator = 7,
     Swap = 8,
+    Dependency = 9,
 }
 static STOP: AtomicU32 = AtomicU32::new(0);
 static FORCE: AtomicUsize = AtomicUsize::new(0);

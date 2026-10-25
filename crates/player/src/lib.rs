@@ -10,6 +10,7 @@ pub mod input;
 pub mod library;
 mod native_signals;
 pub mod phone_buttons;
+pub mod producer_failure;
 pub mod ps2;
 pub mod resume;
 pub mod retro;

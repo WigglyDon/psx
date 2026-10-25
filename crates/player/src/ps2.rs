@@ -37,6 +37,12 @@ pub fn revision() -> &'static str {
                 "../../../patches/armsx2/0001-host-pause-and-card-flush.patch"
             ))
         );
+        let binding = format!(
+            "{binding}+stream:{:x}",
+            Sha256::digest(include_bytes!(
+                "../../../patches/armsx2/0004-stream-buffer-failure.patch"
+            ))
+        );
         #[cfg(feature = "graphics-observer")]
         let binding = format!(
             "{binding}+observer:{:x}",
@@ -51,6 +57,13 @@ pub fn revision() -> &'static str {
                 "../../../patches/armsx2/0003-development-matched-reader.patch"
             )),
             crate::graphics_observer::mode()
+        );
+        #[cfg(feature = "graphics-observer")]
+        let binding = format!(
+            "{binding}+stream-observer:{:x}",
+            Sha256::digest(include_bytes!(
+                "../../../patches/armsx2/0005-development-stream-observer.patch"
+            ))
         );
         binding
     })
@@ -148,6 +161,7 @@ struct Shared {
     axes: [AtomicI16; 4],
     fast: AtomicBool,
     frames: FrameSignal,
+    producer_failure: crate::producer_failure::Latch,
     output: Mutex<Output>,
 }
 
@@ -246,6 +260,17 @@ struct Message {
 }
 unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
     let Some(s) = shared() else { return false };
+    if command == crate::producer_failure::ENVIRONMENT_COMMAND && !data.is_null() {
+        let failure = *(data as *const crate::producer_failure::Failure);
+        if s.producer_failure.record(failure) {
+            #[cfg(feature = "graphics-observer")]
+            crate::graphics_observer::request_stop(
+                crate::graphics_observer::StopReason::Dependency,
+            );
+            s.frames.notify();
+        }
+        return true;
+    }
     if command == 7 {
         if let Ok(mut o) = s.output.lock() {
             o.shutdown = true;
@@ -480,6 +505,7 @@ impl Core {
             axes: std::array::from_fn(|_| AtomicI16::new(0)),
             fast: AtomicBool::new(false),
             frames: FrameSignal::default(),
+            producer_failure: crate::producer_failure::Latch::default(),
             output: Mutex::new(Output::default()),
         });
         macro_rules! symbol {
@@ -500,6 +526,12 @@ impl Core {
                 unsafe extern "C" fn(Option<Observe>)
             );
             set(Some(crate::graphics_observer::callback));
+            type StreamObserve = extern "C" fn(u32, u32, u32, u32, u64, u32, u32, u32, u32);
+            let stream = symbol!(
+                "retro_psx_observer_set_stream_callback",
+                unsafe extern "C" fn(Option<StreamObserve>)
+            );
+            stream(Some(crate::graphics_observer::stream_callback));
         }
         let api = symbol!("retro_api_version", unsafe extern "C" fn() -> u32);
         if api() != 1 {
@@ -636,6 +668,9 @@ impl Core {
         self.shared.fast.store(fast, Ordering::Relaxed);
     }
     pub fn run(&mut self) {
+        if self.producer_failure().is_some() {
+            return;
+        }
         // A notification arriving during this call remains pending for the
         // next service. The native handoff itself owns frame/fence lifetimes.
         self.shared.frames.pending.store(false, Ordering::Release);
@@ -662,6 +697,9 @@ impl Core {
     }
     pub fn frame_pending(&self) -> bool {
         self.shared.frames.pending.load(Ordering::Acquire)
+    }
+    pub fn producer_failure(&self) -> Option<crate::producer_failure::Failure> {
+        self.shared.producer_failure.get()
     }
     pub fn ready(&self) -> bool {
         unsafe { (self.ready_fn)() }
@@ -703,9 +741,23 @@ impl Core {
         Ok(())
     }
     pub fn checkpoint(&mut self) -> Result<Checkpoint> {
+        if self.producer_failure().is_some() {
+            return Err("The graphics producer stopped; the previous checkpoint is kept.".into());
+        }
         self.flush()?;
+        // Pause drained the GS owner. A failure while it was draining must
+        // never become a newly captured checkpoint.
+        if self.producer_failure().is_some() {
+            return Err("The graphics producer stopped; the previous checkpoint is kept.".into());
+        }
         let captured = NonNull::new(unsafe { (self.capture_state)() })
             .ok_or("The PS2 session checkpoint could not be captured.")?;
+        // Capturing can itself service queued GS work. Retire its owned list
+        // if that work reported a failed dependency; never publish this state.
+        if self.producer_failure().is_some() {
+            unsafe { (self.free_state)(captured.as_ptr()) };
+            return Err("The graphics producer stopped; the previous checkpoint is kept.".into());
+        }
         Ok(Checkpoint {
             captured: Some(captured),
             pack: self.pack_state,
@@ -771,6 +823,15 @@ impl Drop for Core {
                     set(None);
                 }
                 crate::graphics_observer::event(40, [0; 8]);
+                type StreamObserve = extern "C" fn(u32, u32, u32, u32, u64, u32, u32, u32, u32);
+                if let Ok(set) = self
+                    .library
+                    .get::<unsafe extern "C" fn(Option<StreamObserve>)>(
+                        b"retro_psx_observer_set_stream_callback\0",
+                    )
+                {
+                    set(None);
+                }
                 crate::graphics_observer::session_ready();
             }
         }
@@ -1086,18 +1147,12 @@ mod teardown_tests;
 mod tests {
     use super::*;
     #[test]
-    fn reviewed_repairs_accept_only_known_states_with_the_same_firmware() {
+    fn later_native_repair_disables_the_old_checkpoint_exception() {
         let previous = format!("{REVISION}+510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1+firmware:fixture");
         let current = format!("{}+firmware:fixture", revision());
-        assert_eq!(
-            compatible_checkpoint_binding(&previous, &current),
-            !cfg!(feature = "graphics-observer")
-        );
+        assert!(!compatible_checkpoint_binding(&previous, &current));
         let previous_graphics = format!("{REVISION}+4650bdf4b18c1a892780c11fba002af17f02235b88079e5be9d98ee2f3913a43+firmware:fixture");
-        assert_eq!(
-            compatible_checkpoint_binding(&previous_graphics, &current),
-            !cfg!(feature = "graphics-observer")
-        );
+        assert!(!compatible_checkpoint_binding(&previous_graphics, &current));
         assert!(!compatible_checkpoint_binding(
             &previous,
             &format!("{}+firmware:different", revision())
@@ -1238,6 +1293,7 @@ mod tests {
             axes: std::array::from_fn(|i| AtomicI16::new(if i == 0 { 12345 } else { 0 })),
             fast: AtomicBool::new(false),
             frames: FrameSignal::default(),
+            producer_failure: crate::producer_failure::Latch::default(),
             output: Mutex::new(Output::default()),
         });
         *ACTIVE.lock().unwrap() = Some(binding.clone());

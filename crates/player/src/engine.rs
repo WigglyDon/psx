@@ -116,6 +116,12 @@ impl Core {
             Self::Ps2(core, _) => core.run(),
         }
     }
+    pub fn producer_failure(&self) -> Option<crate::producer_failure::Failure> {
+        match self {
+            Self::Ps1(_) => None,
+            Self::Ps2(core, _) => core.producer_failure(),
+        }
+    }
     pub fn checkpoint(&mut self) -> Result<Checkpoint> {
         match self {
             Self::Ps1(core) => core.checkpoint().map(Checkpoint::Ps1),

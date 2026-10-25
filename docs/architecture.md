@@ -75,6 +75,20 @@ lifecycle. A successful swap or an empty GL error queue does not prove that a
 driver produced a valid picture; silent driver failures remain a qualification
 limit. This does not retry an incompatible game automatically.
 
+The PS2 stream-buffer owner also refuses writable reuse after an unsuccessful
+dependency wait or null fence creation. The retained helper preserves pending
+fence ownership for cleanup, and all mapping consumers check failure before
+copying. A two-word native callback records the first failure in Rust's atomic
+latch and wakes the application owner without allocation or reentrant teardown.
+The owner blocks further execution/new checkpoint capture and uses the same
+retirement path. Failure is checked before draining, after draining and after
+native capture; a list captured during a reported failure is freed rather than
+published. Already frozen earlier snapshots retain their existing ownership.
+Successful synchronization keeps its existing scheduling.
+This failure-handling correction is source-testable independently of whether
+that path caused an earlier device symptom. Development-only producer operation
+observation is described in [graphics-observer.md](graphics-observer.md).
+
 SwanStation is the pinned Android prototype candidate. Its suitability for
 the eventual two-store product remains conditional on the checks in
 [distribution.md](distribution.md). Keep player behavior in shared Rust and

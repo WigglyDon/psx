@@ -414,3 +414,30 @@ an Apple computer is available. See [distribution.md](distribution.md).
 
 Continue under [FIRST-PLAYABLE-1 #1](https://github.com/WigglyDon/psx/issues/1).
 Publish source and suitable summaries; keep private inputs and raw evidence local.
+
+## PLAYER-2 stream synchronization source checks
+
+On 2026-10-25 UTC, the retained stream helper and three actual upload callers
+reproduced writable reuse after an unsuccessful client wait. The narrow repair
+passed controlled successful/timeout/failed/unrecognized waits, null creation,
+no subsequent mapping/copy and exactly-once cleanup in production and observer
+variants. The actual factory branches and a generation above32bits crossing
+the C++/Rust callback were exercised; observation added no GL error reads.
+
+Focused Rust checks passed failure-before/during-capture ownership, disposal of
+the captured list, exact state binding and preservation of old state bytes,
+bounded producer counters/first failure, no-reader handoff and owner-stop
+transport. The stop test separates immediate owner wakeup from bounded durable
+publication on a slow host filesystem; physical test limits are unchanged.
+All18 source-streaming/retention tests, all-target/all-feature host Clippy and
+Android ARM64 release/no-reader Clippy passed. Earlier failing test executables,
+sources and logs remain retained; the broad first player pass was122passed,
+one outdated compatibility expectation failed and three subprocess fixtures
+were ignored. Its corrected state-binding case passed separately.
+
+These are off-device source/ownership checks. Historical implementation
+selection, actual producer wait outcomes, native APK packaging and a new
+physical reference run remain unqualified at this increment. They establish
+neither the historical graphics cause nor a PS2 gameplay/performance fix.
+[PLAYER-2 #2](https://github.com/WigglyDon/psx/issues/2) owns current dispatch,
+exact artifact bindings and any separately admitted hardware result.

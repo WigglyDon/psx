@@ -3,6 +3,7 @@
 use super::*;
 
 static EVENTS: Mutex<Vec<(&str, bool)>> = Mutex::new(Vec::new());
+static FAIL_CAPTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn record(name: &'static str) {
     EVENTS
@@ -10,7 +11,9 @@ fn record(name: &'static str) {
         .unwrap()
         .push((name, super::shared().is_some()));
 }
-unsafe extern "C" fn idle() {}
+unsafe extern "C" fn idle() {
+    record("run");
+}
 unsafe extern "C" fn unload() {
     record("unload");
 }
@@ -35,12 +38,30 @@ unsafe extern "C" fn speed(_: f32) -> bool {
     true
 }
 unsafe extern "C" fn capture() -> *mut c_void {
+    record("capture");
+    if FAIL_CAPTURE.load(Ordering::Relaxed) {
+        std::thread::spawn(|| unsafe {
+            let mut failure = crate::producer_failure::Failure {
+                kind: 1,
+                result: 0x911d,
+            };
+            assert!(environment(
+                crate::producer_failure::ENVIRONMENT_COMMAND,
+                (&mut failure as *mut crate::producer_failure::Failure).cast()
+            ));
+        })
+        .join()
+        .unwrap();
+        return NonNull::<u8>::dangling().as_ptr().cast();
+    }
     std::ptr::null_mut()
 }
 unsafe extern "C" fn pack(_: *mut c_void, _: *mut c_void, _: usize) -> usize {
     0
 }
-unsafe extern "C" fn free(_: *mut c_void) {}
+unsafe extern "C" fn free(_: *mut c_void) {
+    record("free");
+}
 unsafe extern "C" fn restore(_: *const c_void, _: usize) -> bool {
     false
 }
@@ -71,78 +92,128 @@ fn ps2_workers_close_before_retiring_the_shared_graphics_context() {
 #[ignore]
 fn teardown_fixture() {
     assert_eq!(std::env::var("PSX_TEARDOWN_FIXTURE").as_deref(), Ok("1"));
-    for (loaded, context) in [(true, true), (true, false), (false, true), (false, false)] {
-        let library = Arc::new(unsafe { Library::new("libc.so.6") }.unwrap());
-        let mapping = Arc::downgrade(&library);
-        let shared = Arc::new(Shared {
-            system: CString::new("fixture-system").unwrap(),
-            save: CString::new("fixture-save").unwrap(),
-            options: BTreeMap::new(),
-            framebuffer: 0,
-            proc_address: None,
-            gles: [3, 2],
-            audio: Arc::new(AudioQueue::new(128)),
-            buttons: AtomicU16::new(0),
-            axes: std::array::from_fn(|_| AtomicI16::new(0)),
-            fast: AtomicBool::new(false),
-            frames: FrameSignal::default(),
-            output: Mutex::new(Output {
-                hw: Some(HwRender {
-                    context_type: 4,
-                    reset: None,
-                    framebuffer: None,
-                    get_proc_address: None,
-                    depth: false,
-                    stencil: false,
-                    bottom_left: true,
-                    major: 3,
-                    minor: 2,
-                    cache_context: false,
-                    destroy: Some(destroy),
-                    debug_context: false,
+    for fail_during_capture in [false, true] {
+        FAIL_CAPTURE.store(fail_during_capture, Ordering::Relaxed);
+        for (loaded, context) in [(true, true), (true, false), (false, true), (false, false)] {
+            let library = Arc::new(unsafe { Library::new("libc.so.6") }.unwrap());
+            let mapping = Arc::downgrade(&library);
+            let shared = Arc::new(Shared {
+                system: CString::new("fixture-system").unwrap(),
+                save: CString::new("fixture-save").unwrap(),
+                options: BTreeMap::new(),
+                framebuffer: 0,
+                proc_address: None,
+                gles: [3, 2],
+                audio: Arc::new(AudioQueue::new(128)),
+                buttons: AtomicU16::new(0),
+                axes: std::array::from_fn(|_| AtomicI16::new(0)),
+                fast: AtomicBool::new(false),
+                frames: FrameSignal::default(),
+                producer_failure: crate::producer_failure::Latch::default(),
+                output: Mutex::new(Output {
+                    hw: Some(HwRender {
+                        context_type: 4,
+                        reset: None,
+                        framebuffer: None,
+                        get_proc_address: None,
+                        depth: false,
+                        stencil: false,
+                        bottom_left: true,
+                        major: 3,
+                        minor: 2,
+                        cache_context: false,
+                        destroy: Some(destroy),
+                        debug_context: false,
+                    }),
+                    ..Output::default()
                 }),
-                ..Output::default()
-            }),
-        });
-        *ACTIVE.lock().unwrap() = Some(shared.clone());
-        let core = Core {
-            shared,
-            run_fn: idle,
-            unload,
-            deinit,
-            pause_fn: pause,
-            flush_fn: yes,
-            ready_fn: yes,
-            speed_fn: speed,
-            frame_callback_fn: frame_callback,
-            speed: None,
-            speed_changed: Instant::now(),
-            capture_state: capture,
-            pack_state: pack,
-            free_state: free,
-            unserialize: restore,
-            library,
-            native_signals: NativeSignals::capture(libc::abort as *const () as *const c_void)
-                .unwrap(),
-            loaded,
-            context,
-            paused: false,
-            _owner: PhantomData,
-            _lease: CoreLease::acquire().unwrap(),
-        };
-        drop(core);
-        let mut expected = vec![("retire", true)];
-        if loaded {
-            expected.extend([("pause", true), ("unload", true)]);
+            });
+            *ACTIVE.lock().unwrap() = Some(shared.clone());
+            let mut core = Core {
+                shared,
+                run_fn: idle,
+                unload,
+                deinit,
+                pause_fn: pause,
+                flush_fn: yes,
+                ready_fn: yes,
+                speed_fn: speed,
+                frame_callback_fn: frame_callback,
+                speed: None,
+                speed_changed: Instant::now(),
+                capture_state: capture,
+                pack_state: pack,
+                free_state: free,
+                unserialize: restore,
+                library,
+                native_signals: NativeSignals::capture(libc::abort as *const () as *const c_void)
+                    .unwrap(),
+                loaded,
+                context,
+                paused: false,
+                _owner: PhantomData,
+                _lease: CoreLease::acquire().unwrap(),
+            };
+            // The actual environment callback may run on the GS worker. It must
+            // only latch/wake, with no reentrant teardown or state capture.
+            let mut failure = crate::producer_failure::Failure {
+                kind: 1,
+                result: 0x911d,
+            };
+            if fail_during_capture {
+                assert!(core.checkpoint().is_err());
+                assert_eq!(
+                    *EVENTS.lock().unwrap(),
+                    vec![("pause", true), ("capture", true), ("free", true)]
+                );
+                EVENTS.lock().unwrap().clear();
+            } else {
+                assert!(std::thread::spawn(move || unsafe {
+                    environment(
+                        crate::producer_failure::ENVIRONMENT_COMMAND,
+                        (&mut failure as *mut crate::producer_failure::Failure).cast(),
+                    )
+                })
+                .join()
+                .unwrap());
+            }
+            assert!(EVENTS.lock().unwrap().is_empty());
+            assert_eq!(core.producer_failure(), Some(failure));
+            let mut later = crate::producer_failure::Failure { kind: 2, result: 0 };
+            assert!(unsafe {
+                environment(
+                    crate::producer_failure::ENVIRONMENT_COMMAND,
+                    (&mut later as *mut crate::producer_failure::Failure).cast(),
+                )
+            });
+            assert_eq!(
+                core.producer_failure(),
+                Some(failure),
+                "later notification replaced the first failure"
+            );
+            core.run();
+            assert!(core.checkpoint().is_err());
+            assert!(
+                EVENTS.lock().unwrap().is_empty(),
+                "failed producer ran or captured a checkpoint"
+            );
+            drop(core);
+            let mut expected = vec![("retire", true)];
+            if loaded {
+                if !fail_during_capture {
+                    expected.push(("pause", true));
+                }
+                expected.push(("unload", true));
+            }
+            if context {
+                expected.push(("context", true));
+            }
+            expected.push(("deinit", true));
+            assert_eq!(*EVENTS.lock().unwrap(), expected);
+            EVENTS.lock().unwrap().clear();
+            assert!(super::shared().is_none());
+            assert!(mapping.upgrade().is_none());
+            drop(CoreLease::acquire().unwrap());
         }
-        if context {
-            expected.push(("context", true));
-        }
-        expected.push(("deinit", true));
-        assert_eq!(*EVENTS.lock().unwrap(), expected);
-        EVENTS.lock().unwrap().clear();
-        assert!(super::shared().is_none());
-        assert!(mapping.upgrade().is_none());
-        drop(CoreLease::acquire().unwrap());
     }
 }

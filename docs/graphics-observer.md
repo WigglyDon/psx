@@ -229,3 +229,40 @@ physicalOFF/bootcomplete and shared-lease release were verified at22:10:29UTC;
 whole custody lasted41.019s. This is a diagnostic result, not a production fix,
 gameplay/saving/performance acceptance or PLAYER-2 completion. The issue handback
 owns full artifact/operator bindings; raw evidence remains private.
+
+## Producer stream investigation
+
+The preceding comparison is closed; its suppressed normal arm must not run.
+The next observation answers a separate producer-operation question. Historical
+stream implementation selection was not recorded. The pinned factory chooses
+persistent storage when supported and allocated, except its retained narrow
+Adreno650 gate; otherwise it uses NVIDIA SubData or orphaning BufferData. The
+logged BrokenBufferStreaming profile bit is not consulted by this factory.
+
+Development patch0005 records these actual numeric operations without new GL
+queries, fences or waits:
+
+| Stage | Meaning |
+| --- | --- |
+| 60 | Selected implementation: 1 persistent, 2 SubData, 3 BufferData |
+| 61 | Actual mapping request and current offset |
+| 62 | Actual fence-creation non-null result and protected range |
+| 63 | Actual client-wait result and protected range, before retirement |
+| 64 | Persistent-storage unmap range/coherence, before the existing flush |
+
+Each carries the sampled owner/context/frame, an opaque buffer token and
+generation, target, offset, length and capacity. No native handle or guest bytes
+are exported. Fixed counters retain every admitted stream operation; at most16
+selected-resource records and the first stream failure survive tail eviction.
+The existing export bounds remain unchanged. Failed wait/null creation requests
+immediate owner stop with reason9, separately from the production failure latch.
+Ordinary builds contain neither these call sites nor their additional fields.
+
+Only after source/regression/lint/package validation and fresh custodian
+admission may one new reference boot run: same full GS workload/title/settings,
+no-game-image-reader, fresh isolated scratch, maximum30s, no screenshot/readback
+or second arm. Stop at the first failed dependency or existing instability
+boundary, then verify baseline data/APK restoration and resource return. Report
+source proof, actual selected path, first operation/result and historical symptom
+separately. Successful waits followed by a later invalid fence do not explain
+the old failure; disappearance in one instrumented run does not establish a fix.

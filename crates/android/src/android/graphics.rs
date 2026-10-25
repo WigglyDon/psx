@@ -51,10 +51,14 @@ struct Objects {
 pub enum RenderError {
     Gl(u32),
     Egl(egl::Error),
+    Producer(psx_player::producer_failure::Failure),
 }
 impl RenderError {
     pub fn requires_reset(&self) -> bool {
-        matches!(self, Self::Gl(_) | Self::Egl(egl::Error::ContextLost))
+        matches!(
+            self,
+            Self::Gl(_) | Self::Producer(_) | Self::Egl(egl::Error::ContextLost)
+        )
     }
 }
 impl std::fmt::Display for RenderError {
@@ -62,6 +66,11 @@ impl std::fmt::Display for RenderError {
         match self {
             Self::Gl(code) => write!(f, "Graphics context stopped (GL {code:#06x})"),
             Self::Egl(error) => write!(f, "Display changed: {error}"),
+            Self::Producer(failure) => write!(
+                f,
+                "Graphics producer stopped ({} / {:#x})",
+                failure.kind, failure.result
+            ),
         }
     }
 }

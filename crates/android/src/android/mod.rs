@@ -408,6 +408,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                 player.fail(error);
             }
         }
+        if let Some(failure) = player.core.as_ref().and_then(Core::producer_failure) {
+            player.render_failed(RenderError::Producer(failure));
+        }
         player.activity.time_paused = player.playback.effective_speed().is_paused();
         player.sync_background(&app);
         if let Some(core) = &mut player.core {
@@ -2552,6 +2555,9 @@ impl Player {
                     return Err("Development observation stopped.".into());
                 }
                 core.run();
+                if let Some(failure) = core.producer_failure() {
+                    return Err(RenderError::Producer(failure).to_string());
+                }
                 if Instant::now() >= deadline {
                     return Err(
                         "The PS2 firmware or renderer did not finish starting. Your card is kept."
@@ -2606,6 +2612,9 @@ impl Player {
             }
             core.pause(false)?;
             core.run(); // Produce the restored picture, including paused resumes.
+            if let Some(failure) = core.producer_failure() {
+                return Err(RenderError::Producer(failure).to_string());
+            }
             self.activity.user_paused = checkpoint.metadata.paused;
             resume::mark_active(&self.root, &game).map_err(|e| e.to_string())?;
             log::info!("Automatic session restored");
@@ -2647,6 +2656,10 @@ impl Player {
         );
         let before = Instant::now();
         core.run();
+        if let Some(failure) = core.producer_failure() {
+            self.render_failed(RenderError::Producer(failure));
+            return Ok(());
+        }
         self.dirty |= !owns_clock || core.state().hardware_frames != previous_frames;
         self.checkpoint_dirty = true;
         self.run_time += before.elapsed();

@@ -179,7 +179,7 @@ pub fn seal_closed_cards(root: &Path, game: &Game, before: &[u8], after: &[u8]) 
 mod tests {
     use super::*;
     #[test]
-    fn compatible_adapter_upgrades_keep_other_snapshot_bindings() {
+    fn native_revision_change_keeps_old_bytes_and_requires_the_exact_binding() {
         let root = std::env::temp_dir().join(format!("psx-fetch-upgrade-{}", std::process::id()));
         let game = Game {
             system: System::Ps2,
@@ -206,33 +206,34 @@ mod tests {
             "{}+878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6+firmware:{suffix}",
             crate::ps2::REVISION,
         );
+        let current = metadata.core.clone();
         for (binding, allowed) in [
-            (prior.clone(), true),
+            (current, true),
+            (prior.clone(), false),
             (
                 prior.replace(
                     "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
                     "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
                 ),
-                true,
+                false,
             ),
             (
                 prior.replace(
                     "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
                     "23a0b217e21a9442dde06b009aa6911f782c083a5ff5c37593b415d615309765",
                 ),
-                true,
+                false,
             ),
             (
                 prior.replace(
                     "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
                     "9f5bf1a2a6d6aa228d7789eb0e38bc7cb62c94c98ca12e6a88d36fd8899c01ac",
                 ),
-                true,
+                false,
             ),
             (prior.replacen("878bdd9e", "00000000", 1), false),
             (prior.replace(&suffix, "other firmware"), false),
         ] {
-            let allowed = allowed && !cfg!(feature = "graphics-observer");
             metadata.core = binding;
             let header = serde_json::to_vec(&metadata).unwrap();
             let mut old = MAGIC.to_vec();

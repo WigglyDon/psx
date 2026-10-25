@@ -21,6 +21,20 @@ impl Wake for Owner {
 unsafe extern "C" fn proc(_: *const std::ffi::c_char) -> Option<unsafe extern "C" fn()> {
     None
 }
+fn signal(root: &std::path::Path) -> serde_json::Value {
+    // Storage publication is not the owner-stop latency contract. Slow fsync
+    // on a removable test workspace must not masquerade as a missed wakeup.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let path = root.join("first-stop.json");
+    while !path.is_file() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        path.is_file(),
+        "bounded background signal publication did not complete"
+    );
+    observer::operator::decode_stop(&std::fs::read(path).unwrap(), observer::mode()).unwrap()
+}
 #[test]
 fn same_lease_request_wakes_owner_and_writes_bounded_signal_without_frontend_service() {
     assert!(std::process::Command::new(std::env::current_exe().unwrap())
@@ -55,14 +69,13 @@ fn same_lease_request_wakes_owner_and_writes_bounded_signal_without_frontend_ser
         .unwrap()
         .success());
     let deadline = Instant::now() + Duration::from_secs(2);
-    while !root.join("first-stop.json").is_file() && Instant::now() < deadline {
+    while owner.0.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(2));
     }
-    let signal = std::fs::read(root.join("first-stop.json")).unwrap();
-    let signal = observer::operator::decode_stop(&signal, observer::mode()).unwrap();
-    assert_eq!(signal["reason"], 7);
     assert!(observer::stop_requested());
     assert_eq!(owner.0.load(Ordering::SeqCst), 1);
+    let signal = signal(&root);
+    assert_eq!(signal["reason"], 7);
     observer::request_stop(observer::StopReason::Fence);
     assert_eq!(owner.0.load(Ordering::SeqCst), 1);
     observer::join_export();
@@ -137,17 +150,9 @@ fn missing_context_callback_fixture() {
     unsafe {
         observer::callback(16, 1, 1, 0, 0, 0, std::ptr::null_mut(), std::ptr::null());
     }
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !root.join("first-stop.json").is_file() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    let signal = observer::operator::decode_stop(
-        &std::fs::read(root.join("first-stop.json")).unwrap(),
-        observer::mode(),
-    )
-    .unwrap();
-    assert_eq!(signal["reason"], 2);
     assert_eq!(owner.0.load(Ordering::SeqCst), 1);
+    let signal = signal(&root);
+    assert_eq!(signal["reason"], 2);
     observer::join_export();
     let export =
         observer::operator::decode_snapshot(&std::fs::read(root.join("observer-1.json")).unwrap())

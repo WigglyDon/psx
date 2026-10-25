@@ -54,7 +54,7 @@ pub fn decode_stop(bytes: &[u8], mode: &str) -> Result<Value, &'static str> {
         || value["mode"] != mode
         || !value["reason"]
             .as_u64()
-            .is_some_and(|r| (1..=8).contains(&r))
+            .is_some_and(|r| (1..=9).contains(&r))
     {
         return Err("Invalid stop indication");
     }
@@ -106,5 +106,6 @@ mod tests {
         assert_eq!(accepted.len(), 2);
         assert!(decode_stop(br#"{"version":2,"mode":"normal","reason":1}"#, "normal").is_ok());
         assert!(decode_stop(br#"{"version":2,"mode":"normal","reason":0}"#, "normal").is_err());
+        assert!(decode_stop(br#"{"version":2,"mode":"normal","reason":9}"#, "normal").is_ok());
     }
 }

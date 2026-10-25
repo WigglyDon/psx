@@ -1,0 +1,385 @@
+diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
+index 24210fb06..b69789e82 100644
+--- a/pcsx2-libretro/Main.cpp
++++ b/pcsx2-libretro/Main.cpp
+@@ -75,6 +75,7 @@
+ #endif
+ #ifdef ENABLE_OPENGL
+ #include "pcsx2/GS/Renderers/OpenGL/GLLibretro.h"
++#include "pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h"
+ #include "pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.h"
+ #endif
+ #include "pcsx2/GameList.h"
+@@ -1701,6 +1702,15 @@ RETRO_API void retro_set_input_state(retro_input_state_t cb)
+ 
+ RETRO_API void retro_init(void)
+ {
++#ifdef ENABLE_OPENGL
++	// The callback only reports to Rust and wakes its owner; no teardown here.
++	GLStreamBuffer::SetFailureCallback([](u32 reason, u32 result) {
++		const u32 failure[2] = {reason, result};
++		GLLibretro::AbortPacing();
++		if (!environ_cb(0x50535801u, const_cast<u32*>(failure)))
++			environ_cb(RETRO_ENVIRONMENT_SHUTDOWN, nullptr);
++	});
++#endif
+ 	Log::SetConsoleOutputLevel(LOGLEVEL_INFO);
+ 	// Send warnings and errors to the frontend too: that is the only log an end
+ 	// user has. Without this, an emulator-side failure - a shader the GS could
+@@ -1730,6 +1740,9 @@ RETRO_API void retro_init(void)
+ 
+ RETRO_API void retro_deinit(void)
+ {
++#ifdef ENABLE_OPENGL
++	GLStreamBuffer::SetFailureCallback(nullptr);
++#endif
+ 	LibretroCore::s_frame_buffer.clear();
+ 	LibretroCore::s_frame_buffer.shrink_to_fit();
+ }
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
+index a89247f73..b97e0b7ce 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
+@@ -8,8 +8,36 @@
+ #include "common/Assertions.h"
+ 
+ #include <array>
++#include <atomic>
+ #include <cstring>
+ 
++namespace
++{
++	std::atomic<bool> s_stream_failed{false};
++	std::atomic<GLStreamBuffer::FailureCallback> s_stream_failure_callback{nullptr};
++}
++
++void GLStreamBuffer::SetFailureCallback(FailureCallback callback)
++{
++	s_stream_failure_callback.store(callback, std::memory_order_release);
++	s_stream_failed.store(false, std::memory_order_release);
++}
++
++bool GLStreamBuffer::Failed()
++{
++	return s_stream_failed.load(std::memory_order_acquire);
++}
++
++bool GLStreamBuffer::Fail(u32 reason, u32 result)
++{
++	if (!s_stream_failed.exchange(true, std::memory_order_acq_rel))
++	{
++		if (const auto callback = s_stream_failure_callback.load(std::memory_order_acquire))
++			callback(reason, result);
++	}
++	return false;
++}
++
+ GLStreamBuffer::GLStreamBuffer(GLenum target, GLuint buffer_id, u32 size)
+ 	: m_target(target)
+ 	, m_buffer_id(buffer_id)
+@@ -42,6 +70,8 @@ namespace
+ 
+ 		MappingResult Map(u32 alignment, u32 min_size) override
+ 		{
++			if (Failed())
++				return {};
+ 			return MappingResult{static_cast<void*>(m_cpu_buffer), 0, 0, m_size / alignment};
+ 		}
+ 
+@@ -96,6 +126,8 @@ namespace
+ 
+ 		MappingResult Map(u32 alignment, u32 min_size) override
+ 		{
++			if (Failed())
++				return {};
+ 			return MappingResult{static_cast<void*>(m_cpu_buffer), 0, 0, m_size / alignment};
+ 		}
+ 
+@@ -153,10 +185,13 @@ namespace
+ 
+ 		virtual ~SyncingStreamBuffer() override
+ 		{
+-			for (u32 i = m_available_block_index; i <= m_used_block_index; i++)
++			// A failed dependency grants no reuse. Teardown still owns every
++			// remaining non-null fence, including the wrapped portion.
++			for (GLsync& sync : m_sync_objects)
+ 			{
+-				pxAssert(m_sync_objects[i]);
+-				glDeleteSync(m_sync_objects[i]);
++				if (sync)
++					glDeleteSync(sync);
++				sync = nullptr;
+ 			}
+ 		}
+ 
+@@ -169,58 +204,72 @@ namespace
+ 
+ 		__fi u32 GetSyncIndexForOffset(u32 offset) { return offset / m_bytes_per_block; }
+ 
+-		__fi void AddSyncsForOffset(u32 offset)
++		__fi bool AddSyncsForOffset(u32 offset)
+ 		{
+ 			const u32 end = GetSyncIndexForOffset(offset);
+ 			for (; m_used_block_index < end; m_used_block_index++)
+ 			{
+ 				pxAssert(!m_sync_objects[m_used_block_index]);
+ 				m_sync_objects[m_used_block_index] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++				if (!m_sync_objects[m_used_block_index])
++					return Fail(2, 0);
+ 			}
++			return true;
+ 		}
+ 
+-		__fi void WaitForSync(GLsync& sync)
++		__fi bool WaitForSync(GLsync& sync)
+ 		{
+-			glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
++			if (!sync)
++				return Fail(2, 0);
++			const GLenum result = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
++			if (result != GL_ALREADY_SIGNALED && result != GL_CONDITION_SATISFIED)
++				return Fail(1, result);
+ 			glDeleteSync(sync);
+ 			sync = nullptr;
++			return true;
+ 		}
+ 
+-		__fi void EnsureSyncsWaitedForOffset(u32 offset)
++		__fi bool EnsureSyncsWaitedForOffset(u32 offset)
+ 		{
+ 			const u32 end = std::min<u32>(GetSyncIndexForOffset(offset) + 1, NUM_SYNC_POINTS);
+ 			for (; m_available_block_index < end; m_available_block_index++)
+ 			{
+ 				pxAssert(m_sync_objects[m_available_block_index]);
+-				WaitForSync(m_sync_objects[m_available_block_index]);
++				if (!WaitForSync(m_sync_objects[m_available_block_index]))
++					return false;
+ 			}
++			return true;
+ 		}
+ 
+-		void AllocateSpace(u32 size)
++		bool AllocateSpace(u32 size)
+ 		{
+ 			// add sync objects for writes since the last allocation
+-			AddSyncsForOffset(m_position);
++			if (!AddSyncsForOffset(m_position))
++				return false;
+ 
+ 			// wait for sync objects for the space we want to use
+-			EnsureSyncsWaitedForOffset(m_position + size);
++			if (!EnsureSyncsWaitedForOffset(m_position + size))
++				return false;
+ 
+ 			// wrap-around?
+ 			if ((m_position + size) > m_size)
+ 			{
+ 				// current position ... buffer end
+-				AddSyncsForOffset(m_size);
+-
+-				// rewind, and try again
+-				m_position = 0;
++				if (!AddSyncsForOffset(m_size))
++					return false;
+ 
+ 				// wait for the sync at the start of the buffer
+-				WaitForSync(m_sync_objects[0]);
++				if (!WaitForSync(m_sync_objects[0]))
++					return false;
++				m_position = 0;
+ 				m_available_block_index = 1;
+ 
+ 				// and however much more we need to satisfy the allocation
+-				EnsureSyncsWaitedForOffset(size);
++				if (!EnsureSyncsWaitedForOffset(size))
++					return false;
+ 				m_used_block_index = 0;
+ 			}
++			return true;
+ 		}
+ 
+ 		u32 GetChunkSize() const override { return m_size / NUM_SYNC_POINTS; }
+@@ -244,10 +293,17 @@ namespace
+ 
+ 		MappingResult Map(u32 alignment, u32 min_size) override
+ 		{
++			if (Failed())
++				return {};
++			const u32 old_position = m_position;
+ 			if (m_position > 0)
+ 				m_position = Common::AlignUp(m_position, alignment);
+ 
+-			AllocateSpace(min_size);
++			if (!AllocateSpace(min_size))
++			{
++				m_position = old_position;
++				return {};
++			}
+ 			pxAssert((m_position + min_size) <= (m_available_block_index * m_bytes_per_block));
+ 
+ 			const u32 free_space_in_block = ((m_available_block_index * m_bytes_per_block) - m_position);
+@@ -257,6 +313,8 @@ namespace
+ 
+ 		void Unmap(u32 used_size) override
+ 		{
++			if (Failed())
++				return;
+ 			pxAssert((m_position + used_size) <= m_size);
+ 			if (!m_coherent)
+ 			{
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h
+index e16497cca..7664f847a 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h
++++ b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h
+@@ -39,9 +39,14 @@ public:
+ 	virtual u32 GetChunkSize() const = 0;
+ 
+ 	static std::unique_ptr<GLStreamBuffer> Create(GLenum target, u32 size);
++	// Installed/reset before GS creation; cleared only after its owners join.
++	using FailureCallback = void (*)(u32 reason, u32 result);
++	static void SetFailureCallback(FailureCallback callback);
++	static bool Failed();
+ 
+ protected:
+ 	GLStreamBuffer(GLenum target, GLuint buffer_id, u32 size);
++	static bool Fail(u32 reason, u32 result);
+ 
+ 	GLenum m_target;
+ 	GLuint m_buffer_id;
+diff --git a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+index 6e853f423..c01956158 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+@@ -1873,7 +1873,11 @@ GSDevice::PresentResult GSDeviceOGL::DoBeginPresent(bool frame_skip)
+ 
+ void GSDeviceOGL::EndPresent()
+ {
++	if (GLStreamBuffer::Failed())
++		return;
+ 	RenderImGui();
++	if (GLStreamBuffer::Failed())
++		return;
+ 
+ 	if (m_gpu_timing_enabled)
+ 		PopTimestampQuery();
+@@ -2143,12 +2147,16 @@ bool GSDeviceOGL::SetGPUPipelineStatisticsEnabled(bool enabled)
+ 
+ void GSDeviceOGL::DrawPrimitive()
+ {
++	if (GLStreamBuffer::Failed())
++		return;
+ 	g_perfmon.Put(GSPerfMon::DrawCalls, 1);
+ 	glDrawArrays(m_draw_topology, m_vertex.start, m_vertex.count);
+ }
+ 
+ void GSDeviceOGL::DrawIndexedPrimitive()
+ {
++	if (GLStreamBuffer::Failed())
++		return;
+ 	DrawIndexedPrimitive(0, m_index.count);
+ }
+ 
+@@ -2164,6 +2172,8 @@ static void DrawElementsInRange(GLenum mode, u32 vertex_count, GLsizei count, co
+ 
+ void GSDeviceOGL::DrawIndexedPrimitive(int offset, int count)
+ {
++	if (GLStreamBuffer::Failed())
++		return;
+ 	g_perfmon.Put(GSPerfMon::DrawCalls, 1);
+ 	DrawElementsInRange(m_draw_topology, m_vertex.count, count,
+ 		reinterpret_cast<void*>((static_cast<u32>(m_index.start) + static_cast<u32>(offset)) * sizeof(u16)),
+@@ -2172,6 +2182,8 @@ void GSDeviceOGL::DrawIndexedPrimitive(int offset, int count)
+ 
+ void GSDeviceOGL::DrawIndexedPrimitiveVSExpand(int offset, int count, bool vs_indexing, int vs_indexing_expansion)
+ {
++	if (GLStreamBuffer::Failed())
++		return;
+ 	g_perfmon.Put(GSPerfMon::DrawCalls, 1);
+ 	if (vs_indexing)
+ 	{
+@@ -3081,7 +3093,11 @@ void GSDeviceOGL::DoMultiStretchRects(const MultiStretchRect* rects, u32 num_rec
+ 	const u32 vertex_reserve_size = num_rects * 4 * sizeof(GSVertexPT1);
+ 	const u32 index_reserve_size = num_rects * 6 * sizeof(u16);
+ 	auto vertex_map = m_vertex_stream_buffer->Map(sizeof(GSVertexPT1), vertex_reserve_size);
++	if (!vertex_map.pointer)
++		return;
+ 	auto index_map = m_index_stream_buffer->Map(sizeof(u16), index_reserve_size);
++	if (!index_map.pointer)
++		return;
+ 	m_vertex.start = vertex_map.index_aligned;
+ 	m_index.start = index_map.index_aligned;
+ 
+@@ -3547,6 +3563,8 @@ void GSDeviceOGL::SetupDATE(GSTexture* rt, GSTexture* ds, SetDATM datm, const GS
+ __fi static void WriteToStreamBuffer(GLStreamBuffer* sb, u32 index, u32 align, const void* data, u32 size)
+ {
+ 	const auto res = sb->Map(align, size);
++	if (!res.pointer)
++		return;
+ 	std::memcpy(res.pointer, data, size);
+ 	sb->Unmap(size);
+ 
+@@ -3591,6 +3609,8 @@ void GSDeviceOGL::IASetVertexBuffer(const void* vertices, size_t count, size_t a
+ {
+ 	const u32 size = static_cast<u32>(count) * sizeof(GSVertexPT1);
+ 	auto res = m_vertex_stream_buffer->Map(sizeof(GSVertexPT1) * align_multiplier, size);
++	if (!res.pointer)
++		return;
+ 	std::memcpy(res.pointer, vertices, size);
+ 	m_vertex.start = res.index_aligned * align_multiplier;
+ 	m_vertex.count = count;
+@@ -3601,6 +3621,8 @@ void GSDeviceOGL::SetIndexBuffer(std::unique_ptr<GLStreamBuffer>& buffer, const
+ {
+ 	const u32 size = static_cast<u32>(count) * sizeof(u16);
+ 	auto res = buffer->Map(sizeof(u16), size);
++	if (!res.pointer)
++		return;
+ 	m_index.start = res.index_aligned;
+ 	m_index.count = count;
+ 	std::memcpy(res.pointer, index, size);
+@@ -3796,6 +3818,8 @@ void GSDeviceOGL::RenderImGui()
+ 		{
+ 			const u32 size = static_cast<u32>(cmd_list->VtxBuffer.Size) * sizeof(ImDrawVert);
+ 			auto res = m_vertex_stream_buffer->Map(sizeof(ImDrawVert), size);
++			if (!res.pointer)
++				return;
+ 			std::memcpy(res.pointer, cmd_list->VtxBuffer.Data, size);
+ 			vertex_start = res.index_aligned;
+ 			m_vertex_stream_buffer->Unmap(size);
+diff --git a/pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp
+index 3a25001cf..7c4735cf6 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp
+@@ -294,6 +294,8 @@ bool GSTextureOGL::DoUpdate(const GSVector4i& r, const void* data, int pitch, in
+ 	else
+ 	{
+ 		const auto map = sb->Map(TEXTURE_UPLOAD_ALIGNMENT, map_size);
++		if (!map.pointer)
++			return false;
+ 		StringUtil::StrideMemCpy(map.pointer, preferred_pitch, data, pitch, r.width() << m_int_shift, r.height());
+ 		sb->Unmap(map_size);
+ 		sb->Bind();
+@@ -340,6 +342,8 @@ bool GSTextureOGL::DoMap(GSMap& m, const GSVector4i* _r, int layer)
+ 		g_perfmon.Put(GSPerfMon::TextureUploads, 1);
+ 
+ 		const auto map = sb->Map(TEXTURE_UPLOAD_ALIGNMENT, upload_size);
++		if (!map.pointer)
++			return false;
+ 		m.bits = static_cast<u8*>(map.pointer);
+ 
+ 		// Save the area for the unmap
+@@ -358,6 +362,8 @@ bool GSTextureOGL::DoMap(GSMap& m, const GSVector4i* _r, int layer)
+ 
+ void GSTextureOGL::Unmap()
+ {
++	if (GLStreamBuffer::Failed())
++		return;
+ 	if (IsTexture() || IsRenderTarget())
+ 	{
+ 		GSDeviceOGL::GetInstance()->CommitClear(this, true);
+@@ -593,4 +599,4 @@ void GSDownloadTextureOGL::SetDebugName(std::string_view name)
+ 		glObjectLabel(GL_BUFFER, m_buffer_id, name.length(), name.data());
+ }
+ 
+-#endif
+\ No newline at end of file
++#endif

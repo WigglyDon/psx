@@ -166,3 +166,28 @@ bounded export live in Rust. Ordinary builds reject this second patch. It
 changes the diagnostic checkpoint binding without relaxing compatibility.
 See [the observer contract](../../docs/graphics-observer.md) for isolation,
 limitations and the separately admitted real-workload procedure.
+
+`0004-stream-buffer-failure.patch` is a retained-core failure-handling repair.
+The actual stream helper previously discarded every `glClientWaitSync` result,
+deleted the dependency and authorized wrapped CPU writes. Only
+`GL_ALREADY_SIGNALED` and `GL_CONDITION_SATISFIED` now permit reuse. Timeout,
+failed/unrecognized waits and null fence creation latch a first failure; failed
+allocation grants no pointer or rewind. Every mapped-write caller checks the
+mapping before copying; draw/publish entry points stop after the latch. All
+remaining fences, including the wrapped portion, stay owned until teardown.
+There is no additional GL wait, error read, timeout change or retry.
+
+The private `0x50535801` callback copies two numeric words into a bounded Rust
+first-failure latch and wakes the application owner. It does not tear down
+reentrantly. Rust refuses further runs/new checkpoint capture and uses existing
+owner retirement. It also frees a captured list if the callback failed while
+capture was servicing native work. Cards and preceding checkpoints are retained.
+This native edit has its own revision binding and disables the old checkpoint exception.
+Controlled-return tests compile the pinned helper and actual upload callers;
+these are source-level regression evidence, not GPU or historical-cause proof.
+
+Observer builds apply patches in order `0001`, `0004`, `0002`, `0003`, `0005`.
+`0005-development-stream-observer.patch` alone adds implementation selection,
+buffer generation and real create/wait/map/unmap observations. Its callback,
+instance fields and call sites are absent from ordinary builds. All retained
+donor copyright and license terms apply to these modifications.

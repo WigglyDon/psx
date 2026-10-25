@@ -69,6 +69,19 @@ mod enabled {
         pub preceding: Vec<Event>,
         pub tail: VecDeque<Event>,
         pub progress: Progress,
+        pub streams: StreamProgress,
+    }
+    #[derive(Clone, Default, Serialize)]
+    pub struct StreamProgress {
+        pub resources: Vec<Event>,
+        pub first_failure: Option<Event>,
+        pub resources_omitted: u64,
+        pub selected: [u64; 4],
+        pub maps: u64,
+        pub creates: u64,
+        pub null_creates: u64,
+        pub waits: [u64; 5],
+        pub unmaps: u64,
     }
     #[derive(Clone, Default, Serialize)]
     pub struct Progress {
@@ -98,6 +111,10 @@ mod enabled {
                     preceding: Vec::with_capacity(PREFIX),
                     tail: VecDeque::with_capacity(CAPACITY),
                     progress: Progress::default(),
+                    streams: StreamProgress {
+                        resources: Vec::with_capacity(16),
+                        ..Default::default()
+                    },
                 },
                 keys: Vec::with_capacity(128),
                 next: 0,
@@ -129,6 +146,46 @@ mod enabled {
             self.next
         }
         pub fn push(&mut self, event: Event, failure: bool) {
+            match event.stage {
+                60 => {
+                    if let Some(count) = self
+                        .snapshot
+                        .streams
+                        .selected
+                        .get_mut(event.detail[0] as usize)
+                    {
+                        *count += 1;
+                    }
+                    if self.snapshot.streams.resources.len() < 16 {
+                        self.snapshot.streams.resources.push(event);
+                    } else {
+                        self.snapshot.streams.resources_omitted += 1;
+                    }
+                }
+                61 => self.snapshot.streams.maps += 1,
+                62 => {
+                    self.snapshot.streams.creates += 1;
+                    self.snapshot.streams.null_creates += u64::from(event.detail[6] == 0);
+                }
+                63 => {
+                    let index = match event.detail[6] {
+                        0x911a => 0,
+                        0x911c => 1,
+                        0x911b => 2,
+                        0x911d => 3,
+                        _ => 4,
+                    };
+                    self.snapshot.streams.waits[index] += 1;
+                }
+                64 => self.snapshot.streams.unmaps += 1,
+                _ => {}
+            }
+            if failure
+                && (60..=64).contains(&event.stage)
+                && self.snapshot.streams.first_failure.is_none()
+            {
+                self.snapshot.streams.first_failure = Some(event);
+            }
             let field = match event.stage {
                 1 | 2 | 16 => Some(&mut self.snapshot.progress.producer_frame),
                 3 => Some(&mut self.snapshot.progress.published_frame),
@@ -301,7 +358,7 @@ mod enabled {
         // Ordinary samples may drop under contention. The first failure must
         // survive: its bounded copy can wait for the short snapshot copy, never
         // for file I/O or formatting (both happen after the lock is released).
-        let Some(mut recorder) = (if failure {
+        let Some(mut recorder) = (if failure || (60..=64).contains(&stage) {
             recorder.lock().ok()
         } else {
             recorder.try_lock().ok()
@@ -318,7 +375,15 @@ mod enabled {
         let context = recorder.token(1, context, stage == 43);
         let surface = recorder.token(2, surface, stage == 44);
         let group = GROUP.load(Ordering::Acquire);
-        let texture = recorder.token(0x20000 + group * 4, texture as usize, stage == 25);
+        let texture = recorder.token(
+            if (60..=64).contains(&stage) {
+                0x60000 + group
+            } else {
+                0x20000 + group * 4
+            },
+            texture as usize,
+            stage == 25 || stage == 60,
+        );
         // FBOs are context-local; attachment object names are share-group names.
         for field in [12, 13] {
             data[field] = recorder.token(0x10000 + context, data[field] as usize, false) as i64;
@@ -619,9 +684,87 @@ mod enabled {
             dispatch.as_ref(),
         )
     }
+    /// Numeric producer operations; no GL error reads, fences, waits or payloads.
+    #[allow(clippy::too_many_arguments)]
+    pub extern "C" fn stream_callback(
+        stage: u32,
+        implementation: u32,
+        target: u32,
+        resource: u32,
+        generation: u64,
+        offset: u32,
+        length: u32,
+        capacity: u32,
+        result: u32,
+    ) {
+        let failed =
+            (stage == 62 && result == 0) || (stage == 63 && !matches!(result, 0x911a | 0x911c));
+        if failed {
+            request_stop(StopReason::Dependency);
+        }
+        emit(
+            1,
+            FRAME.load(Ordering::Acquire),
+            resource,
+            stage,
+            0,
+            0,
+            [0; 32],
+            [
+                implementation as i64,
+                target as i64,
+                generation as i64,
+                offset as i64,
+                length as i64,
+                capacity as i64,
+                result as i64,
+                0,
+            ],
+            failed,
+        );
+    }
 
     #[cfg(test)]
     mod tests {
+        #[test]
+        fn stream_counters_and_first_failure_survive_tail_eviction() {
+            let mut recorder = super::Recorder::default();
+            recorder.push(
+                super::Event {
+                    stage: 60,
+                    texture: 9,
+                    detail: [1, 0x8892, 1, 0, 256, 256, 1, 0],
+                    ..Default::default()
+                },
+                false,
+            );
+            for index in 0..400 {
+                recorder.push(
+                    super::Event {
+                        stage: 63,
+                        detail: [
+                            1,
+                            0x8892,
+                            1,
+                            0,
+                            16,
+                            256,
+                            if index == 0 { 0x911d } else { 0x911a },
+                            0,
+                        ],
+                        ..Default::default()
+                    },
+                    index == 0,
+                );
+            }
+            let snapshot = recorder.snapshot();
+            assert_eq!(snapshot.streams.selected[1], 1);
+            assert_eq!(snapshot.streams.resources.len(), 1);
+            assert_eq!(snapshot.streams.waits, [399, 0, 0, 1, 0]);
+            assert_eq!(snapshot.first_failure.unwrap().detail[6], 0x911d);
+            assert_eq!(snapshot.streams.first_failure.unwrap().detail[6], 0x911d);
+            assert_eq!(snapshot.tail.len(), super::CAPACITY);
+        }
         use super::*;
         #[test]
         fn bounded_first_failure_preceding_and_owner_frame_correlation() {

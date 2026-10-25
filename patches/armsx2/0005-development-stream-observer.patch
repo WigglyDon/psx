@@ -1,0 +1,153 @@
+diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
+index b69789e82..0980dab2b 100644
+--- a/pcsx2-libretro/Main.cpp
++++ b/pcsx2-libretro/Main.cpp
+@@ -1738,6 +1738,13 @@ RETRO_API void retro_init(void)
+ 		LibretroCore::kFrameWidth * LibretroCore::kFrameHeight, 0);
+ }
+ 
++#ifdef ENABLE_OPENGL
++extern "C" RETRO_API void retro_psx_observer_set_stream_callback(GLStreamBuffer::StreamObserver callback)
++{
++	GLStreamBuffer::SetStreamObserver(callback);
++}
++#endif
++
+ RETRO_API void retro_deinit(void)
+ {
+ #ifdef ENABLE_OPENGL
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
+index b97e0b7ce..6c9510587 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp
+@@ -15,6 +15,25 @@ namespace
+ {
+ 	std::atomic<bool> s_stream_failed{false};
+ 	std::atomic<GLStreamBuffer::FailureCallback> s_stream_failure_callback{nullptr};
++	std::atomic<GLStreamBuffer::StreamObserver> s_stream_observer{nullptr};
++	std::atomic<u64> s_stream_generation{0};
++}
++
++void GLStreamBuffer::SetStreamObserver(StreamObserver callback)
++{
++	s_stream_observer.store(callback, std::memory_order_release);
++}
++
++void GLStreamBuffer::Observe(u32 stage, u32 offset, u32 length, u32 result)
++{
++	if (const auto callback = s_stream_observer.load(std::memory_order_acquire))
++		callback(stage, m_implementation, m_target, m_buffer_id, m_generation, offset, length, m_size, result);
++}
++
++void GLStreamBuffer::Selected(u32 implementation)
++{
++	m_implementation = implementation;
++	Observe(60, 0, m_size, 1);
+ }
+ 
+ void GLStreamBuffer::SetFailureCallback(FailureCallback callback)
+@@ -42,6 +61,7 @@ GLStreamBuffer::GLStreamBuffer(GLenum target, GLuint buffer_id, u32 size)
+ 	: m_target(target)
+ 	, m_buffer_id(buffer_id)
+ 	, m_size(size)
++	, m_generation(s_stream_generation.fetch_add(1, std::memory_order_relaxed) + 1)
+ {
+ }
+ 
+@@ -70,6 +90,7 @@ namespace
+ 
+ 		MappingResult Map(u32 alignment, u32 min_size) override
+ 		{
++			Observe(61, 0, min_size, 0);
+ 			if (Failed())
+ 				return {};
+ 			return MappingResult{static_cast<void*>(m_cpu_buffer), 0, 0, m_size / alignment};
+@@ -126,6 +147,7 @@ namespace
+ 
+ 		MappingResult Map(u32 alignment, u32 min_size) override
+ 		{
++			Observe(61, 0, min_size, 0);
+ 			if (Failed())
+ 				return {};
+ 			return MappingResult{static_cast<void*>(m_cpu_buffer), 0, 0, m_size / alignment};
+@@ -211,6 +233,8 @@ namespace
+ 			{
+ 				pxAssert(!m_sync_objects[m_used_block_index]);
+ 				m_sync_objects[m_used_block_index] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++				Observe(62, m_used_block_index * m_bytes_per_block, m_bytes_per_block,
++					m_sync_objects[m_used_block_index] ? 1 : 0);
+ 				if (!m_sync_objects[m_used_block_index])
+ 					return Fail(2, 0);
+ 			}
+@@ -222,6 +246,8 @@ namespace
+ 			if (!sync)
+ 				return Fail(2, 0);
+ 			const GLenum result = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
++			Observe(63, static_cast<u32>(&sync - m_sync_objects.data()) * m_bytes_per_block,
++				m_bytes_per_block, result);
+ 			if (result != GL_ALREADY_SIGNALED && result != GL_CONDITION_SATISFIED)
+ 				return Fail(1, result);
+ 			glDeleteSync(sync);
+@@ -293,6 +319,7 @@ namespace
+ 
+ 		MappingResult Map(u32 alignment, u32 min_size) override
+ 		{
++			Observe(61, m_position, min_size, 0);
+ 			if (Failed())
+ 				return {};
+ 			const u32 old_position = m_position;
+@@ -313,6 +340,7 @@ namespace
+ 
+ 		void Unmap(u32 used_size) override
+ 		{
++			Observe(64, m_position, used_size, m_coherent ? 1 : 0);
+ 			if (Failed())
+ 				return;
+ 			pxAssert((m_position + used_size) <= m_size);
+@@ -386,13 +414,17 @@ std::unique_ptr<GLStreamBuffer> GLStreamBuffer::Create(GLenum target, u32 size)
+ 	{
+ 		buf = BufferStorageStreamBuffer::Create(target, size);
+ 		if (buf)
++		{
++			buf->Selected(1);
+ 			return buf;
++		}
+ 	}
+ 
+ 	// BufferSubData is slower on all drivers except NVIDIA...
+ 	const char* vendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+-	if (std::strstr(vendor, "NVIDIA"))
+-		return BufferSubDataStreamBuffer::Create(target, size);
+-	else
+-		return BufferDataStreamBuffer::Create(target, size);
++	const bool subdata = std::strstr(vendor, "NVIDIA") != nullptr;
++	buf = subdata ? BufferSubDataStreamBuffer::Create(target, size) : BufferDataStreamBuffer::Create(target, size);
++	if (buf)
++		buf->Selected(subdata ? 2 : 3);
++	return buf;
+ }
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h
+index 7664f847a..87e643819 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h
++++ b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h
+@@ -43,12 +43,20 @@ public:
+ 	using FailureCallback = void (*)(u32 reason, u32 result);
+ 	static void SetFailureCallback(FailureCallback callback);
+ 	static bool Failed();
++	// Development-only, added only by the observer patch. No GL queries here.
++	using StreamObserver = void (*)(u32 stage, u32 implementation, u32 target, u32 resource,
++		u64 generation, u32 offset, u32 length, u32 capacity, u32 result);
++	static void SetStreamObserver(StreamObserver callback);
++	void Selected(u32 implementation);
+ 
+ protected:
+ 	GLStreamBuffer(GLenum target, GLuint buffer_id, u32 size);
+ 	static bool Fail(u32 reason, u32 result);
++	void Observe(u32 stage, u32 offset, u32 length, u32 result);
+ 
+ 	GLenum m_target;
+ 	GLuint m_buffer_id;
+ 	u32 m_size;
++	u64 m_generation;
++	u32 m_implementation = 0;
+ };
