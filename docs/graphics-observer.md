@@ -4,8 +4,62 @@ The [matched full-renderer comparison](https://github.com/WigglyDon/psx/issues/2
 is closed. The [producer-operation dispatch](https://github.com/WigglyDon/psx/issues/2#issuecomment-6390726958)
 authorized a separate source repair and one bounded observation, now completed
 as recorded below. The [output-sync ownership dispatch](https://github.com/WigglyDon/psx/issues/2#issuecomment-6393048944)
-owns the next distinct reference. This is development observation, not PS2 acceptance or a
-driver diagnosis. Do not repeat the generated probe or the closed comparison.
+is completed, along with the [common-result dispatch](https://github.com/WigglyDon/psx/issues/2#issuecomment-6398308448)
+recorded below. The next [full-renderer donor/host comparison](renderer-comparison.md)
+is prepared off-device only. This is development observation, not PS2 acceptance
+or a driver diagnosis. Do not repeat the generated probe or a closed comparison.
+
+## Completed common-result observation
+
+The one admitted run of `8e61eb2ccdf364cc4aa80e33dfc0796021c9dac1`
+used the frozen candidate bound in [report6400177312](https://github.com/WigglyDon/psx/issues/2#issuecomment-6400177312).
+Its external launch-to-stop interval was16.180878s, with two bounded numeric
+exports. Exact normal APK/data rollback, scratch removal, Home/app stopped,
+booted/physical screen OFF and free/inactive lease were verified. No Fold
+operation or additional arm occurred. This is graphics diagnosis, not gameplay,
+audio, ordinary saving or sustained-speed acceptance.
+
+The first retained failure remains stage16, producer frame464, at12.176201s
+on the observer clock: a non-null output fence failed both original validity
+routes before flush/publication; sampled error flags remained zero. Owner
+retirement began at12.314657s and native close completed at12.484416s.
+The first common nonzero error/fatal was frontend stage41/phase9 retirement,
+`GL_OUT_OF_MEMORY`, at12.565759s. This later observation does not establish
+when an allocation failed, exhausted physical RAM or initiated the fence fault.
+Two bounded task-log submission warnings were retained. Their relayed logging
+thread and wall-clock timestamps do not identify the original native caller
+or establish ordering against the observer clock.
+
+New coverage actually executed:14 original native error reads returned zero;
+the only nonzero error record was the later frontend retirement sample.
+The audited results include1,352 maps,140 shader compile checks,70 links,
+32 binary/cache results and1,573 range checks, with no recorded failure there.
+Runtime/probe/dependency failures and failed-request fields remain empty.
+The coarse render/upload/composition/donor-overlay/output phases were visited;
+they do not add error queries or prove that every native command succeeded.
+
+All download allocation/copy/map/Flush/Poll/wait counters and the readback phase
+were zero; no CPU/PBO selection was recorded. That path was inactive for this
+run and supplies no justification for another hypothetical wait repair.
+The four audited allocation classes recorded39 texture objects and7 stream
+buffers, no download objects/CPU staging, zero failed requests, and matching
+recorded delete calls at retirement. Requested-byte high water was24,578,048
+for textures and219,152,384 for stream buffers. These estimates neither cover
+all allocations nor prove driver deletion/storage success or physical memory
+health. No resource/counter overflow, unknown release or untracked audited
+resource was reported. The32-event common tail omitted6,987 older events;
+first-error/failure fields and totals were retained independently.
+
+The existing output ledger closed with464 creates,463 creator retirements,
+one known-invalid release, zero frontend sync operations, no live/untracked
+remainder or recorded ownership failure, and actual native/frontend context
+destruction. That accounting does not certify GPU execution. No earlier
+demonstrated source defect was exposed by the added observations.
+
+This observational route is closed. The [prepared comparison](renderer-comparison.md)
+keeps the full renderer and exact frozen donor bytes while changing the surrounding
+application integration. It is not built or admitted for hardware, and adds no
+production workaround or new player setting.
 
 ## Build and isolation
 
