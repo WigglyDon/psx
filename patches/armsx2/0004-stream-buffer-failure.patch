@@ -2,14 +2,13 @@ diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
 index 24210fb06..b69789e82 100644
 --- a/pcsx2-libretro/Main.cpp
 +++ b/pcsx2-libretro/Main.cpp
-@@ -75,6 +75,7 @@
+@@ -75,5 +75,6 @@
  #endif
  #ifdef ENABLE_OPENGL
  #include "pcsx2/GS/Renderers/OpenGL/GLLibretro.h"
 +#include "pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h"
  #include "pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.h"
  #endif
- #include "pcsx2/GameList.h"
 @@ -1701,6 +1702,15 @@ RETRO_API void retro_set_input_state(retro_input_state_t cb)
  
  RETRO_API void retro_init(void)

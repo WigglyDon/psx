@@ -66,6 +66,72 @@ struct Fixture {
     factory: unsafe extern "C" fn(u32) -> u32,
     dir: PathBuf,
 }
+#[test]
+fn complete_patch_stack_composes_with_the_retained_adapter_and_observer() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let donor = repo.join("vendor/armsx2");
+    let dir = std::env::temp_dir().join(format!("psx-stream-patch-stack-{}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let patches = [
+        "0001-host-pause-and-card-flush.patch",
+        "0002-development-graphics-observer.patch",
+        "0003-development-matched-reader.patch",
+        "0004-stream-buffer-failure.patch",
+        "0005-development-stream-observer.patch",
+    ];
+    let mut expected = None;
+    for (number, order) in [[0, 3, 1, 2, 4], [0, 1, 2, 3, 4]].into_iter().enumerate() {
+        let index = dir.join(format!("{number}.index"));
+        let git = |args: &[&str]| {
+            let mut c = Command::new("git");
+            c.args(args)
+                .current_dir(&donor)
+                .env("GIT_INDEX_FILE", &index)
+                .env("GIT_OPTIONAL_LOCKS", "0");
+            c
+        };
+        let read = git(&["read-tree", "83fe4e293f71ab5587ef81b06143725bf8c6a30b"])
+            .output()
+            .unwrap();
+        assert!(
+            read.status.success(),
+            "{}",
+            String::from_utf8_lossy(&read.stderr)
+        );
+        for position in order {
+            let patch = patches[position];
+            let applied = git(&["apply", "--cached"])
+                .arg(repo.join("patches/armsx2").join(patch))
+                .output()
+                .unwrap();
+            assert!(
+                applied.status.success(),
+                "order{number} {patch}: {}",
+                String::from_utf8_lossy(&applied.stderr)
+            );
+        }
+        let combined = git(&[
+            "diff",
+            "--cached",
+            "--binary",
+            "83fe4e293f71ab5587ef81b06143725bf8c6a30b",
+        ])
+        .output()
+        .unwrap();
+        assert!(combined.status.success());
+        if let Some(expected) = &expected {
+            assert_eq!(
+                &combined.stdout, expected,
+                "warm and fresh patch order differ"
+            );
+        } else {
+            expected = Some(combined.stdout);
+        }
+    }
+}
 impl Fixture {
     fn build() -> Self {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
