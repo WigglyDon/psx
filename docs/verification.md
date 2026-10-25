@@ -512,6 +512,57 @@ Clippy, Android ARM64 release Clippy in both ordinary and new modes, and all18
 source-streaming/retention tests. Earlier failed fixture/tool/lint attempts are
 retained separately; they are not device observations.
 
-These are source/host checks. A new exact diagnostic APK/symbol/source binding
-and separately admitted physical result are still required. They establish no
-graphics fix, driver cause, ordinary-save result or sustained-speed acceptance.
+These are source/host checks, distinct from the admitted result below. They
+establish no graphics fix, driver cause, ordinary-save result or sustained-speed
+acceptance.
+
+## PLAYER-2 admitted creator-owned output-sync reference
+
+The single admitted clean boot used source
+`cba79774b95dc45e8d87819602c67c0691310960`, mode
+`producer-local-output-sync`, APK SHA256
+`e148f06a7dc60e95645472659bbcd17393cb6ac48878158d46844300c437ce12`.
+The [verified candidate binding](https://github.com/WigglyDon/psx/issues/2#issuecomment-6393936134)
+records the exact patch stack, original signer, independently matched native/Rust
+symbols and complete streaming-verified corresponding source. The finite runner
+also passed eight host checks before admission. Interrupted packaging stages
+were retained; verified completed phases were reused without another engine
+build. Documentation added after execution is not the APK's source revision.
+
+The actual full-GS run created466 output generations, published465 and made461
+metadata-only CPU acknowledgments. It retired465 valid names on their creating
+owner and released one known-invalid name without a GL delete. Final live and
+context-reclaim counts were0, native join was verified, and frontend output-sync
+operations, untracked creates, overflow and first ownership failure were all0
+or absent. The ledger high-water mark was2. Its32 retained generation events
+explicitly omitted2762 older events; non-evicting lifecycle totals remained
+complete. The first of two exports still had one live entry and no native join;
+only the final export established complete lifecycle coverage.
+
+First retained failure was stage16/order10602, frame/generation466 at11.589871s
+from observer epoch: a non-null output fence invalid through both query routes
+before the existing flush/publication. Sampled context/dispatch checks matched
+and the initial GL error slots were0. Producer frame reached466; greatest
+publication/consume/ack/UI-present/swap frame IDs were465, with0 donor-image
+copies. These frame IDs differ from acknowledgment totals. A later teardown
+sample retained `GL_OUT_OF_MEMORY`; bounded submission warnings also survived.
+Neither a causal command nor cross-clock warning order nor a driver cause was
+established. The unchanged stream-selection counters again recorded no waits;
+that completed investigation was not repeated.
+
+Owner retirement began137530us after the first failure; external retirement
+was verified12.967032373s after launch, within30s. Total actual custody was
+28.766936423s. Original APK and full normal game-excluding data hashes passed
+before installation and after rollback. Scratch removal, original Home,
+stopped app, boot completion, physical display OFF and inactive/free released
+lease were verified at2026-10-25T05:33:18Z; host evidence was subsequently
+flushed under its own storage leases. No pending restoration or owned client
+remained. No normal/historical arm, repeat, state restore, image/readback or
+Fold operation occurred. No gameplay/save/sound/sustained-speed acceptance
+follows from this diagnostic.
+
+The pre-flush invalid output fence reproduced with verified zero frontend
+output-sync operations. Those cross-context operations are therefore not
+necessary for this reproduction; this diagnostic branch is closed. The next
+off-device question concerns common GS rendering/submission/context behavior,
+not another output-sync reference run or a speculative production workaround.

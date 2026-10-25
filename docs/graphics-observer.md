@@ -341,3 +341,15 @@ independent scratch, maximum30s, immediate first-fault/warning/owner stop,
 external retirement and separate exact rollback/return reserve. No other arm,
 repeat, restored state, screenshot/readback or Fold use is authorized. Source
 tests and any admitted result must be reported separately; this is not a PS2 fix.
+
+The one admitted creator-owned run is now complete, with exact normal APK/data
+rollback and verified physical return. The pre-flush output-fence invalidity
+reproduced at generation466 despite zero frontend output-sync operations and
+complete final lifecycle accounting:465 creator retirements, one invalid-name
+release, no remaining names or ownership failure. See
+[actual observations and limits](verification.md#player-2-admitted-creator-owned-output-sync-reference).
+The earlier export was explicitly incomplete; only the post-join final export
+closed its live ownership. This closes the cross-context output-sync branch
+for this reproduction. Do not repeat the variant or infer a driver root cause.
+Further off-device work moves to the common GS rendering/submission/context
+path; no new physical scope or production workaround follows from this result.
