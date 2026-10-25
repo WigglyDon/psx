@@ -367,7 +367,11 @@ impl Graphics {
         if result.is_err() {
             let _ = API.make_current(self.display, None, None, None);
         }
-        let _ = API.destroy_context(self.display, previous);
+        let _destroyed = API.destroy_context(self.display, previous);
+        #[cfg(feature = "producer-local-output-sync")]
+        if _destroyed.is_ok() {
+            psx_player::graphics_observer::output_sync::share_group_destroyed();
+        }
         result?;
         #[cfg(feature = "graphics-observer")]
         psx_player::graphics_observer::event(43, [0; 8]);
@@ -869,7 +873,11 @@ impl Drop for Graphics {
             }
             let _ = API.make_current(self.display, None, None, None);
             let _ = API.destroy_surface(self.display, self.pbuffer);
-            let _ = API.destroy_context(self.display, self.context);
+            let _destroyed = API.destroy_context(self.display, self.context);
+            #[cfg(feature = "producer-local-output-sync")]
+            if _destroyed.is_ok() {
+                psx_player::graphics_observer::output_sync::share_group_destroyed();
+            }
             let _ = API.terminate(self.display);
         }
     }

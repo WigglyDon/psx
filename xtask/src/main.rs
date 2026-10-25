@@ -538,10 +538,10 @@ fn apk() -> Result<()> {
     if ps2::observer_enabled() {
         rust.args([
             "--features",
-            if ps2::observer_mode()? == "no-game-image-reader" {
-                "no-game-image-reader"
-            } else {
-                "graphics-observer"
+            match ps2::observer_mode()? {
+                "producer-local-output-sync" => "producer-local-output-sync",
+                "no-game-image-reader" => "no-game-image-reader",
+                _ => "graphics-observer",
             },
         ]);
     }
@@ -675,9 +675,20 @@ public final class PlaybackService extends android.app.Service {
         };
         fs::write(
             &observer_manifest,
-            serde_json::to_vec_pretty(
-                &serde_json::json!({"projectRevision":revision,"developmentOnly":true,"scratch":"observer-scratch-v1","mode":ps2::observer_mode()?,"observerAbi":2,"streamObserver":1,"streamRepairSha256":hash(Path::new("patches/armsx2/0004-stream-buffer-failure.patch"))?,"streamObserverSha256":hash(Path::new("patches/armsx2/0005-development-stream-observer.patch"))?,"matchedPatchSha256":hash(Path::new("patches/armsx2/0003-development-matched-reader.patch"))?,"normalAdapterSha256":hash(Path::new("patches/armsx2/0001-host-pause-and-card-flush.patch"))?,"observerPatchSha256":hash(Path::new("patches/armsx2/0002-development-graphics-observer.patch"))?,"observerRustSha256":hash(Path::new("crates/player/src/graphics_observer.rs"))?,"maxExportBytes":790528}),
-            )?,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "projectRevision":revision,"developmentOnly":true,"scratch":"observer-scratch-v1",
+                "mode":ps2::observer_mode()?,"observerAbi":2,"streamObserver":1,
+                "streamRepairSha256":hash(Path::new("patches/armsx2/0004-stream-buffer-failure.patch"))?,
+                "streamObserverSha256":hash(Path::new("patches/armsx2/0005-development-stream-observer.patch"))?,
+                "matchedPatchSha256":hash(Path::new("patches/armsx2/0003-development-matched-reader.patch"))?,
+                "normalAdapterSha256":hash(Path::new("patches/armsx2/0001-host-pause-and-card-flush.patch"))?,
+                "observerPatchSha256":hash(Path::new("patches/armsx2/0002-development-graphics-observer.patch"))?,
+                "observerRustSha256":hash(Path::new("crates/player/src/graphics_observer.rs"))?,
+                "creatorOutputObserver":u32::from(ps2::observer_mode()?=="producer-local-output-sync"),
+                "creatorOutputPatchSha256":if ps2::observer_mode()?=="producer-local-output-sync" {Some(hash(Path::new("patches/armsx2/0006-development-creator-output.patch"))?)}else{None},
+                "creatorOutputRustSha256":if ps2::observer_mode()?=="producer-local-output-sync" {Some(hash(Path::new("crates/player/src/graphics_observer/output_sync.rs"))?)}else{None},
+                "maxExportBytes":790528
+            }))?,
         )?;
     } else if observer_manifest.exists() {
         fs::remove_file(observer_manifest)?;
@@ -898,6 +909,21 @@ fn verify_apk() -> Result<()> {
                 return Err(
                     "PS2 stream observer export differs from the selected build capability".into(),
                 );
+            }
+            let creator_export = symbols.lines().any(|line| {
+                let c: Vec<_> = line.split_whitespace().collect();
+                c.len() >= 8
+                    && c[3] == "FUNC"
+                    && c[4] == "GLOBAL"
+                    && c[5] == "DEFAULT"
+                    && c[6] != "UND"
+                    && c[7] == "retro_psx_observer_set_output_callback"
+            });
+            if creator_export
+                != (ps2::observer_enabled()
+                    && ps2::observer_mode()? == "producer-local-output-sync")
+            {
+                return Err("Creator output capability differs from exact build mode".into());
             }
             for required in [
                 "retro_psx_ready",

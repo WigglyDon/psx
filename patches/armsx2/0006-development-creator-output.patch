@@ -1,0 +1,302 @@
+diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
+index 73ae9c75d..8002ffcce 100644
+--- a/pcsx2-libretro/Main.cpp
++++ b/pcsx2-libretro/Main.cpp
+@@ -2302,7 +2302,11 @@ RETRO_API void retro_run(void)
+ 		if (s_gl_hw_render.get_current_framebuffer && GLLibretro::ConsumeFrame(&frame))
+ 		{
+ 			// Build-only Rust policy, never inferred from fence validity.
+-			if (GLLibretro::Observe(50, 2, frame.observation, frame.texture, frame.width, frame.height, nullptr) == 0)
++			if (GLLibretro::CreatorOwnedOutput())
++			{
++				GLLibretro::AcknowledgeCreatorOutput(&frame);
++			}
++			else if (GLLibretro::Observe(50, 2, frame.observation, frame.texture, frame.width, frame.height, nullptr) == 0)
+ 			{
+ 				GLLibretro::AcknowledgeNoReader(&frame);
+ 			}
+@@ -2687,4 +2691,9 @@ extern "C" RETRO_API void retro_psx_observer_set_callback(GLLibretro::Observer o
+ {
+ 	GLLibretro::SetObserver(observer);
+ }
++
++extern "C" RETRO_API void retro_psx_observer_set_output_callback(GLLibretro::OutputCallback callback)
++{
++	GLLibretro::SetOutputCallback(callback);
++}
+ #endif
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
+index 851ca7589..472b3e645 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp
+@@ -22,6 +22,67 @@ namespace GLLibretro
+ 	// Installed before CPU/GS boot and retired only after their join.
+ 	static Observer s_observer = nullptr;
+ 	void SetObserver(Observer observer) { s_observer = observer; }
++	static OutputCallback s_output_callback = nullptr;
++	void SetOutputCallback(OutputCallback callback) { s_output_callback = callback; }
++	bool CreatorOwnedOutput() { return s_output_callback != nullptr; }
++	static OutputCommand Output(u32 op, u32 owner, const Frame* frame = nullptr)
++	{
++		OutputCommand command{1, sizeof(OutputCommand), op, owner, 0, 0, 0, 0, 0, 0, 0};
++		if (frame)
++		{
++			command.generation = frame->output_generation;
++			command.frame = frame->observation;
++			command.lease = frame->read_lease;
++			command.texture = frame->texture;
++			if (op == 1)
++				command.raw = reinterpret_cast<std::uintptr_t>(frame->fence);
++		}
++		// Frontend acknowledgments contain metadata only: no handle or GL query.
++		if (owner == 1)
++		{
++#if defined(_WIN32)
++			command.context = reinterpret_cast<std::uintptr_t>(GLContextWGL::CaptureCurrentContext());
++#else
++			command.context = eglGetCurrentContext ? reinterpret_cast<std::uintptr_t>(eglGetCurrentContext()) : 0;
++#endif
++		}
++		return command;
++	}
++	bool CreatorOutputAllowed()
++	{
++		if (!s_output_callback) return true;
++		auto command = Output(9, 1);
++		return s_output_callback(&command) != 0;
++	}
++	bool RetainCreatorOutput(Frame* frame)
++	{
++		if (!s_output_callback) return true;
++		auto command = Output(1, 1, frame);
++		const bool accepted = s_output_callback(&command) != 0;
++		frame->output_generation = command.generation;
++		return accepted;
++	}
++	void RetireCreatorOutputs()
++	{
++		if (!s_output_callback) return;
++		// Rust bounds ownership to four entries. No GPU wait/completion claim.
++		for (u32 i = 0; i < 4; i++)
++		{
++			auto command = Output(7, 1);
++			const u32 action = s_output_callback(&command);
++			if (action == 0) break;
++			if (action == 2) continue; // Known invalid or context-reclaim-only.
++			glDeleteSync(reinterpret_cast<GLsync>(command.raw));
++			command.op = 8;
++			s_output_callback(&command);
++		}
++	}
++	void CreatorContextFault()
++	{
++		if (!s_output_callback) return;
++		auto command = Output(11, 0);
++		s_output_callback(&command);
++	}
+ 	u64 Observe(u32 stage, u32 owner, u64 frame, GLuint texture, u32 width, u32 height, GLsync fence, std::uintptr_t creator)
+ 	{
+ 		if (!s_observer)
+@@ -174,6 +235,16 @@ namespace GLLibretro
+ 	void PublishFrame(const Frame& frame)
+ 	{
+ 		std::unique_lock<std::mutex> lock(s_frame_mutex);
++		if (s_output_callback)
++		{
++			auto publish = Output(2, 1, &frame);
++			if (!s_output_callback(&publish)) return;
++			if (s_frame_serial != s_frame_consumed && s_frame.output_generation)
++			{
++				auto dropped = Output(6, 1, &s_frame);
++				s_output_callback(&dropped);
++			}
++		}
+ 
+ 		// A frame nobody picked up (pacing off, or the frontend tore its
+ 		// context down mid-flight) still owns a fence. Retire it here, on the
+@@ -182,6 +253,8 @@ namespace GLLibretro
+ 			glDeleteSync(s_frame.fence);
+ 
+ 		s_frame = frame;
++		if (s_output_callback)
++			s_frame.fence = nullptr; // Raw sync never enters the frontend descriptor.
+ 		s_frame_serial++;
+ 		Observe(3, 1, frame.observation, frame.texture, frame.width, frame.height, nullptr);
+ 		if (s_frame_ready_callback)
+@@ -205,6 +278,16 @@ namespace GLLibretro
+ 		s_frame_consumed = s_frame_serial;
+ 		*out_frame = s_frame;
+ 		out_frame->read_lease = s_read_lease = ++s_next_read_lease;
++		if (s_output_callback)
++		{
++			auto consume = Output(3, 2, out_frame);
++			if (!s_output_callback(&consume))
++			{
++				*out_frame = Frame();
++				s_read_lease = 0;
++				return false;
++			}
++		}
+ 		Observe(4, 2, s_frame.observation, s_frame.texture, s_frame.width, s_frame.height, nullptr);
+ 		s_read_texture = s_frame.texture;
+ 		// The caller owns the fence now; clearing it here keeps PublishFrame
+@@ -254,6 +337,25 @@ namespace GLLibretro
+ 		s_frame_consumed_cv.notify_all();
+ 		return true;
+ 	}
++	bool AcknowledgeCreatorOutput(Frame* frame)
++	{
++		std::lock_guard<std::mutex> lock(s_frame_mutex);
++		if (!s_output_callback) return false;
++		if (!frame || frame->fence || !frame->read_lease || frame->read_lease != s_read_lease || frame->texture != s_read_texture)
++		{
++			auto rejected = Output(10, 2, frame);
++			s_output_callback(&rejected);
++			return false;
++		}
++		auto acknowledged = Output(4, 2, frame);
++		if (!s_output_callback(&acknowledged)) return false;
++		frame->read_lease = 0;
++		s_read_texture = 0;
++		s_read_lease = 0;
++		Observe(51, 2, frame->observation, frame->texture, frame->width, frame->height, nullptr);
++		s_frame_consumed_cv.notify_all();
++		return true;
++	}
+ 
+ 	void WaitForFrontend(GLuint texture)
+ 	{
+@@ -263,12 +365,23 @@ namespace GLLibretro
+ 		// after this check. Its producer fence is still ours to delete.
+ 		if (s_frame.texture == texture && s_frame_serial != s_frame_consumed)
+ 		{
++			if (s_output_callback && s_frame.output_generation)
++			{
++				auto dropped = Output(6, 1, &s_frame);
++				s_output_callback(&dropped);
++			}
+ 			if (s_frame.fence)
+ 				glDeleteSync(s_frame.fence);
+ 			s_frame = Frame();
+ 			s_frame_consumed = s_frame_serial;
+ 		}
+ 		s_frame_consumed_cv.wait(lock, [texture]() { return s_read_texture != texture; });
++		if (s_output_callback)
++		{
++			lock.unlock();
++			RetireCreatorOutputs();
++			return;
++		}
+ 		for (auto it = s_frontend_reads.begin(); it != s_frontend_reads.end(); ++it)
+ 		{
+ 			if (it->texture != texture)
+@@ -305,6 +418,15 @@ namespace GLLibretro
+ 	{
+ 		std::lock_guard<std::mutex> lock(s_frame_mutex);
+ 		s_pacing = enabled;
++		if (!enabled && s_output_callback)
++		{
++			auto cancelled = Output(5, 0);
++			s_output_callback(&cancelled);
++			s_frame = Frame();
++			s_frame_consumed = s_frame_serial;
++			s_read_texture = 0;
++			s_read_lease = 0;
++		}
+ 		if (!enabled)
+ 			s_frame_consumed_cv.notify_all();
+ 	}
+diff --git a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
+index c85e708de..9b1575530 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
++++ b/pcsx2/GS/Renderers/OpenGL/GLLibretro.h
+@@ -66,6 +66,11 @@ namespace GLLibretro
+ 	inline bool ConsumeFrame(Frame*) { return false; }
+ 	inline void CompleteFrame(const Frame&, GLsync) {}
+ 	inline bool AcknowledgeNoReader(Frame*) { return false; }
++	inline bool CreatorOwnedOutput() { return false; }
++	inline bool CreatorOutputAllowed() { return true; }
++	inline bool RetainCreatorOutput(Frame*) { return true; }
++	inline void RetireCreatorOutputs() {}
++	inline void CreatorContextFault() {}
+ 	inline void WaitForFrontend(GLuint) {}
+ 	inline bool HasFrame() { return false; }
+ 	inline void SetPacing(bool) {}
+@@ -88,6 +93,20 @@ namespace GLLibretro
+ 	};
+ 	using Observer = u64 (*)(u32, u32, u64, GLuint, u32, u32, GLsync, const ObserverDispatch*);
+ 	void SetObserver(Observer observer);
++	// Fixed development policy installed by Rust before native workers start.
++	struct OutputCommand
++	{
++		u32 version, size, op, owner;
++		u64 generation, frame, lease;
++		std::uintptr_t raw, context;
++		u32 texture, reason;
++	};
++	using OutputCallback = u32 (*)(OutputCommand*);
++	void SetOutputCallback(OutputCallback callback);
++	bool CreatorOwnedOutput();
++	bool CreatorOutputAllowed();
++	void RetireCreatorOutputs();
++	void CreatorContextFault();
+ 	u64 Observe(u32 stage, u32 owner, u64 frame, GLuint texture, u32 width, u32 height, GLsync fence, std::uintptr_t creator = 0);
+ 
+ 	// Turns the handoff off. For the GS thread, which is the thread that reads
+@@ -119,6 +138,7 @@ namespace GLLibretro
+ 		u32 height = 0;
+ 		u64 observation = 0; // Opaque Rust frame identity, diagnostic build only.
+ 		u64 read_lease = 0;
++		u64 output_generation = 0;
+ 	};
+ 	void PublishFrame(const Frame& frame);
+ 	bool ConsumeFrame(Frame* out_frame); // true if a new frame arrived since the last consume
+@@ -127,6 +147,8 @@ namespace GLLibretro
+ 	void CompleteFrame(const Frame& frame, GLsync read_fence);
+ 	// CPU acknowledgement: no frontend GPU image read was submitted.
+ 	bool AcknowledgeNoReader(Frame* frame);
++	bool RetainCreatorOutput(Frame* frame);
++	bool AcknowledgeCreatorOutput(Frame* frame);
+ 	void WaitForFrontend(GLuint texture); // GS owner, before any overwrite/delete
+ 	bool HasFrame();                     // same, without consuming it
+ 	// Non-reentrant notification only; the frontend consumes on its GL owner.
+diff --git a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+index 91c6f6c2b..d46896a6d 100644
+--- a/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
++++ b/pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp
+@@ -833,6 +833,8 @@ bool GSDeviceOGL::AbandonContext(bool still_valid)
+ 	// into is the one going away. Cleared here rather than by the caller
+ 	// because this is the GS thread, which is the thread that reads it.
+ 	GLLibretro::Deactivate();
++	if (!still_valid)
++		GLLibretro::CreatorContextFault();
+ 	GLLibretro::AbortPacing();
+ 
+ 	if (still_valid)
+@@ -1611,6 +1613,7 @@ void GSDeviceOGL::DestroyResources()
+ 			GLLibretro::WaitForFrontend(bb->GetID());
+ 		bb.reset();
+ 	}
++	GLLibretro::RetireCreatorOutputs();
+ 	m_libretro_bb_idx = 0;
+ 
+ 	if (m_palette_ss != 0)
+@@ -1891,6 +1894,9 @@ void GSDeviceOGL::EndPresent()
+ 
+ 	if (GLLibretro::Active)
+ 	{
++		GLLibretro::RetireCreatorOutputs();
++		if (!GLLibretro::CreatorOutputAllowed())
++			return;
+ 		// The frontend reads this texture from its own context, on its own
+ 		// thread, so the ordering has to be spelled out: a fence it can wait
+ 		// on, and a flush, without which the fence may never be submitted and
+@@ -1903,6 +1909,8 @@ void GSDeviceOGL::EndPresent()
+ 		frame.observation = GLLibretro::Observe(1, 1, 0, frame.texture, frame.width, frame.height, nullptr);
+ 		const auto observer_fence_create = glFenceSync;
+ 		frame.fence = observer_fence_create(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
++		if (!GLLibretro::RetainCreatorOutput(&frame))
++			return;
+ 		GLLibretro::Observe(16, 1, frame.observation, frame.texture, frame.width, frame.height, frame.fence, reinterpret_cast<std::uintptr_t>(observer_fence_create));
+ 		glFlush();
+ 		GLLibretro::Observe(2, 1, frame.observation, frame.texture, frame.width, frame.height, frame.fence, reinterpret_cast<std::uintptr_t>(observer_fence_create));

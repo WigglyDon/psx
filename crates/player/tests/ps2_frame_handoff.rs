@@ -32,7 +32,7 @@ unsafe extern "C" fn observe(
     }
     assert_eq!(dispatch.context, usize::MAX - 2048);
     if stage == 52 {
-        assert_eq!(_fence as usize, usize::MAX - 4096);
+        assert!([usize::MAX - 4096, usize::MAX - 4095].contains(&(_fence as usize)));
     }
     OBSERVED.lock().unwrap().push((stage, owner, frame));
     frame
@@ -52,6 +52,11 @@ fn published_frames_wake_without_waiting_for_a_frontend_tick_and_retire_cleanly(
     fs::copy(
         repo.join("vendor/armsx2").join(relative),
         temp.join(relative),
+    )
+    .unwrap();
+    fs::copy(
+        repo.join("vendor/armsx2/pcsx2/GS/Renderers/OpenGL/GLLibretro.h"),
+        temp.join("pcsx2/GS/Renderers/OpenGL/GLLibretro.h"),
     )
     .unwrap();
     let patch = Command::new("git")
@@ -90,6 +95,23 @@ fn published_frames_wake_without_waiting_for_a_frontend_tick_and_retire_cleanly(
         .status()
         .unwrap()
         .success());
+    #[cfg(feature = "producer-local-output-sync")]
+    {
+        let result = Command::new("git")
+            .args([
+                "apply",
+                "--include=pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp",
+            ])
+            .arg(repo.join("patches/armsx2/0006-development-creator-output.patch"))
+            .current_dir(&temp)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
     let source = fs::read_to_string(temp.join(relative)).unwrap();
     let observer = if cfg!(feature = "graphics-observer") {
         source
@@ -116,14 +138,114 @@ fn published_frames_wake_without_waiting_for_a_frontend_tick_and_retire_cleanly(
     let reference_fixture = if cfg!(feature = "graphics-observer") {
         r#"
 extern "C" void publish_reference() { GLLibretro::Frame f; f.texture=1; f.observation=78; f.fence=reinterpret_cast<void*>(UINTPTR_MAX-4096); GLLibretro::PublishFrame(f); }
+extern "C" void publish_second_reference() { GLLibretro::Frame f; f.texture=1; f.observation=79; f.fence=reinterpret_cast<void*>(UINTPTR_MAX-4095); GLLibretro::PublishFrame(f); }
 extern "C" bool ack_reference() { return GLLibretro::AcknowledgeNoReader(&consumed); }
 extern "C" void save_stale() { stale=consumed; }
 extern "C" bool ack_stale() { return GLLibretro::AcknowledgeNoReader(&stale); }
 extern "C" unsigned reference_deletes() { return producer_deletes; }
 extern "C" unsigned reference_waits() { return producer_waits; }
+extern "C" unsigned second_deletes() { return second_output_deletes; }
+extern "C" bool has_frame() { return GLLibretro::HasFrame(); }
 "#
     } else {
         ""
+    };
+    // Exercise the actual normal output-fence wait/retirement block as well
+    // as the handoff. Only its surrounding platform declarations are stubbed.
+    fs::create_dir_all(temp.join("pcsx2-libretro")).unwrap();
+    fs::copy(
+        repo.join("vendor/armsx2/pcsx2-libretro/Main.cpp"),
+        temp.join("pcsx2-libretro/Main.cpp"),
+    )
+    .unwrap();
+    let mut main_patches = vec![
+        "0001-host-pause-and-card-flush.patch",
+        "0004-stream-buffer-failure.patch",
+    ];
+    if cfg!(feature = "graphics-observer") {
+        main_patches.extend([
+            "0002-development-graphics-observer.patch",
+            "0003-development-matched-reader.patch",
+            "0005-development-stream-observer.patch",
+        ]);
+    }
+    if cfg!(feature = "producer-local-output-sync") {
+        main_patches.push("0006-development-creator-output.patch");
+    }
+    for patch in main_patches {
+        let result = Command::new("git")
+            .args([
+                "apply",
+                "--include=pcsx2-libretro/Main.cpp",
+                "--include=pcsx2/GS/Renderers/OpenGL/GLLibretro.h",
+            ])
+            .arg(repo.join("patches/armsx2").join(patch))
+            .current_dir(&temp)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}: {}",
+            patch,
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let main = fs::read_to_string(temp.join("pcsx2-libretro/Main.cpp")).unwrap();
+    let normal_output = main
+        .split_once("// Sharing objects does not share ordering:")
+        .unwrap()
+        .1
+        .split_once("if (s_gl_present_fbo == 0)")
+        .unwrap()
+        .0;
+    let normal_output = format!("extern \"C\" void normal_output() {{ auto& frame=consumed; // Sharing objects does not share ordering:{normal_output}\n}}\n");
+    let (output_abi, local_fixture) = if cfg!(feature = "producer-local-output-sync") {
+        let header =
+            fs::read_to_string(temp.join("pcsx2/GS/Renderers/OpenGL/GLLibretro.h")).unwrap();
+        let abi = header
+            .split_once("\tstruct OutputCommand")
+            .unwrap()
+            .1
+            .split_once("\n\tvoid SetOutputCallback")
+            .unwrap()
+            .0;
+        let selector = main
+            .split_once("// Build-only Rust policy, never inferred from fence validity.")
+            .unwrap()
+            .1
+            .split_once("// Sharing objects does not share ordering:")
+            .unwrap()
+            .0;
+        (
+            format!("struct OutputCommand{abi}\n"),
+            format!(
+                r#"
+static u64 local_observation=1000;
+extern "C" void set_output(GLLibretro::OutputCallback callback) {{GLLibretro::SetOutputCallback(callback);}}
+extern "C" void actor(unsigned value) {{fixture_owner=value;}}
+extern "C" bool publish_local_raw(std::uintptr_t raw) {{
+    GLLibretro::RetireCreatorOutputs(); GLLibretro::Frame f; f.texture=1; f.observation=++local_observation;f.fence=reinterpret_cast<void*>(raw);
+    if (!GLLibretro::RetainCreatorOutput(&f)) return false;
+    GLLibretro::PublishFrame(f); return true;
+}}
+extern "C" bool publish_local() {{return publish_local_raw(UINTPTR_MAX-4096);}}
+extern "C" bool publish_local_second() {{return publish_local_raw(UINTPTR_MAX-4095);}}
+extern "C" void frontend_local() {{ auto& frame=consumed;
+{selector}
+    unexpected_normal++;
+    }}
+}}
+extern "C" bool ack_local_stale() {{return GLLibretro::AcknowledgeCreatorOutput(&stale);}}
+extern "C" void drain_local() {{GLLibretro::RetireCreatorOutputs();}}
+extern "C" std::uintptr_t transferred_fence() {{return reinterpret_cast<std::uintptr_t>(consumed.fence);}}
+extern "C" unsigned frontend_deletes() {{return output_frontend_deletes;}}
+extern "C" unsigned creator_deletes() {{return output_creator_deletes;}}
+extern "C" unsigned normal_errors() {{return unexpected_normal;}}
+"#
+            ),
+        )
+    } else {
+        (String::new(), String::new())
     };
     let fixture = format!(
         r#"
@@ -139,6 +261,9 @@ using u32 = std::uint32_t;
 using GLuint = unsigned;
 using GLsync = void*;
 static unsigned producer_deletes = 0, producer_waits = 0;
+static unsigned second_output_deletes = 0;
+static thread_local unsigned fixture_owner=1;
+static unsigned output_frontend_deletes=0,output_creator_deletes=0,unexpected_normal=0;
 void glFenceSync() {{}}
 void glIsSync() {{}}
 void glGetSynciv() {{}}
@@ -153,7 +278,9 @@ void glWaitSync(GLsync fence, unsigned, std::uint64_t) {{
     if (fence == reinterpret_cast<void*>(1)) read_waits++;
 }}
 void glDeleteSync(GLsync fence) {{
+    if (fence == reinterpret_cast<void*>(UINTPTR_MAX-4096) || fence == reinterpret_cast<void*>(UINTPTR_MAX-4095)) {{ if (fixture_owner==1) output_creator_deletes++; else output_frontend_deletes++; }}
     if (fence == reinterpret_cast<void*>(UINTPTR_MAX-4096)) producer_deletes++;
+    if (fence == reinterpret_cast<void*>(UINTPTR_MAX-4095)) second_output_deletes++;
     if (fence == reinterpret_cast<void*>(1)) {{
         if (read_waits.load() <= read_deletes.load()) bad_order++;
         read_deletes++;
@@ -162,9 +289,10 @@ void glDeleteSync(GLsync fence) {{
 namespace GLLibretro {{
 bool Active = false;
 void ReleaseFrontendContext() {{}}
-struct Frame {{ unsigned texture = 0; GLsync fence = nullptr; unsigned width = 0, height = 0; u64 observation=0; u64 read_lease=0; }};
+struct Frame {{ unsigned texture = 0; GLsync fence = nullptr; unsigned width = 0, height = 0; u64 observation=0; u64 read_lease=0; u64 output_generation=0; }};
 struct ObserverDispatch {{ u32 version,size; std::uintptr_t context,create,valid,status,error; }};
 using Observer=u64 (*)(unsigned,unsigned,u64,unsigned,unsigned,unsigned,GLsync,const ObserverDispatch*);
+{output_abi}
 // The conditional body is extracted from the actual diagnostic patch.
 // Comment prefix retained here for the extracted first line:
 // Installed before CPU/GS boot{observer}
@@ -176,6 +304,8 @@ extern "C" void publish() {{ GLLibretro::Frame frame; frame.texture = 1; frame.o
 static GLLibretro::Frame consumed, stale;
 extern "C" bool consume() {{ return GLLibretro::ConsumeFrame(&consumed); }}
 {reference_fixture}
+{normal_output}
+{local_fixture}
 extern "C" void complete() {{ GLLibretro::CompleteFrame(consumed, reinterpret_cast<void*>(1)); }}
 extern "C" void reuse(unsigned texture) {{ GLLibretro::WaitForFrontend(texture); }}
 extern "C" unsigned waits() {{ return read_waits.load(); }}
@@ -383,6 +513,181 @@ extern "C" void shutdown_handoff() {{ GLLibretro::Shutdown(); }}
             }
             assert_eq!(waits(), 2);
             assert_eq!(deletes(), 2);
+            // Distinct live generations must not be confused with the repeated
+            // opaque handle above: replace an unconsumed frame on its creator,
+            // then retire the new frame only through its validated reader lease.
+            let publish_second = *library
+                .get::<unsafe extern "C" fn()>(b"publish_second_reference\0")
+                .unwrap();
+            let second_deletes = *library
+                .get::<unsafe extern "C" fn() -> u32>(b"second_deletes\0")
+                .unwrap();
+            let has_frame = *library
+                .get::<unsafe extern "C" fn() -> bool>(b"has_frame\0")
+                .unwrap();
+            let before = retired();
+            publish_ref();
+            publish_second();
+            assert_eq!(retired(), before + 1);
+            assert!(consume());
+            assert!(ack());
+            assert_eq!(second_deletes(), 1);
+            assert!(!ack());
+            // Unread withdrawal before a backbuffer overwrite retires once.
+            publish_ref();
+            reuse(1);
+            assert!(!consume());
+            assert_eq!(retired(), before + 2);
+            // Aborting pacing does not transfer or retire a consumed fence.
+            // The still-live frontend completion remains its one owner.
+            publish_ref();
+            assert!(consume());
+            pacing(false);
+            assert_eq!(retired(), before + 2);
+            assert!(ack());
+            reuse(1);
+            shutdown();
+            assert_eq!(retired(), before + 3);
+            // A parked publisher can be cancelled without a frontend tick;
+            // owner-side backbuffer destruction then retires its unread fence.
+            pacing(true);
+            let producer = std::thread::spawn(move || publish_ref());
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !has_frame() && std::time::Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+            let pending = has_frame();
+            pacing(false);
+            producer.join().unwrap();
+            reuse(1);
+            shutdown();
+            assert!(pending);
+            assert_eq!(retired(), before + 4);
+            // Run the real normal-reader output wait/delete block with the
+            // same recycled opaque value, followed by its actual reverse-fence
+            // completion/creator reuse. It is a distinct live generation.
+            let normal_output = *library
+                .get::<unsafe extern "C" fn()>(b"normal_output\0")
+                .unwrap();
+            publish_ref();
+            assert!(consume());
+            normal_output();
+            complete();
+            reuse(1);
+            shutdown();
+            assert_eq!(retired(), before + 5);
+            assert_eq!(ref_waits(), 1);
+            assert_eq!(waits(), 3);
+            assert_eq!(deletes(), 3);
+            #[cfg(feature = "producer-local-output-sync")]
+            {
+                use psx_player::graphics_observer::output_sync as output;
+                type Output = unsafe extern "C" fn(*mut output::Command) -> u32;
+                let set = *library
+                    .get::<unsafe extern "C" fn(Option<Output>)>(b"set_output\0")
+                    .unwrap();
+                let actor = *library
+                    .get::<unsafe extern "C" fn(u32)>(b"actor\0")
+                    .unwrap();
+                let publish_local = *library
+                    .get::<unsafe extern "C" fn() -> bool>(b"publish_local\0")
+                    .unwrap();
+                let publish_local_second = *library
+                    .get::<unsafe extern "C" fn() -> bool>(b"publish_local_second\0")
+                    .unwrap();
+                let frontend = *library
+                    .get::<unsafe extern "C" fn()>(b"frontend_local\0")
+                    .unwrap();
+                let drain = *library
+                    .get::<unsafe extern "C" fn()>(b"drain_local\0")
+                    .unwrap();
+                let fence = *library
+                    .get::<unsafe extern "C" fn() -> usize>(b"transferred_fence\0")
+                    .unwrap();
+                let front_deletes = *library
+                    .get::<unsafe extern "C" fn() -> u32>(b"frontend_deletes\0")
+                    .unwrap();
+                let gs_deletes = *library
+                    .get::<unsafe extern "C" fn() -> u32>(b"creator_deletes\0")
+                    .unwrap();
+                let errors = *library
+                    .get::<unsafe extern "C" fn() -> u32>(b"normal_errors\0")
+                    .unwrap();
+                let stale_ack = *library
+                    .get::<unsafe extern "C" fn() -> bool>(b"ack_local_stale\0")
+                    .unwrap();
+                output::begin().unwrap();
+                set(Some(output::callback));
+                let before_gs = gs_deletes();
+                let before_front = front_deletes();
+                let before_wait = ref_waits();
+                for _ in 0..20 {
+                    actor(1);
+                    assert!(publish_local());
+                    actor(2);
+                    assert!(consume());
+                    assert_eq!(fence(), 0);
+                    frontend();
+                    assert_eq!(front_deletes(), before_front);
+                    actor(1);
+                    drain();
+                    assert_eq!(output::snapshot().live, 0);
+                }
+                // Different unconsumed generations sharing the same texture
+                // are retired by creator-side drop/withdrawal, not consumption.
+                // Distinct live handles are necessary until the first is dead.
+                actor(1);
+                assert!(publish_local());
+                assert!(publish_local_second());
+                drain();
+                reuse(1);
+                assert!(!consume());
+                // Stop while a metadata lease is outstanding: cancellation
+                // releases its CPU wait, then the creator retires its fence.
+                assert!(publish_local());
+                actor(2);
+                assert!(consume());
+                actor(1);
+                pacing(false);
+                drain();
+                shutdown();
+                assert_eq!(output::snapshot().live, 0);
+                // Recycled handle, stale lease and duplicate ack through the
+                // actual new handoff/selected Main branch must not retire the
+                // current generation or perform any frontend sync operation.
+                actor(1);
+                assert!(publish_local());
+                actor(2);
+                assert!(consume());
+                save_stale();
+                frontend();
+                actor(1);
+                drain();
+                assert!(publish_local());
+                actor(2);
+                assert!(consume());
+                assert!(!stale_ack());
+                assert_eq!(output::snapshot().live, 1);
+                frontend();
+                frontend();
+                actor(1);
+                drain();
+                pacing(false);
+                shutdown();
+                output::native_joined();
+                let progress = output::snapshot();
+                assert_eq!(progress.live, 0);
+                assert_eq!(progress.created, 25);
+                assert_eq!(progress.retired_on_creator, 25);
+                assert_eq!(gs_deletes() - before_gs, 25);
+                assert_eq!(front_deletes(), before_front);
+                assert_eq!(ref_waits(), before_wait);
+                assert_eq!(progress.frontend_sync_operations, 0);
+                assert!(progress.first_ownership_failure.is_some());
+                assert!(progress.native_joined);
+                assert_eq!(errors(), 0);
+                set(None);
+            }
             let observations = OBSERVED.lock().unwrap();
             for expected in [(3, 1, 77), (4, 2, 77), (8, 1, 77)] {
                 assert!(observations.contains(&expected), "missing {expected:?}");

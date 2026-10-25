@@ -3,7 +3,8 @@
 The [matched full-renderer comparison](https://github.com/WigglyDon/psx/issues/2#issuecomment-6348349808)
 is closed. The [producer-operation dispatch](https://github.com/WigglyDon/psx/issues/2#issuecomment-6390726958)
 authorized a separate source repair and one bounded observation, now completed
-as recorded below. This is development observation, not PS2 acceptance or a
+as recorded below. The [output-sync ownership dispatch](https://github.com/WigglyDon/psx/issues/2#issuecomment-6393048944)
+owns the next distinct reference. This is development observation, not PS2 acceptance or a
 driver diagnosis. Do not repeat the generated probe or the closed comparison.
 
 ## Build and isolation
@@ -280,3 +281,63 @@ range/frame event was evicted, while its counter and all selection records
 survived. No repeated run or normal arm follows from this result. See
 [verification](verification.md#player-2-admitted-producer-observation) and the
 [sanitized handback](https://github.com/WigglyDon/psx/issues/2#issuecomment-6392928084).
+
+## Creator-owned output-sync reference
+
+The actual patched handoff audit exercised recycled opaque handles across
+generations, stale/duplicate acknowledgments, unread replacement/withdrawal,
+normal output wait/deletion, reverse-fence retirement and pacing cancellation.
+It demonstrated no stale/double output-fence retirement in that contract.
+In particular, consumption clears the shared fence slot before its producer
+can overwrite it, and an unpublished generation cannot already be consumed.
+The historical no-reader reference still deletes consumed output fences on
+the frontend; that is an interaction to isolate, not proof of an invalid API use.
+
+`PSX_GRAPHICS_OBSERVER_MODE=producer-local-output-sync` selects one fixed
+development-only successor to the no-game-image-reader reference, adding
+native patch0006. Normal and historical no-reader stacks remain available and
+unchanged. No player setting or ordinary-release path selects it. It retains
+real GS work, output-fence creation and pre/post existing-flush observations,
+metadata pacing, the initialized host picture and Rust UI/final swap.
+
+Rust owns a maximum-four-entry output ledger and monotonic generation IDs.
+Raw handles are private keys, never generations or export fields. Creation,
+publication, consume, acknowledgment, drop, cancellation and retirement are
+validated against generation/frame/lease and actual creating thread/context.
+Only metadata is copied into the shared frontend descriptor; its fence field
+is cleared before publication. The selected frontend branch acknowledges that
+metadata without output-sync validity/status/wait/delete operations and without
+a donor-image read or reverse fence.
+
+At creator-side backbuffer reuse and before the next output-fence creation,
+the owner drains acknowledged/dropped/cancelled entries. Native glue deletes
+the exact Rust-authorized sync once on that creator, then confirms retirement.
+Deleting an owner fence needs no added wait: the creator's commands are ordered
+in its own context and the frontend submitted no image read. CPU acknowledgment
+and deletion do not prove GPU completion. Pending ownership is never silently
+reused; capacity/generation overflow stops before another output creation.
+
+Pacing cancellation withdraws metadata and clears the outstanding CPU lease;
+the creator performs retirement while its context still exists. Known-invalid
+names are not queried/deleted for accounting. On a reported context fault,
+remaining names are held for share-group reclamation, not handed to GL.
+Their accounting remains pending until donor join and successful final frontend
+context destruction. The diagnostic writer joins after that actual graphics
+destruction, retaining the existing maximum-three-export bound. Unverified
+destruction or missing coverage remains explicit rather than being called clean.
+
+The existing observer includes non-evicting lifecycle totals, first ownership
+failure, first invalid generation and32 recent generation-tagged events.
+Create/publish/consume/ack/creator-retire/invalid-name/context-release/live/high
+water totals distinguish operations and owners; omission, untracked creation
+and counter overflow are explicit. These are logical ownership records, not
+GPU-completion or driver-health measurements. Existing typed errors and owner
+stop remain; no new GL probe, fence, wait, finish or timing control is added.
+
+Retirement timing and GPU load can differ from the earlier reference. One new
+fresh-process boot is conditional on exact source/package/symbol verification
+and fresh current custody: same stock target/private workload/settings/clocks,
+independent scratch, maximum30s, immediate first-fault/warning/owner stop,
+external retirement and separate exact rollback/return reserve. No other arm,
+repeat, restored state, screenshot/readback or Fold use is authorized. Source
+tests and any admitted result must be reported separately; this is not a PS2 fix.

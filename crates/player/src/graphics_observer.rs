@@ -13,11 +13,15 @@ pub mod boundary;
 mod control;
 #[cfg(feature = "graphics-observer")]
 pub mod operator;
+#[cfg(feature = "producer-local-output-sync")]
+pub mod output_sync;
 #[cfg(feature = "graphics-observer")]
 pub use control::{join_export, request_stop, service, stop_requested, StopReason};
 
 pub const fn mode() -> &'static str {
-    if cfg!(feature = "no-game-image-reader") {
+    if cfg!(feature = "producer-local-output-sync") {
+        "producer-local-output-sync"
+    } else if cfg!(feature = "no-game-image-reader") {
         "no-game-image-reader"
     } else {
         "normal"
@@ -70,6 +74,8 @@ mod enabled {
         pub tail: VecDeque<Event>,
         pub progress: Progress,
         pub streams: StreamProgress,
+        #[cfg(feature = "producer-local-output-sync")]
+        pub output_sync: output_sync::Progress,
     }
     #[derive(Clone, Default, Serialize)]
     pub struct StreamProgress {
@@ -115,6 +121,8 @@ mod enabled {
                         resources: Vec::with_capacity(16),
                         ..Default::default()
                     },
+                    #[cfg(feature = "producer-local-output-sync")]
+                    output_sync: output_sync::Progress::default(),
                 },
                 keys: Vec::with_capacity(128),
                 next: 0,
@@ -234,7 +242,13 @@ mod enabled {
             self.snapshot.tail.push_back(event);
         }
         pub fn snapshot(&self) -> Snapshot {
-            self.snapshot.clone()
+            #[allow(unused_mut)]
+            let mut snapshot = self.snapshot.clone();
+            #[cfg(feature = "producer-local-output-sync")]
+            {
+                snapshot.output_sync = output_sync::snapshot();
+            }
+            snapshot
         }
     }
     static RECORDER: OnceLock<Mutex<Recorder>> = OnceLock::new();
@@ -275,6 +289,10 @@ mod enabled {
         BINDING.store(binding as usize, Ordering::Release);
     }
     fn retain_fatal(code: u32) {
+        #[cfg(feature = "producer-local-output-sync")]
+        if matches!(code, glow::OUT_OF_MEMORY | glow::CONTEXT_LOST) {
+            output_sync::observed(0, 0, false, true);
+        }
         if RETIRING.load(Ordering::Acquire) == 0
             && matches!(code, glow::OUT_OF_MEMORY | glow::CONTEXT_LOST)
         {
@@ -300,6 +318,8 @@ mod enabled {
     }
     pub fn existing_error(code: u32) {
         if matches!(code, glow::OUT_OF_MEMORY | glow::CONTEXT_LOST) {
+            #[cfg(feature = "producer-local-output-sync")]
+            output_sync::observed(0, 0, false, code == glow::CONTEXT_LOST);
             request_stop(StopReason::Fatal);
         }
         emit(
@@ -458,6 +478,26 @@ mod enabled {
         if stage == 4 {
             CONSUMED.store(frame, Ordering::Release);
         }
+        #[cfg(feature = "producer-local-output-sync")]
+        if output_sync::context_unavailable() {
+            // Preserve a post-flush/lifecycle record, without probing GL after
+            // an already reported context fault solely for bookkeeping.
+            let mut data = [0; 32];
+            data[23] = -2;
+            data[26] = i64::from(!fence.is_null());
+            emit(
+                owner,
+                frame,
+                texture,
+                stage,
+                width,
+                height,
+                data,
+                [0, 0, 0, 0, -2, 0, 0, -3],
+                false,
+            );
+            return frame;
+        }
         let proc = PROC.load(Ordering::Acquire);
         if proc == 0 {
             return frame;
@@ -469,6 +509,8 @@ mod enabled {
             std::mem::transmute::<usize, fn() -> (usize, usize)>(binding)().0
         };
         if current == 0 {
+            #[cfg(feature = "producer-local-output-sync")]
+            output_sync::observed(frame, fence as usize, false, true);
             request_stop(StopReason::Context);
             emit(
                 owner,
@@ -509,6 +551,13 @@ mod enabled {
                 if error == 0 {
                     break;
                 }
+            }
+            #[cfg(feature = "producer-local-output-sync")]
+            if output_sync::context_unavailable() {
+                data[23] = -2;
+                data[26] = i64::from(!fence.is_null());
+                emit(owner,frame,texture,stage,width,height,data,[0,0,0,0,-2,0,0,-3],true);
+                return;
             }
             if !matches!(stage, 3 | 4 | 23 | 25 | 40 | 41 | 51 | 52 | 53) {
                 data[12] = gl.get_parameter_i32(glow::READ_FRAMEBUFFER_BINDING) as i64;
@@ -596,6 +645,12 @@ mod enabled {
                 };
             }
             data[26] = i64::from(!fence.is_null());
+            #[cfg(feature = "producer-local-output-sync")]
+            if matches!(stage, 16 | 2) {
+                output_sync::observed(frame, fence as usize,
+                    detail[4] == 1 && data[23] != -1,
+                    detail[1] == 0 || data[..8].contains(&(glow::CONTEXT_LOST as i64)));
+            }
             if matches!(stage, 2 | 7 | 16 | 17 | 52) && (fence.is_null() || data[23] == -1) {
                 request_stop(StopReason::Fence);
             }
@@ -649,6 +704,11 @@ mod enabled {
         fence: *mut c_void,
         dispatch: *const Dispatch,
     ) -> u64 {
+        #[cfg(feature = "producer-local-output-sync")]
+        if owner == 2 && !fence.is_null() {
+            output_sync::unexpected_frontend(frame);
+            return frame;
+        }
         if stage == 50 {
             return u64::from(!cfg!(feature = "no-game-image-reader"));
         }

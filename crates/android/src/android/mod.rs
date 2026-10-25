@@ -630,13 +630,25 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         player.core.take();
     }
     let result = player.unload(false);
-    #[cfg(feature = "graphics-observer")]
+    #[cfg(all(
+        feature = "graphics-observer",
+        not(feature = "producer-local-output-sync")
+    ))]
     {
         psx_player::graphics_observer::service(&player.root, true);
         psx_player::graphics_observer::join_export();
     }
     player.platform.focus(&app, false);
     player.platform.background(&app, false);
+    #[cfg(feature = "producer-local-output-sync")]
+    {
+        // Observe the actual final share-group destruction after native join,
+        // rather than treating CPU acknowledgment or donor closure as reclaim.
+        let root = player.root.clone();
+        drop(player);
+        psx_player::graphics_observer::service(&root, true);
+        psx_player::graphics_observer::join_export();
+    }
     result
 }
 

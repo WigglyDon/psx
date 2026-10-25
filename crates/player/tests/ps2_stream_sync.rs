@@ -81,9 +81,13 @@ fn complete_patch_stack_composes_with_the_retained_adapter_and_observer() {
         "0003-development-matched-reader.patch",
         "0004-stream-buffer-failure.patch",
         "0005-development-stream-observer.patch",
+        "0006-development-creator-output.patch",
     ];
     let mut expected = None;
-    for (number, order) in [[0, 3, 1, 2, 4], [0, 1, 2, 3, 4]].into_iter().enumerate() {
+    for (number, order) in [[0, 3, 1, 2, 4, 5], [0, 1, 2, 3, 4, 5]]
+        .into_iter()
+        .enumerate()
+    {
         let index = dir.join(format!("{number}.index"));
         let git = |args: &[&str]| {
             let mut c = Command::new("git");

@@ -187,6 +187,20 @@ Controlled-return tests compile the pinned helper and actual upload callers;
 these are source-level regression evidence, not GPU or historical-cause proof.
 
 Observer builds apply patches in order `0001`, `0004`, `0002`, `0003`, `0005`.
+The development-only `producer-local-output-sync` mode additionally applies
+`0006-development-creator-output.patch`. It adds necessary retained-native
+ownership/C-ABI glue, with generation/lease policy and bounded lifecycle
+recording in Rust. Creator output fences remain on the GS owner; the shared
+frontend descriptor contains metadata and a null, non-actionable fence field.
+Acknowledgment does not mean GPU completion. The creator drains ready entries
+at backbuffer reuse/before the next output creation and during cancellation/
+resource destruction. Known-invalid names are not deleted for bookkeeping;
+context-fault leftovers remain accounted until actual share-group destruction.
+The full GS/output-create/pre/post-flush path stays in place. Ordinary and
+historical diagnostic modes do not apply0006; no player option is introduced.
+The extended fixture exercises the actual patched handoff/selected Main branch
+with the real Rust ownership policy, including recycled handle values and
+creator-only retirement. Source tests do not establish a GPU cause or fix.
 `0005-development-stream-observer.patch` alone adds implementation selection,
 buffer generation and real create/wait/map/unmap observations. Its callback,
 instance fields and call sites are absent from ordinary builds. All retained

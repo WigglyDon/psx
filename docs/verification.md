@@ -488,3 +488,30 @@ owned clients remained; host evidence was separately flushed and returned.
 The Fold was untouched. No normal arm, repeat, screenshots/readback, sound,
 ordinary save or sustained-performance acceptance is claimed. See the
 [sanitized result and return](https://github.com/WigglyDon/psx/issues/2#issuecomment-6392928084).
+
+## PLAYER-2 output-sync ownership source checks
+
+The retained output handoff and normal wait/delete block passed an expanded
+actual-code audit with recycled handle values, stale/duplicate acknowledgments,
+unread replacement/withdrawal, reverse-fence retirement and pacing cancellation.
+No stale/double retirement was demonstrated. The preceding no-reader reference
+still performed frontend deletion; that remaining interaction is distinct from
+the already accepted zero-stream-wait finding.
+
+The build-only creator-owned reference passed14 focused Rust observer/policy
+checks and the actual patched native handoff/selected Main branch with the real
+Rust policy:25 generations retired on the creator with zero frontend output
+sync deletes/waits. Tests also covered cancellation during a lease, metadata-only
+handoff, dropped frames, stale/duplicate acknowledgments, invalid-name refusal,
+thread/context rejection, bounded ownership/counters and context-reclaim
+accounting. Immediate proper-owner stop and immutable bounded signal export
+passed, including the isolated ownership-failure fixture. Stream failure and
+complete patch-stack regressions passed. Ordinary disabled-observer and
+historical no-reader handoff checks passed, as did all-target/all-feature host
+Clippy, Android ARM64 release Clippy in both ordinary and new modes, and all18
+source-streaming/retention tests. Earlier failed fixture/tool/lint attempts are
+retained separately; they are not device observations.
+
+These are source/host checks. A new exact diagnostic APK/symbol/source binding
+and separately admitted physical result are still required. They establish no
+graphics fix, driver cause, ordinary-save result or sustained-speed acceptance.

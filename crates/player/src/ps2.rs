@@ -65,6 +65,13 @@ pub fn revision() -> &'static str {
                 "../../../patches/armsx2/0005-development-stream-observer.patch"
             ))
         );
+        #[cfg(feature = "producer-local-output-sync")]
+        let binding = format!(
+            "{binding}+creator-output:{:x}",
+            Sha256::digest(include_bytes!(
+                "../../../patches/armsx2/0006-development-creator-output.patch"
+            ))
+        );
         binding
     })
 }
@@ -533,6 +540,17 @@ impl Core {
             );
             stream(Some(crate::graphics_observer::stream_callback));
         }
+        #[cfg(feature = "producer-local-output-sync")]
+        {
+            crate::graphics_observer::output_sync::begin().map_err(str::to_owned)?;
+            type Output =
+                unsafe extern "C" fn(*mut crate::graphics_observer::output_sync::Command) -> u32;
+            let set = symbol!(
+                "retro_psx_observer_set_output_callback",
+                unsafe extern "C" fn(Option<Output>)
+            );
+            set(Some(crate::graphics_observer::output_sync::callback));
+        }
         let api = symbol!("retro_api_version", unsafe extern "C" fn() -> u32);
         if api() != 1 {
             return Err("The PS2 engine interface is unsupported.".into());
@@ -814,6 +832,18 @@ impl Drop for Core {
                 self.context = false;
             }
             (self.deinit)();
+            #[cfg(feature = "producer-local-output-sync")]
+            {
+                crate::graphics_observer::output_sync::native_joined();
+                type Output = unsafe extern "C" fn(
+                    *mut crate::graphics_observer::output_sync::Command,
+                ) -> u32;
+                if let Ok(set) = self.library.get::<unsafe extern "C" fn(Option<Output>)>(
+                    b"retro_psx_observer_set_output_callback\0",
+                ) {
+                    set(None);
+                }
+            }
             #[cfg(feature = "graphics-observer")]
             {
                 type Observe = crate::graphics_observer::boundary::Callback;

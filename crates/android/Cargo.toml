@@ -13,6 +13,7 @@ default = ["storage-scan"]
 storage-scan = []
 graphics-observer = ["psx-player/graphics-observer"]
 no-game-image-reader = ["graphics-observer", "psx-player/no-game-image-reader"]
+producer-local-output-sync = ["no-game-image-reader", "psx-player/producer-local-output-sync"]
 
 [dependencies]
 psx-player = { path = "../player" }

@@ -69,10 +69,12 @@ const OBSERVER_PATCH: &str = "patches/armsx2/0002-development-graphics-observer.
 const MATCHED_PATCH: &str = "patches/armsx2/0003-development-matched-reader.patch";
 const STREAM_PATCH: &str = "patches/armsx2/0004-stream-buffer-failure.patch";
 const STREAM_OBSERVER_PATCH: &str = "patches/armsx2/0005-development-stream-observer.patch";
+const CREATOR_OUTPUT_PATCH: &str = "patches/armsx2/0006-development-creator-output.patch";
 pub fn observer_mode() -> Result<&'static str> {
     match env::var("PSX_GRAPHICS_OBSERVER_MODE").as_deref() {
         Err(_) | Ok("normal") => Ok("normal"),
         Ok("no-game-image-reader") if observer_enabled() => Ok("no-game-image-reader"),
+        Ok("producer-local-output-sync") if observer_enabled() => Ok("producer-local-output-sync"),
         _ => Err("Invalid development observer mode".into()),
     }
 }
@@ -164,6 +166,9 @@ fn active_patches() -> Vec<&'static str> {
     let mut patches = vec![PATCH, STREAM_PATCH];
     if observer_enabled() {
         patches.extend([OBSERVER_PATCH, MATCHED_PATCH, STREAM_OBSERVER_PATCH]);
+        if env::var("PSX_GRAPHICS_OBSERVER_MODE").as_deref() == Ok("producer-local-output-sync") {
+            patches.push(CREATOR_OUTPUT_PATCH);
+        }
     }
     patches
 }
@@ -223,6 +228,7 @@ fn locked_sources(root: &Path) -> Result<()> {
     Ok(())
 }
 pub fn build() -> Result<()> {
+    observer_mode()?;
     verify()?;
     let (_, ndk, _) = tools()?;
     let sources = dependency_root();
@@ -472,6 +478,13 @@ pub fn build() -> Result<()> {
                 vec![PATCH, OBSERVER_PATCH, MATCHED_PATCH],
                 vec![PATCH, STREAM_PATCH, OBSERVER_PATCH],
                 vec![PATCH, STREAM_PATCH, OBSERVER_PATCH, MATCHED_PATCH],
+                vec![
+                    PATCH,
+                    STREAM_PATCH,
+                    OBSERVER_PATCH,
+                    MATCHED_PATCH,
+                    STREAM_OBSERVER_PATCH,
+                ],
                 patches.clone(),
             ]);
         }

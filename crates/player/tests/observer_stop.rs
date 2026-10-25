@@ -37,6 +37,12 @@ fn signal(root: &std::path::Path) -> serde_json::Value {
 }
 #[test]
 fn same_lease_request_wakes_owner_and_writes_bounded_signal_without_frontend_service() {
+    #[cfg(feature = "producer-local-output-sync")]
+    assert!(std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "output_ownership_stop_fixture", "--ignored"])
+        .status()
+        .unwrap()
+        .success());
     assert!(std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -91,6 +97,31 @@ fn same_lease_request_wakes_owner_and_writes_bounded_signal_without_frontend_ser
             assert!(std::fs::metadata(path).unwrap().len() <= observer::EXPORT_LIMIT as u64);
         }
     }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(feature = "producer-local-output-sync")]
+#[test]
+#[ignore = "isolated output ownership stop process, invoked by the contract test"]
+fn output_ownership_stop_fixture() {
+    use observer::output_sync as output;
+    let root = std::env::temp_dir().join(format!("psx-output-stop-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    observer::initialize(proc, || (0, 0));
+    output::begin().unwrap();
+    let owner = Arc::new(Owner(AtomicUsize::new(0)));
+    observer::start(&root, Waker::from(owner.clone())).unwrap();
+    let mut command = output::Command::new(output::REJECT, 2);
+    assert_eq!(unsafe { output::callback(&mut command) }, 0);
+    assert_eq!(owner.0.load(Ordering::SeqCst), 1);
+    assert_eq!(signal(&root)["reason"], 5);
+    observer::join_export();
+    let snapshot =
+        observer::operator::decode_snapshot(&std::fs::read(root.join("observer-1.json")).unwrap())
+            .unwrap();
+    assert!(snapshot["output_sync"]["first_ownership_failure"].is_object());
+    assert_eq!(snapshot["output_sync"]["frontend_sync_operations"], 0);
+    assert_eq!(snapshot["output_sync"]["live"], 0);
     std::fs::remove_dir_all(root).unwrap();
 }
 
