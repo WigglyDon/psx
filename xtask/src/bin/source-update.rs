@@ -19,6 +19,8 @@ use std::{
     ptr,
 };
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+#[path = "source-update/producer.rs"]
+mod producer;
 #[allow(dead_code)]
 #[path = "../storage.rs"]
 mod storage;
@@ -56,9 +58,11 @@ unsafe extern "C" {
     fn archive_entry_symlink(e: *mut c_void) -> *const c_char;
     fn archive_entry_hardlink(e: *mut c_void) -> *const c_char;
     fn archive_entry_clone(e: *mut c_void) -> *mut c_void;
+    fn archive_entry_new() -> *mut c_void;
     fn archive_entry_free(e: *mut c_void);
     fn archive_entry_set_pathname(e: *mut c_void, p: *const c_char);
     fn archive_entry_set_size(e: *mut c_void, n: i64);
+    fn archive_entry_set_mode(e: *mut c_void, mode: u32);
     fn archive_entry_set_hardlink(e: *mut c_void, p: *const c_char);
     fn archive_write_new() -> *mut c_void;
     fn archive_write_set_format_pax_restricted(a: *mut c_void) -> c_int;
@@ -253,6 +257,17 @@ fn scan(
     replacements: &Payloads,
     output: Option<(&Path, &File)>,
 ) -> Result<(Inventory, Payloads)> {
+    scan_added(path, root, replacements, &BTreeMap::new(), output)
+}
+// Additions are immutable Git-bound project files/directories, never source
+// dependency trees. The original fixed four-file operation supplies none.
+fn scan_added(
+    path: &Path,
+    root: &str,
+    replacements: &Payloads,
+    additions: &BTreeMap<String, (u32, Vec<u8>)>,
+    output: Option<(&Path, &File)>,
+) -> Result<(Inventory, Payloads)> {
     let mut r = Reader::open(path)?;
     let mut w = output.map(|(_, f)| Writer::open(f)).transpose()?;
     let new_root = output
@@ -357,6 +372,45 @@ fn scan(
         }
     }
     r.finish()?;
+    for (name, (mode, body)) in additions {
+        if safe(name)? != *name
+            || !present.insert(name.clone())
+            || inventory.contains_key(name)
+            || ![0o100644, 0o100755, 0o040755].contains(mode)
+            || (*mode == 0o040755 && !body.is_empty())
+        {
+            return Err("Invalid/duplicate project addition".into());
+        }
+        let parent = Path::new(name)
+            .parent()
+            .ok_or("Addition parent")?
+            .to_str()
+            .ok_or("Addition parent encoding")?;
+        if inventory
+            .get(parent)
+            .is_none_or(|v| v["mode"].as_u64().unwrap_or(0) & 0o170000 != 0o040000)
+        {
+            return Err("Missing ordinary addition parent".into());
+        }
+        if let Some(w) = &mut w {
+            let e = Entry(unsafe { archive_entry_new() });
+            if e.0.is_null() {
+                return Err("Entry allocation failed".into());
+            }
+            let full = CString::new(format!("{new_root}/{name}"))?;
+            unsafe {
+                archive_entry_set_pathname(e.0, full.as_ptr());
+                archive_entry_set_mode(e.0, *mode);
+                archive_entry_set_size(e.0, body.len() as i64);
+            }
+            w.header(&e)?;
+            w.write(body)?;
+        }
+        inventory.insert(name.clone(),json!({"mode":mode,"size":body.len(),"sha256":digest(body),"symlink":null,"hardlink":null}));
+        if capture(name) {
+            payload.insert(name.clone(), body.clone());
+        }
+    }
     if let Some(w) = &mut w {
         w.finish()?;
     }
@@ -1013,6 +1067,13 @@ fn main() -> Result<()> {
     let op = std::env::args()
         .nth(1)
         .ok_or("Usage: source-update audit | retire | update | finish | verify")?;
+    if op == "producer-update" {
+        return producer::run(
+            &std::env::args()
+                .nth(2)
+                .ok_or("Missing exact target revision")?,
+        );
+    }
     let (inv, payload) = baseline()?;
     match op.as_str() {
         "audit" => stage(false, &inv, &payload),

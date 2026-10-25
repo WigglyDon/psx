@@ -6,7 +6,7 @@ const PATCHES_SHA256: &str = "b8ab00d2d68376cc15b792d5776a150c678a2c0ea8fd896ed2
 pub fn resources() -> Result<()> {
     verify()?;
     let root = Path::new("vendor/armsx2/bin/resources");
-    let destination = Path::new("build/apk/assets/ps2/resources");
+    let destination = PathBuf::from(artifact("build/apk/assets/ps2/resources"));
     let mut files = Vec::new();
     walk(root, &mut files)?;
     files.sort();
@@ -30,7 +30,7 @@ pub fn resources() -> Result<()> {
     ))?;
     fs::copy(patches, destination.join("patches.zip"))?;
     index.push_str(&format!("patches.zip\t{PATCHES_SHA256}\n"));
-    fs::write("build/apk/assets/ps2/resources.tsv", index)?;
+    fs::write(artifact("build/apk/assets/ps2/resources.tsv"), index)?;
     Ok(())
 }
 pub fn verify_resources(apk: &Path) -> Result<()> {
@@ -67,6 +67,8 @@ pub fn verify_resources(apk: &Path) -> Result<()> {
 const PATCH: &str = "patches/armsx2/0001-host-pause-and-card-flush.patch";
 const OBSERVER_PATCH: &str = "patches/armsx2/0002-development-graphics-observer.patch";
 const MATCHED_PATCH: &str = "patches/armsx2/0003-development-matched-reader.patch";
+const STREAM_PATCH: &str = "patches/armsx2/0004-stream-buffer-failure.patch";
+const STREAM_OBSERVER_PATCH: &str = "patches/armsx2/0005-development-stream-observer.patch";
 pub fn observer_mode() -> Result<&'static str> {
     match env::var("PSX_GRAPHICS_OBSERVER_MODE").as_deref() {
         Err(_) | Ok("normal") => Ok("normal"),
@@ -89,17 +91,56 @@ pub fn warm_observer_cache() -> bool {
     else {
         return false;
     };
+    let Some(ndk) =
+        env::var_os("ANDROID_NDK_HOME").and_then(|p| PathBuf::from(p).canonicalize().ok())
+    else {
+        return false;
+    };
+    let Ok(prefix) = Path::new("build/armsx2-deps").canonicalize() else {
+        return false;
+    };
     fs::read_to_string("build/armsx2-android/CMakeCache.txt").is_ok_and(|cache| {
-        cache
-            .lines()
-            .any(|line| line == format!("CMAKE_HOME_DIRECTORY:INTERNAL={}", source.display()))
+        let settings = [
+            ("CMAKE_HOME_DIRECTORY", source.display().to_string()),
+            (
+                "CMAKE_TOOLCHAIN_FILE",
+                ndk.join("build/cmake/android.toolchain.cmake")
+                    .display()
+                    .to_string(),
+            ),
+            ("CMAKE_INSTALL_PREFIX", prefix.display().to_string()),
+            ("CMAKE_BUILD_TYPE", "Release".into()),
+            ("ANDROID_ABI", "arm64-v8a".into()),
+            ("ANDROID_PLATFORM", "android-28".into()),
+            ("ANDROID_STL", "c++_static".into()),
+            ("ENABLE_LIBRETRO", "ON".into()),
+            ("USE_GLES", "ON".into()),
+            ("DISABLE_ADVANCE_SIMD", "TRUE".into()),
+            ("ARMSX2_ANDROID_HOST_PAGE_SIZE", "0x1000".into()),
+            ("CMAKE_DISABLE_PRECOMPILE_HEADERS", "ON".into()),
+            ("ARMSX2_EMBED_PATCHES", "OFF".into()),
+            (
+                "CMAKE_SHARED_LINKER_FLAGS",
+                format!(
+                    "-Wl,-z,max-page-size=16384 -Wl,--version-script={}",
+                    source.join("pcsx2-libretro/link.T").display()
+                ),
+            ),
+        ];
+        settings.iter().all(|(key, value)| {
+            cache.lines().any(|line| {
+                line.split_once('=').is_some_and(|(k, v)| {
+                    k.split_once(':').is_some_and(|(k, _)| k == *key) && v == value
+                })
+            })
+        })
     }) && output(command("git", ["rev-parse", "HEAD"]).current_dir(source))
         .is_ok_and(|head| head.trim() == REVISION)
 }
-fn observer_diff(source: &Path, matched: bool) -> Result<Vec<u8>> {
+fn patch_diff(source: &Path, patches: &[&str]) -> Result<Vec<u8>> {
     // A separate temporary index derives the exact combined patch without
     // changing the retained donor's real index or accepting unknown edits.
-    let index = env::current_dir()?.join("build/observer-native.index");
+    let index = env::temp_dir().join(format!("psx-native-source-{}.index", std::process::id()));
     if index.exists() {
         return Err("Unfinished observer index is preserved; inspect before reuse".into());
     }
@@ -109,10 +150,7 @@ fn observer_diff(source: &Path, matched: bool) -> Result<Vec<u8>> {
         c
     };
     execute(&mut git(&["read-tree", REVISION]))?;
-    for path in [PATCH, OBSERVER_PATCH]
-        .into_iter()
-        .chain(matched.then_some(MATCHED_PATCH))
-    {
+    for path in patches {
         execute(git(&["apply", "--cached"]).arg(Path::new(path).canonicalize()?))?;
     }
     let output = git(&["diff", "--cached", "--binary"]).output()?;
@@ -121,6 +159,13 @@ fn observer_diff(source: &Path, matched: bool) -> Result<Vec<u8>> {
     }
     fs::remove_file(index)?;
     Ok(output.stdout)
+}
+fn active_patches() -> Vec<&'static str> {
+    let mut patches = vec![PATCH, STREAM_PATCH];
+    if observer_enabled() {
+        patches.extend([OBSERVER_PATCH, MATCHED_PATCH, STREAM_OBSERVER_PATCH]);
+    }
+    patches
 }
 pub fn verify() -> Result<()> {
     let source = Path::new("vendor/armsx2");
@@ -342,7 +387,17 @@ pub fn build() -> Result<()> {
             ],
         ),
     ];
-    for (name, src, bld, extra) in recipes {
+    // Qualified warm observation builds retain the existing locked dependency
+    // outputs. Source pins are checked above; missing links still fail normally.
+    // Never run their configure/install phases on a constrained source volume.
+    let reuse_dependencies = warm_observer_cache();
+    if env::var_os("PSX_BUILD_WORKSPACE").is_some() && !reuse_dependencies {
+        return Err(
+            "External build requires the verified warm native dependency cache; no cold fallback"
+                .into(),
+        );
+    }
+    for (name, src, bld, extra) in recipes.into_iter().filter(|_| !reuse_dependencies) {
         let source = sources.join(src);
         let target = sources.join(name).join(bld);
         execute(
@@ -400,50 +455,56 @@ pub fn build() -> Result<()> {
     let source = env::var_os("PSX_PS2_CORE_SOURCE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("build/armsx2-source"));
-    let mut expected = fs::read(PATCH)?;
+    let patches = active_patches();
     if source.join(".git").exists() {
-        if observer_enabled() {
-            let actual = command("git", ["diff", "--binary"])
-                .current_dir(&source)
-                .output()?
-                .stdout;
-            let old_observer = observer_diff(&source, false)?;
-            if actual == expected {
-                execute(
-                    command("git", ["apply"])
-                        .arg(Path::new(OBSERVER_PATCH).canonicalize()?)
-                        .current_dir(&source),
-                )?;
-            }
-            if actual == expected || actual == old_observer {
-                execute(
-                    command("git", ["apply"])
-                        .arg(Path::new(MATCHED_PATCH).canonicalize()?)
-                        .current_dir(&source),
-                )?;
-            }
-            expected = observer_diff(&source, true)?;
+        if output(command("git", ["rev-parse", "HEAD"]).current_dir(&source))?.trim() != REVISION {
+            return Err("PS2 qualification source pin differs".into());
         }
-        if output(command("git", ["rev-parse", "HEAD"]).current_dir(&source))?.trim() != REVISION
-            || command("git", ["diff", "--binary"])
-                .current_dir(&source)
-                .output()?
-                .stdout
-                != expected
+        let actual = command("git", ["diff", "HEAD", "--binary"])
+            .current_dir(&source)
+            .output()?
+            .stdout;
+        let mut recognized = None;
+        let mut phases = vec![vec![], vec![PATCH], vec![PATCH, STREAM_PATCH]];
+        if observer_enabled() {
+            phases.extend([
+                vec![PATCH, OBSERVER_PATCH],
+                vec![PATCH, OBSERVER_PATCH, MATCHED_PATCH],
+                vec![PATCH, STREAM_PATCH, OBSERVER_PATCH],
+                vec![PATCH, STREAM_PATCH, OBSERVER_PATCH, MATCHED_PATCH],
+                patches.clone(),
+            ]);
+        }
+        for phase in phases {
+            if patch_diff(&source, &phase)? == actual {
+                recognized = Some(phase);
+                break;
+            }
+        }
+        let have = recognized.ok_or("Qualification PS2 source has unknown changes; preserve it")?;
+        for path in &patches {
+            if !have.contains(path) {
+                execute(
+                    command("git", ["apply"])
+                        .arg(Path::new(path).canonicalize()?)
+                        .current_dir(&source),
+                )?;
+            }
+        }
+        let expected = patch_diff(&source, &patches)?;
+        if command("git", ["diff", "HEAD", "--binary"])
+            .current_dir(&source)
+            .output()?
+            .stdout
+            != expected
         {
-            return Err(
-                "Qualification PS2 source does not match the locked core and adapter patch".into(),
-            );
+            return Err("Qualification PS2 source differs after recorded patches".into());
         }
     } else {
         let marker = source.join(".psx-source-pin");
-        let mut binding = format!("{REVISION}\n{}\n", hash(Path::new(PATCH))?);
-        if observer_enabled() {
-            binding.push_str(&format!(
-                "observer:{}\nmatched:{}\n",
-                hash(Path::new(OBSERVER_PATCH))?,
-                hash(Path::new(MATCHED_PATCH))?
-            ));
+        let mut binding = format!("{REVISION}\n");
+        for patch in &patches {
+            binding.push_str(&format!("{patch}:{}\n", hash(Path::new(patch))?));
         }
         if !source.exists() {
             if upstream.join(".psx-source-manifest").exists() {
@@ -451,26 +512,11 @@ pub fn build() -> Result<()> {
             } else {
                 archive_into(upstream, REVISION, &source)?;
             }
-            let patch = Path::new(PATCH).canonicalize()?;
-            execute(&mut command(
-                "git",
-                [
-                    OsStr::new("apply"),
-                    OsStr::new("--directory"),
-                    source.as_os_str(),
-                    patch.as_os_str(),
-                ],
-            ))?;
-            if observer_enabled() {
+            for patch in &patches {
                 execute(
                     command("git", ["apply", "--directory"])
                         .arg(&source)
-                        .arg(Path::new(OBSERVER_PATCH).canonicalize()?),
-                )?;
-                execute(
-                    command("git", ["apply", "--directory"])
-                        .arg(&source)
-                        .arg(Path::new(MATCHED_PATCH).canonicalize()?),
+                        .arg(Path::new(patch).canonicalize()?),
                 )?;
             }
             fs::write(&marker, &binding)?;
@@ -488,39 +534,41 @@ pub fn build() -> Result<()> {
         "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 -Wl,--version-script={}",
         source.join("pcsx2-libretro/link.T").display()
     );
-    execute(
-        command(
-            "cmake",
-            [
-                OsStr::new("-S"),
-                source.as_os_str(),
-                OsStr::new("-B"),
-                OsStr::new("build/armsx2-android"),
-                OsStr::new("-G"),
-                OsStr::new("Ninja"),
-            ],
-        )
-        .args(&common)
-        .args([
-            "-DENABLE_LIBRETRO=ON",
-            "-DENABLE_QT_UI=OFF",
-            "-DENABLE_SDL_FRONTEND=OFF",
-            "-DENABLE_GSRUNNER=OFF",
-            "-DENABLE_TESTS=OFF",
-            "-DENABLE_RECOMPILER_TEST_HOOKS=OFF",
-            "-DENABLE_SETCAP=OFF",
-            "-DUSE_BACKTRACE=OFF",
-            "-DX11_API=OFF",
-            "-DWAYLAND_API=OFF",
-            "-DDISABLE_ADVANCE_SIMD=TRUE",
-            "-DARMSX2_ANDROID_HOST_PAGE_SIZE=0x1000",
-            "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON",
-            "-DUSE_GLES=ON",
-            "-DARMSX2_EMBED_PATCHES=OFF",
-            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
-            &export,
-        ]),
-    )?;
+    if !reuse_dependencies {
+        execute(
+            command(
+                "cmake",
+                [
+                    OsStr::new("-S"),
+                    source.as_os_str(),
+                    OsStr::new("-B"),
+                    OsStr::new("build/armsx2-android"),
+                    OsStr::new("-G"),
+                    OsStr::new("Ninja"),
+                ],
+            )
+            .args(&common)
+            .args([
+                "-DENABLE_LIBRETRO=ON",
+                "-DENABLE_QT_UI=OFF",
+                "-DENABLE_SDL_FRONTEND=OFF",
+                "-DENABLE_GSRUNNER=OFF",
+                "-DENABLE_TESTS=OFF",
+                "-DENABLE_RECOMPILER_TEST_HOOKS=OFF",
+                "-DENABLE_SETCAP=OFF",
+                "-DUSE_BACKTRACE=OFF",
+                "-DX11_API=OFF",
+                "-DWAYLAND_API=OFF",
+                "-DDISABLE_ADVANCE_SIMD=TRUE",
+                "-DARMSX2_ANDROID_HOST_PAGE_SIZE=0x1000",
+                "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON",
+                "-DUSE_GLES=ON",
+                "-DARMSX2_EMBED_PATCHES=OFF",
+                "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                &export,
+            ]),
+        )?;
+    }
     execute(&mut command(
         "cmake",
         [

@@ -1,0 +1,278 @@
+//! Exact 123e831 successor delivery without dependency expansion.
+use super::*;
+const FROM: &str = "123e831e4afb6c7cec2d8e05a030e3cd82a72bba";
+const FROM_SHA: &str = "b14f6e2a0ad5910058bc015b109896c4b631fe33bce71ec8381eddafb114b56f";
+const SELF_SOURCE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/bin/source-update/producer.rs"
+));
+
+pub fn run(target: &str) -> Result<()> {
+    if target.len() != 40
+        || !target.bytes().all(|c| c.is_ascii_hexdigit())
+        || git(&["rev-parse", target])? != format!("{target}\n").as_bytes()
+    {
+        return Err("Require exact immutable target commit".into());
+    }
+    if !git(&["status", "--porcelain"])?.is_empty() {
+        return Err("Commit source/tool before archive publication".into());
+    }
+    for (path, compiled) in [
+        ("xtask/src/bin/source-update.rs", TOOL_SOURCE),
+        ("xtask/src/bin/source-update/producer.rs", SELF_SOURCE),
+    ] {
+        if git(&["show", &format!("HEAD:{path}")])? != compiled {
+            return Err("Executed source utility differs from its committed source".into());
+        }
+    }
+    let root = std::env::current_dir()?;
+    let _growth = storage::Growth::begin(&root, storage::GIB / 2)?;
+    let base = Path::new("build").join(format!("{}.tar.gz", name(FROM)));
+    let meta = fs::symlink_metadata(&base)?;
+    if !meta.is_file() || meta.is_symlink() || meta.len() != 204585917 || hash(&base)? != FROM_SHA {
+        return Err("Retained complete predecessor differs".into());
+    }
+    let (inventory, payload) = scan(&base, &name(FROM), &Payloads::new(), None)?;
+    validate(&inventory, &payload, FROM)?;
+    let changes = String::from_utf8(git(&[
+        "diff",
+        "--name-status",
+        "--no-renames",
+        FROM,
+        target,
+    ])?)?;
+    let mut replacements = Payloads::new();
+    let mut additions = BTreeMap::new();
+    if changes.lines().count() > 64 {
+        return Err("Project delta exceeds this bounded increment".into());
+    }
+    let mut changed_bytes = 0usize;
+    for line in changes.lines() {
+        let (status, path) = line.split_once('\t').ok_or("Invalid Git delta")?;
+        safe(path)?;
+        // This increment keeps all dependency sources/locks/configuration and
+        // native manifests unchanged. A later dependency change needs review.
+        if !matches!(status, "A" | "M")
+            || path.starts_with("vendor/")
+            || path == "Cargo.lock"
+            || path == "Cargo.toml"
+            || path == "upstream.lock.json"
+            || path.starts_with(".cargo/")
+        {
+            return Err(format!("Outside retained-input update scope: {line}").into());
+        }
+        let entry = String::from_utf8(git(&["ls-tree", target, "--", path])?)?;
+        let mode = entry.split_whitespace().next().ok_or("Missing Git mode")?;
+        let mode = u32::from_str_radix(mode, 8)?;
+        if ![0o100644, 0o100755].contains(&mode) {
+            return Err("Only regular project file changes admitted".into());
+        }
+        let body = git(&["show", &format!("{target}:{path}")])?;
+        changed_bytes = changed_bytes
+            .checked_add(body.len())
+            .ok_or("Project delta overflow")?;
+        if body.len() > 8 * 1024 * 1024 || changed_bytes > 16 * 1024 * 1024 {
+            return Err("Project replacement exceeds bound".into());
+        }
+        if status == "M" {
+            let old = inventory.get(path).ok_or("Modified member missing")?;
+            if old["mode"] != mode || !old["hardlink"].is_null() {
+                return Err("Modified member mode/type differs".into());
+            }
+            replacements.insert(path.to_owned(), body);
+        } else {
+            if inventory.contains_key(path) {
+                return Err("Added member already present".into());
+            }
+            let mut parent = Path::new(path).parent();
+            while let Some(p) = parent {
+                let p = p.to_str().ok_or("Path encoding")?;
+                if p.is_empty() || inventory.contains_key(p) {
+                    break;
+                }
+                additions
+                    .entry(p.to_owned())
+                    .or_insert((0o040755, Vec::new()));
+                parent = Path::new(p).parent();
+            }
+            additions.insert(path.to_owned(), (mode, body));
+        }
+    }
+    let mut check: Value = serde_json::from_slice(&payload["SOURCE-CHECK.json"])?;
+    check["projectRevision"] = json!(target);
+    let mut patches = serde_json::Map::new();
+    for p in [
+        "0001-host-pause-and-card-flush.patch",
+        "0002-development-graphics-observer.patch",
+        "0003-development-matched-reader.patch",
+        "0004-stream-buffer-failure.patch",
+        "0005-development-stream-observer.patch",
+    ] {
+        patches.insert(
+            p.into(),
+            json!(digest(&git(&[
+                "show",
+                &format!("{target}:patches/armsx2/{p}")
+            ])?)),
+        );
+    }
+    check["nativePatches"] = Value::Object(patches);
+    replacements.insert(
+        "SOURCE-CHECK.json".into(),
+        serde_json::to_vec_pretty(&check)?,
+    );
+    replacements.insert(
+        "SOURCE-REVISION.txt".into(),
+        String::from_utf8(payload["SOURCE-REVISION.txt"].clone())?
+            .replacen(FROM, target, 1)
+            .into_bytes(),
+    );
+    let final_path = Path::new("build").join(format!("{}.tar.gz", name(target)));
+    let partial = final_path.with_extension("gz.incomplete");
+    if final_path.exists() || partial.exists() {
+        return Err("Existing complete/partial archive retained".into());
+    }
+    let f = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&partial)?;
+    durable(
+        &partial.with_extension("receipt.json"),
+        &json!({"phase":"before-stream","predecessor":FROM,"predecessorSha256":FROM_SHA,"targetRevision":target,"gitDelta":changes,"replacements":replacements.keys().collect::<Vec<_>>(),"additions":additions.keys().collect::<Vec<_>>()}),
+    )?;
+    let (written, _) = scan_added(
+        &base,
+        &name(FROM),
+        &replacements,
+        &additions,
+        Some((Path::new(&name(target)), &f)),
+    )?;
+    f.sync_all()?;
+    output_root()?;
+    storage::between_steps()?;
+    gzip_check(&partial)?;
+    let (actual, metadata) = scan(&partial, &name(target), &Payloads::new(), None)?;
+    if actual != written {
+        return Err("Independent full streaming readback differs".into());
+    }
+    validate(&actual, &metadata, target)?;
+    // Unmodified members are independently compared with the verified input;
+    // target tracked files are independently compared with Git by validate().
+    for (path, old) in &inventory {
+        if replacements.contains_key(path) {
+            continue;
+        }
+        let mut expected = old.clone();
+        if let Some(link) = old["hardlink"].as_str() {
+            expected["hardlink"] = json!(link.replacen(&name(FROM), &name(target), 1));
+        }
+        if actual.get(path) != Some(&expected) {
+            return Err(format!("Unmodified source member changed: {path}").into());
+        }
+    }
+    if actual.len() != inventory.len() + additions.len() || hash(&base)? != FROM_SHA {
+        return Err("Source set/predecessor changed".into());
+    }
+    let sha = hash(&partial)?;
+    let utility = String::from_utf8(git(&["rev-parse", "HEAD"])?)?;
+    if !git(&["status", "--porcelain"])?.is_empty() {
+        return Err("Source changed during streaming".into());
+    }
+    output_root()?;
+    storage::between_steps()?;
+    fs::hard_link(&partial, &final_path)?;
+    File::open("build")?.sync_all()?;
+    let side = final_path.with_extension("gz.sha256");
+    let mut s = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(side)?;
+    writeln!(s, "{sha}  {}.tar.gz", name(target))?;
+    s.sync_all()?;
+    durable(
+        &final_path.with_extension("receipt.json"),
+        &json!({"phase":"verified-complete","targetRevision":target,"utilityRevision":utility.trim(),"utilitySourceSha256":digest(TOOL_SOURCE),"utilityProducerSourceSha256":digest(SELF_SOURCE),"utilityBinarySha256":hash(&std::env::current_exe()?)?,"predecessorRevision":FROM,"predecessorSha256":FROM_SHA,"archiveSha256":sha,"archiveBytes":f.metadata()?.len(),"members":actual.len(),"streamedReadback":true,"nativePatches":check["nativePatches"]}),
+    )?;
+    fs::remove_file(partial)?;
+    File::open("build")?.sync_all()?;
+    println!(
+        "Complete source {}: {sha}; target{target}, utility{}",
+        final_path.display(),
+        utility.trim()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn streaming_project_additions_preserve_bodies_and_reject_collisions() {
+        let dir = std::env::temp_dir().join(format!("psx-source-additions-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let base = dir.join("base.tar.gz");
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&base)
+            .unwrap();
+        let mut writer = Writer::open(&file).unwrap();
+        for (name, mode, body) in [
+            ("old", 0o040755, b"".as_slice()),
+            ("old/a", 0o100644, b"preserved".as_slice()),
+            ("old/b", 0o100644, b"old body".as_slice()),
+        ] {
+            let e = Entry(unsafe { archive_entry_new() });
+            let p = CString::new(name).unwrap();
+            unsafe {
+                archive_entry_set_pathname(e.0, p.as_ptr());
+                archive_entry_set_mode(e.0, mode);
+                archive_entry_set_size(e.0, body.len() as i64);
+            }
+            writer.header(&e).unwrap();
+            writer.write(body).unwrap();
+        }
+        writer.finish().unwrap();
+        file.sync_all().unwrap();
+        let changes = BTreeMap::from([("b".into(), b"new body".to_vec())]);
+        let additions = BTreeMap::from([
+            ("new".into(), (0o040755, vec![])),
+            (
+                "new/test.rs".into(),
+                (0o100644, b"immutable Git body".to_vec()),
+            ),
+        ]);
+        let target = dir.join("target.tar.gz");
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&target)
+            .unwrap();
+        let (written, _) = scan_added(
+            &base,
+            "old",
+            &changes,
+            &additions,
+            Some((Path::new("next"), &file)),
+        )
+        .unwrap();
+        file.sync_all().unwrap();
+        let (readback, _) = scan(&target, "next", &Payloads::new(), None).unwrap();
+        assert_eq!(written, readback);
+        assert_eq!(readback["a"]["sha256"], digest(b"preserved"));
+        assert_eq!(readback["b"]["sha256"], digest(b"new body"));
+        assert_eq!(
+            readback["new/test.rs"]["sha256"],
+            digest(b"immutable Git body")
+        );
+        for bad in [
+            BTreeMap::from([("a".into(), (0o100644, vec![]))]),
+            BTreeMap::from([("missing/test.rs".into(), (0o100644, vec![]))]),
+            BTreeMap::from([("unsafe".into(), (0o106644, vec![]))]),
+        ] {
+            assert!(scan_added(&base, "old", &Payloads::new(), &bad, None).is_err());
+        }
+    }
+}

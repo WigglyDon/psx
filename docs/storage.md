@@ -54,6 +54,20 @@ If another job consumes the margin, stop new writes and report pressure.
 No storage check performs balance, snapshots cleanup, package changes or
 filesystem repair. Read-only verification and retention remain available.
 
+An independently admitted removable build workspace may be selected with
+`PSX_BUILD_WORKSPACE`, `PSX_BUILD_VOLUME_UUID`, `PSX_BUILD_VOLUME_MOUNT` and
+`PSX_BUILD_CAPACITY_LEASE`. All four are required together. The build verifies
+the exact mounted ext4 volume, private project root and existing external lease,
+then holds that lease plus its project lock. `target`, the PS2 native cache and
+`TMPDIR` must already resolve inside that root through separately authorized
+cache placement. APK staging/output and repeated capacity checks use the actual
+workspace; absent/changed media refuse without internal fallback. Existing
+internal APK stages are not moved. This route permits only warm native builds,
+retains locked dependency outputs, and requires `PSX_REUSE_PS1_SHA256` to match
+the existing pinned PS1 native artifact instead of rebuilding it. Source archives
+use their separate streaming admission. These settings are host build inputs,
+not application options or storage/device admission authority.
+
 ## Source bundles
 
 Completed `build/psx-source-<revision>.tar.gz` archives and their SHA-256
@@ -115,6 +129,18 @@ The target revision remains `123e831` regardless of the later utility commit.
 The publication receipt records that utility revision separately. This narrow
 route does not change the normal source builder or qualify the shared host for
 other workloads. See [build.md](build.md) for its invocation and validation gate.
+
+The producer-repair successor uses `source-update producer-update <full-commit>`
+against that exact complete `123e831` archive, not the older four-file delta.
+It permits at most64 regular project-file additions/modifications, bounded to
+16MiB combined, with unchanged dependency locks/configuration/exported trees.
+It derives bodies/modes from immutable Git objects, supplies missing ordinary
+parent directories, binds all five native patches in release metadata, and
+independently streams the complete output through the existing project/native/
+Cargo validation. Every unchanged member is compared with the verified input.
+Executable source, target revision and utility revision are recorded separately.
+Collisions, type/mode changes, missing parents or unsafe/extra entries refuse;
+incomplete output and its receipt are retained. No dependency tree is expanded.
 
 ## Protected work and other artifacts
 

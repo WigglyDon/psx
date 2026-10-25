@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
 mod ps2;
 mod storage;
+mod workspace;
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -10,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
 };
+use workspace::path as artifact;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const CORE_REV: &str = "e436e9b85374def58d211df7f78880f0f4a917b4";
@@ -33,6 +35,15 @@ fn run() -> Result<()> {
     env::set_current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())?;
     let operation = env::args().nth(1);
     let root = env::current_dir()?.canonicalize()?;
+    if env::var_os("PSX_BUILD_WORKSPACE").is_some()
+        && !matches!(
+            operation.as_deref(),
+            Some("apk" | "verify" | "ps2" | "notices")
+        )
+    {
+        return Err("External build output applies only to apk/verify/ps2/notices; source archives have their own admitted route".into());
+    }
+    let workspace = workspace::Admission::acquire(&root)?;
     let _lock = match operation.as_deref() {
         Some("apk" | "verify" | "notices" | "source" | "firmware" | "ps2") => {
             Some(storage::Lock::acquire(&root)?)
@@ -44,7 +55,7 @@ fn run() -> Result<()> {
         // objects/dependencies (<1 GiB here), not the 8 GiB cold-build peak.
         // Keep the full shared reserve and check again between every step.
         Some("apk" | "ps2") => Some(storage::Growth::begin(
-            &root,
+            &workspace.root,
             if ps2::warm_observer_cache() {
                 3 * storage::GIB
             } else {
@@ -52,7 +63,7 @@ fn run() -> Result<()> {
             },
         )?),
         Some("firmware") => Some(storage::Growth::begin(&root, storage::GIB)?),
-        Some("notices") => Some(storage::Growth::begin(&root, 64 * 1024 * 1024)?),
+        Some("notices") => Some(storage::Growth::begin(&workspace.root, 64 * 1024 * 1024)?),
         _ => None,
     };
     match operation.as_deref() {
@@ -78,11 +89,13 @@ fn command(
     command
 }
 fn execute(cmd: &mut Command) -> Result<()> {
+    workspace::check_present()?;
     storage::between_steps()?;
     eprintln!("Running {}", cmd.get_program().to_string_lossy());
     if !cmd.status()?.success() {
         return Err(format!("{} failed", cmd.get_program().to_string_lossy()).into());
     }
+    workspace::check_present()?;
     storage::between_steps()
 }
 fn output(cmd: &mut Command) -> Result<String> {
@@ -455,44 +468,59 @@ fn apk() -> Result<()> {
     if !jar.is_file() {
         return Err("The requested compile SDK is not installed.".into());
     }
-    fs::create_dir_all("build/apk/classes")?;
-    fs::create_dir_all("build/apk/dex")?;
+    fs::create_dir_all(artifact("build/apk/classes"))?;
+    fs::create_dir_all(artifact("build/apk/dex"))?;
     let toolchain = ndk.join("build/cmake/android.toolchain.cmake");
     let epoch = core_epoch()?;
-    execute(
-        command(
+    if let Ok(expected) = env::var("PSX_REUSE_PS1_SHA256") {
+        if expected.len() != 64
+            || hash(Path::new(
+                "build/core-android/swanstation_libretro_android.so",
+            ))? != expected
+        {
+            return Err("Retained PS1 native artifact does not match its admitted SHA-256".into());
+        }
+    } else {
+        if env::var_os("PSX_BUILD_WORKSPACE").is_some() {
+            return Err(
+                "External warm build requires an exact retained PS1 artifact binding".into(),
+            );
+        }
+        execute(
+            command(
+                "cmake",
+                [
+                    "-S",
+                    "vendor/swanstation",
+                    "-B",
+                    "build/core-android",
+                    "-G",
+                    "Ninja",
+                    &format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()),
+                    "-DANDROID_ABI=arm64-v8a",
+                    "-DANDROID_PLATFORM=android-26",
+                    "-DANDROID_STL=c++_static",
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384",
+                    "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                    &format!("-DGIT_HASH={}", &CORE_REV[..7]),
+                    &format!("-DGIT_VERSION={CORE_REV}"),
+                ],
+            )
+            .env("SOURCE_DATE_EPOCH", epoch.trim()),
+        )?;
+        execute(&mut command(
             "cmake",
             [
-                "-S",
-                "vendor/swanstation",
-                "-B",
+                "--build",
                 "build/core-android",
-                "-G",
-                "Ninja",
-                &format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()),
-                "-DANDROID_ABI=arm64-v8a",
-                "-DANDROID_PLATFORM=android-26",
-                "-DANDROID_STL=c++_static",
-                "-DCMAKE_BUILD_TYPE=Release",
-                "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384",
-                "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
-                &format!("-DGIT_HASH={}", &CORE_REV[..7]),
-                &format!("-DGIT_VERSION={CORE_REV}"),
+                "--target",
+                "swanstation_libretro",
+                "-j",
+                "4",
             ],
-        )
-        .env("SOURCE_DATE_EPOCH", epoch.trim()),
-    )?;
-    execute(&mut command(
-        "cmake",
-        [
-            "--build",
-            "build/core-android",
-            "--target",
-            "swanstation_libretro",
-            "-j",
-            "4",
-        ],
-    ))?;
+        ))?;
+    }
     let bin = ndk.join("toolchains/llvm/prebuilt/linux-x86_64/bin");
     let mut rust = command(
         "cargo",
@@ -524,7 +552,7 @@ fn apk() -> Result<()> {
     if !scoped_storage {
         manifest = manifest.replace("  <application", "  <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\" />\n  <application");
     }
-    fs::write("build/apk/AndroidManifest.xml", manifest)?;
+    fs::write(artifact("build/apk/AndroidManifest.xml"), manifest)?;
     rust.env(
         "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER",
         bin.join("aarch64-linux-android28-clang"),
@@ -539,12 +567,12 @@ fn apk() -> Result<()> {
     )
     .env("AR_aarch64_linux_android", bin.join("llvm-ar"));
     execute(&mut rust)?;
-    let java = Path::new("build/apk/PsxActivity.java");
+    let java = PathBuf::from(artifact("build/apk/PsxActivity.java"));
     // NativeActivity exposes no activity-result or Java listener callbacks to
     // Rust. This generated class only forwards those exact signatures. Every
     // picker, menu, focus decision and file operation is implemented in Rust.
     fs::write(
-        java,
+        &java,
         r#"package com.machinerhythm.psx;
 public final class PsxActivity extends android.app.NativeActivity implements
  android.media.AudioManager.OnAudioFocusChangeListener {
@@ -570,12 +598,12 @@ public final class PsxActivity extends android.app.NativeActivity implements
 }
 "#,
     )?;
-    let service_java = Path::new("build/apk/PlaybackService.java");
-    let shortcut_java = Path::new("build/apk/ShortcutReceiver.java");
+    let service_java = PathBuf::from(artifact("build/apk/PlaybackService.java"));
+    let shortcut_java = PathBuf::from(artifact("build/apk/ShortcutReceiver.java"));
     // BroadcastReceiver lifecycle cannot be registered through the NDK.
     // Only the callback is forwarded; pin and launch policy lives in Rust.
     fs::write(
-        shortcut_java,
+        &shortcut_java,
         r#"package com.machinerhythm.psx;
 public final class ShortcutReceiver extends android.content.BroadcastReceiver {
  static { System.loadLibrary("psx"); }
@@ -587,7 +615,7 @@ public final class ShortcutReceiver extends android.content.BroadcastReceiver {
     // Service callbacks, like NativeActivity callbacks, cannot be registered
     // directly through the NDK. Lifecycle/notification policy remains Rust.
     fs::write(
-        service_java,
+        &service_java,
         r#"package com.machinerhythm.psx;
 public final class PlaybackService extends android.app.Service {
  static { System.loadLibrary("psx"); }
@@ -610,7 +638,7 @@ public final class PlaybackService extends android.app.Service {
             "-classpath".into(),
             jar.as_os_str().into(),
             "-d".into(),
-            "build/apk/classes".into(),
+            artifact("build/apk/classes").into(),
             java.as_os_str().into(),
             service_java.as_os_str().into(),
             shortcut_java.as_os_str().into(),
@@ -624,15 +652,15 @@ public final class PlaybackService extends android.app.Service {
             "--lib".into(),
             jar.as_os_str().into(),
             "--output".into(),
-            "build/apk/dex".into(),
-            "build/apk/classes/com/machinerhythm/psx/PsxActivity.class".into(),
-            "build/apk/classes/com/machinerhythm/psx/PlaybackService.class".into(),
-            "build/apk/classes/com/machinerhythm/psx/ShortcutReceiver.class".into(),
+            artifact("build/apk/dex").into(),
+            artifact("build/apk/classes/com/machinerhythm/psx/PsxActivity.class").into(),
+            artifact("build/apk/classes/com/machinerhythm/psx/PlaybackService.class").into(),
+            artifact("build/apk/classes/com/machinerhythm/psx/ShortcutReceiver.class").into(),
         ],
     ))?;
     notices()?;
     ps2::resources()?;
-    let observer_manifest = Path::new("build/apk/assets/development-observer.json");
+    let observer_manifest = PathBuf::from(artifact("build/apk/assets/development-observer.json"));
     if ps2::observer_enabled() {
         let revision = if Path::new(".git").exists() {
             output(&mut command("git", ["rev-parse", "HEAD"]))?
@@ -646,9 +674,9 @@ public final class PlaybackService extends android.app.Service {
                 .to_owned()
         };
         fs::write(
-            observer_manifest,
+            &observer_manifest,
             serde_json::to_vec_pretty(
-                &serde_json::json!({"projectRevision":revision,"developmentOnly":true,"scratch":"observer-scratch-v1","mode":ps2::observer_mode()?,"observerAbi":2,"matchedPatchSha256":hash(Path::new("patches/armsx2/0003-development-matched-reader.patch"))?,"normalAdapterSha256":hash(Path::new("patches/armsx2/0001-host-pause-and-card-flush.patch"))?,"observerPatchSha256":hash(Path::new("patches/armsx2/0002-development-graphics-observer.patch"))?,"observerRustSha256":hash(Path::new("crates/player/src/graphics_observer.rs"))?,"maxExportBytes":790528}),
+                &serde_json::json!({"projectRevision":revision,"developmentOnly":true,"scratch":"observer-scratch-v1","mode":ps2::observer_mode()?,"observerAbi":2,"streamObserver":1,"streamRepairSha256":hash(Path::new("patches/armsx2/0004-stream-buffer-failure.patch"))?,"streamObserverSha256":hash(Path::new("patches/armsx2/0005-development-stream-observer.patch"))?,"matchedPatchSha256":hash(Path::new("patches/armsx2/0003-development-matched-reader.patch"))?,"normalAdapterSha256":hash(Path::new("patches/armsx2/0001-host-pause-and-card-flush.patch"))?,"observerPatchSha256":hash(Path::new("patches/armsx2/0002-development-graphics-observer.patch"))?,"observerRustSha256":hash(Path::new("crates/player/src/graphics_observer.rs"))?,"maxExportBytes":790528}),
             )?,
         )?;
     } else if observer_manifest.exists() {
@@ -661,7 +689,7 @@ public final class PlaybackService extends android.app.Service {
             "--dir",
             "android/res",
             "-o",
-            "build/apk/resources.zip",
+            &artifact("build/apk/resources.zip"),
         ],
     ))?;
     execute(&mut command(
@@ -672,38 +700,41 @@ public final class PlaybackService extends android.app.Service {
             "-I".into(),
             jar.as_os_str().into(),
             "--manifest".into(),
-            "build/apk/AndroidManifest.xml".into(),
+            artifact("build/apk/AndroidManifest.xml").into(),
             "-A".into(),
-            "build/apk/assets".into(),
-            "build/apk/resources.zip".into(),
+            artifact("build/apk/assets").into(),
+            artifact("build/apk/resources.zip").into(),
             "-o".into(),
-            "build/apk/unsigned.apk".into(),
+            artifact("build/apk/unsigned.apk").into(),
         ],
     ))?;
-    fs::create_dir_all("build/apk/package/lib/arm64-v8a")?;
+    fs::create_dir_all(artifact("build/apk/package/lib/arm64-v8a"))?;
     fs::copy(
         "target/aarch64-linux-android/release/libpsx.so",
-        "build/apk/package/lib/arm64-v8a/libpsx.so",
+        artifact("build/apk/package/lib/arm64-v8a/libpsx.so"),
     )?;
     fs::copy(
         "build/core-android/swanstation_libretro_android.so",
-        "build/apk/package/lib/arm64-v8a/libswanstation.so",
+        artifact("build/apk/package/lib/arm64-v8a/libswanstation.so"),
     )?;
     fs::copy(
         "build/armsx2-android/bin/armsx2_libretro.so",
-        "build/apk/package/lib/arm64-v8a/libarmsx2.so",
+        artifact("build/apk/package/lib/arm64-v8a/libarmsx2.so"),
     )?;
-    fs::copy("build/apk/dex/classes.dex", "build/apk/package/classes.dex")?;
+    fs::copy(
+        artifact("build/apk/dex/classes.dex"),
+        artifact("build/apk/package/classes.dex"),
+    )?;
     execute(&mut command(
         bin.join("llvm-strip"),
         [
             "--strip-unneeded",
-            "build/apk/package/lib/arm64-v8a/libpsx.so",
-            "build/apk/package/lib/arm64-v8a/libswanstation.so",
-            "build/apk/package/lib/arm64-v8a/libarmsx2.so",
+            &artifact("build/apk/package/lib/arm64-v8a/libpsx.so"),
+            &artifact("build/apk/package/lib/arm64-v8a/libswanstation.so"),
+            &artifact("build/apk/package/lib/arm64-v8a/libarmsx2.so"),
         ],
     ))?;
-    let destination = env::current_dir()?.join("build/apk/unsigned.apk");
+    let destination = env::current_dir()?.join(artifact("build/apk/unsigned.apk"));
     execute(
         command(
             "zip",
@@ -717,7 +748,7 @@ public final class PlaybackService extends android.app.Service {
                 "lib/arm64-v8a/libarmsx2.so".into(),
             ],
         )
-        .current_dir("build/apk/package"),
+        .current_dir(artifact("build/apk/package")),
     )?;
     execute(&mut command(
         build.join("zipalign"),
@@ -726,8 +757,8 @@ public final class PlaybackService extends android.app.Service {
             "-P",
             "16",
             "4",
-            "build/apk/unsigned.apk",
-            "build/apk/aligned.apk",
+            &artifact("build/apk/unsigned.apk"),
+            &artifact("build/apk/aligned.apk"),
         ],
     ))?;
     fs::create_dir_all(".local/signing")?;
@@ -772,14 +803,15 @@ public final class PlaybackService extends android.app.Service {
             "--ks-pass",
             "pass:android",
             "--out",
-            "build/psx-development.apk",
-            "build/apk/aligned.apk",
+            &artifact("build/psx-development.apk"),
+            &artifact("build/apk/aligned.apk"),
         ],
     ))?;
     verify_apk()?;
     println!(
-        "Development APK: build/psx-development.apk\nSHA-256: {}",
-        hash(Path::new("build/psx-development.apk"))?
+        "Development APK: {}\nSHA-256: {}",
+        artifact("build/psx-development.apk"),
+        hash(&PathBuf::from(artifact("build/psx-development.apk")))?
     );
     Ok(())
 }
@@ -787,15 +819,25 @@ fn verify_apk() -> Result<()> {
     let (_, ndk, build) = tools()?;
     execute(&mut command(
         build.join("apksigner"),
-        ["verify", "--verbose", "build/psx-development.apk"],
+        [
+            "verify",
+            "--verbose",
+            &artifact("build/psx-development.apk"),
+        ],
     ))?;
     execute(&mut command(
         build.join("zipalign"),
-        ["-c", "-P", "16", "4", "build/psx-development.apk"],
+        [
+            "-c",
+            "-P",
+            "16",
+            "4",
+            &artifact("build/psx-development.apk"),
+        ],
     ))?;
     let readelf = ndk.join("toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf");
     for name in ["libpsx.so", "libswanstation.so", "libarmsx2.so"] {
-        let path = format!("build/apk/package/lib/arm64-v8a/{name}");
+        let path = artifact(&format!("build/apk/package/lib/arm64-v8a/{name}"));
         let headers = output(&mut command(&readelf, ["-h", "-lW", "-d", &path]))?;
         if !headers.contains("AArch64") {
             return Err(format!("Wrong ABI in {name}").into());
@@ -843,6 +885,20 @@ fn verify_apk() -> Result<()> {
         }
         if name == "libarmsx2.so" {
             let symbols = output(&mut command(&readelf, ["--dyn-syms", "--wide", &path]))?;
+            let stream_export = symbols.lines().any(|line| {
+                let columns: Vec<_> = line.split_whitespace().collect();
+                columns.len() >= 8
+                    && columns[3] == "FUNC"
+                    && columns[4] == "GLOBAL"
+                    && columns[5] == "DEFAULT"
+                    && columns[6] != "UND"
+                    && columns[7] == "retro_psx_observer_set_stream_callback"
+            });
+            if stream_export != ps2::observer_enabled() {
+                return Err(
+                    "PS2 stream observer export differs from the selected build capability".into(),
+                );
+            }
             for required in [
                 "retro_psx_ready",
                 "retro_psx_set_paused",
@@ -870,8 +926,11 @@ fn verify_apk() -> Result<()> {
         }
         println!("{name}: AArch64; all ELF LOAD alignments >=16KB");
     }
-    ps2::verify_resources(Path::new("build/psx-development.apk"))?;
-    let entries = output(&mut command("unzip", ["-Z1", "build/psx-development.apk"]))?;
+    ps2::verify_resources(&PathBuf::from(artifact("build/psx-development.apk")))?;
+    let entries = output(&mut command(
+        "unzip",
+        ["-Z1", &artifact("build/psx-development.apk")],
+    ))?;
     for entry in [
         "classes.dex",
         "resources.arsc",
@@ -989,7 +1048,7 @@ fn copy_dependency_notices(source: &Path, destination: &Path) -> Result<()> {
 fn notices() -> Result<()> {
     verify_core()?;
     ps2::verify()?;
-    let destination = Path::new("build/apk/assets/notices");
+    let destination = PathBuf::from(artifact("build/apk/assets/notices"));
     fs::create_dir_all(destination.join("host"))?;
     fs::copy("LICENSE", destination.join("host/LICENSE"))?;
     fs::copy("THIRD_PARTY.md", destination.join("host/THIRD_PARTY.md"))?;

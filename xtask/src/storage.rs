@@ -8,29 +8,35 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     process::{Command, Output},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 pub const GIB: u64 = 1024 * 1024 * 1024;
 pub const RESERVE: u64 = 12 * GIB;
-static GROWING: AtomicBool = AtomicBool::new(false);
+static GROWING: Mutex<Option<PathBuf>> = Mutex::new(None);
 pub struct Growth;
 impl Growth {
     pub fn begin(root: &Path, planned: u64) -> Result<Self> {
         check(root, planned)?;
-        GROWING.store(true, Ordering::Relaxed);
+        *GROWING.lock().map_err(|_| "Storage guard poisoned")? = Some(root.canonicalize()?);
         Ok(Self)
     }
 }
 impl Drop for Growth {
     fn drop(&mut self) {
-        GROWING.store(false, Ordering::Relaxed);
+        if let Ok(mut root) = GROWING.lock() {
+            *root = None;
+        }
     }
 }
 pub fn between_steps() -> Result<()> {
-    if GROWING.load(Ordering::Relaxed) {
-        space(&std::env::current_dir()?)?.require(0)?;
+    if let Some(root) = GROWING
+        .lock()
+        .map_err(|_| "Storage guard poisoned")?
+        .as_ref()
+    {
+        space(root)?.require(0)?;
     }
     Ok(())
 }
