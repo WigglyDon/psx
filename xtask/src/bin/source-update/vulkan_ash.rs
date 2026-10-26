@@ -30,7 +30,7 @@ pub fn additions(crate_file: &Path) -> Result<BTreeMap<String, (u32, Vec<u8>)>> 
     let mut bytes = 0usize;
     let prefix = format!("ash-{VERSION}/");
     while let Some(entry) = reader.next()? {
-        let original = ctext(unsafe { archive_entry_pathname(entry.0) }).ok_or("Crate path")?;
+        let original = ctext(unsafe { archive_entry_pathname(entry.0) })?;
         let relative = safe(
             original
                 .strip_prefix(&prefix)
@@ -40,8 +40,8 @@ pub fn additions(crate_file: &Path) -> Result<BTreeMap<String, (u32, Vec<u8>)>> 
         if !seen.insert(relative.clone())
             || seen.len() > 512
             || ![0o100644, 0o100755].contains(&mode)
-            || ctext(unsafe { archive_entry_symlink(entry.0) }).is_some()
-            || ctext(unsafe { archive_entry_hardlink(entry.0) }).is_some()
+            || optional(unsafe { archive_entry_symlink(entry.0) })?.is_some()
+            || optional(unsafe { archive_entry_hardlink(entry.0) })?.is_some()
             || relative == ".cargo-checksum.json"
         {
             return Err("Unsafe/duplicate/unsupported ash crate member".into());
