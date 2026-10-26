@@ -116,7 +116,7 @@ pub fn build() -> Result<()> {
     checked(&native, NATIVE)?;
     checked(&symbols, SYMBOLS)?;
     checked(&required("PSX_FROZEN_SOURCE_ARCHIVE")?, SOURCE)?;
-    if member_hash(&player, &["lib/arm64-v8a/libarmsx2.so"])? != NATIVE {
+    if member_hash(&player, &["lib/arm64-v8a/libarmsx2.so"])? != BASELINE_NATIVE {
         return Err("Frozen player engine member differs".into());
     }
     let manifest: serde_json::Value = serde_json::from_slice(&output(&mut command(
