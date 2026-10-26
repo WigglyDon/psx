@@ -1,0 +1,128 @@
+diff --git a/pcsx2-gsrunner/Main.cpp b/pcsx2-gsrunner/Main.cpp
+index c45dde2..3d51920 100644
+--- a/pcsx2-gsrunner/Main.cpp
++++ b/pcsx2-gsrunner/Main.cpp
+@@ -1,3 +1,4 @@
++#include "pcsx2/GS/Renderers/OpenGL/GLLibretro.h"
+ // SPDX-FileCopyrightText: 2002-2026 PCSX2 Dev Team
+ // SPDX-License-Identifier: GPL-3.0+
+ 
+@@ -101,6 +102,7 @@
+ #include "common/HostSys.h"
+ #include "pcsx2/Input/AndroidNativeRumble.h"
+ 
++#ifndef ENABLE_LIBRETRO
+ namespace Common
+ {
+ 	bool PlaySoundAsync(const char* path) { return false; }
+@@ -112,6 +114,7 @@ namespace FileSystem
+ 	bool CreateDirectoryViaJava(const char* path) { return false; }
+ 	bool CreateFileViaJava(const char* path) { return false; }
+ }
++#endif // Shared libretro-compatible objects already supply these Android stubs.
+ namespace Native
+ {
+ 	void onPadRumble(int pad, int largeMotor, int smallMotor) {}
+@@ -574,7 +577,12 @@ static std::optional<T> ParseNumericArg(const char* flag, const std::string_view
+ 
+ bool GSRunner::InitializeConfig()
+ {
+-	EmuFolders::SetAppRoot();
++    if (GSReplay::callback)
++    {
++        EmuFolders::AppRoot = GSReplay::path;
++        EmuConfig.CustomDataPath = Path::Combine(GSReplay::path, "userdata");
++    }
++    else EmuFolders::SetAppRoot();
+ 	if (!EmuFolders::SetResourcesDirectory())
+ 	{
+ 		EarlyError("resources directory '{}' is missing (looked for it under the application root '{}'). "
+@@ -718,7 +726,14 @@ void Host::EndTextInput()
+ 
+ std::optional<WindowInfo> Host::GetTopLevelWindowInfo()
+ {
+-	return GSRunner::GetPlatformWindowInfo();
++    if (GSReplay::callback)
++    {
++        WindowInfo wi;
++        wi.type = WindowInfo::Type::Surfaceless;
++        wi.surface_width = 640; wi.surface_height = 448; wi.surface_scale = 1.0f;
++        return wi;
++    }
++    return GSRunner::GetPlatformWindowInfo();
+ }
+ 
+ void Host::OnInputDeviceConnected(const std::string_view identifier, const std::string_view device_name)
+@@ -739,7 +754,14 @@ void Host::SetMouseLock(bool state)
+ 
+ std::optional<WindowInfo> Host::AcquireRenderWindow(bool recreate_window)
+ {
+-	return GSRunner::GetPlatformWindowInfo();
++    if (GSReplay::callback)
++    {
++        WindowInfo wi;
++        wi.type = WindowInfo::Type::Surfaceless;
++        wi.surface_width = 640; wi.surface_height = 448; wi.surface_scale = 1.0f;
++        return wi;
++    }
++    return GSRunner::GetPlatformWindowInfo();
+ }
+ 
+ void Host::ReleaseRenderWindow()
+@@ -3009,7 +3031,7 @@ static void CPUThreadMain(VMBootParameters* params, std::atomic<int>* ret)
+ 			ApplyGSBackThreadPin();
+ 
+ 			// run until end
+-			GSDumpReplayer::SetLoopCount(s_loop_count);
++			GSDumpReplayer::SetLoopCount(GSReplay::callback ? 0 : s_loop_count);
+ 			// Read here, not in WriteStatsJson: by the time that runs, VMManager::Shutdown()
+ 			// has released the dump file and the answer would always be zero.
+ 			s_dump_frames_per_loop = GSDumpReplayer::GetDumpFrameCount();
+@@ -3020,7 +3042,14 @@ static void CPUThreadMain(VMBootParameters* params, std::atomic<int>* ret)
+ 			// replay that completes, writes no ladder file, and exits 0, which reads
+ 			// downstream as "this arm produced nothing to compare" rather than as a
+ 			// misconfigured command line.
+-			const bool ladder_ok = GSLadder::Begin(s_ladder_opts);
++            const bool ladder_ok = GSLadder::Begin(s_ladder_opts);
++            if (GSReplay::callback)
++            {
++                GSDumpReplayer::SetInitialStateHook([]() { GSReplay::Emit(10); });
++                GSDumpReplayer::SetPacketHook([](u32 packet, bool vsync) {
++                    if (!GSReplay::Emit(11, packet, vsync)) VMManager::SetState(VMState::Stopping);
++                });
++            }
+ 			// Left un-Running when the ladder refused, so the execute loop below is
+ 			// never entered and teardown runs on a VM that did nothing.
+ 			if (ladder_ok)
+@@ -3059,7 +3088,7 @@ static void CPUThreadMain(VMBootParameters* params, std::atomic<int>* ret)
+ // is not async-signal-safe — it can assert/log, take mutexes, and WaitGS/WaitVU.
+ static std::atomic<bool> s_signal_stop_requested{false};
+ 
+-int main(int argc, char* argv[])
++extern "C" __attribute__((visibility("default"))) int retro_psx_gsrunner_entry(int argc, char* argv[])
+ {
+ 	CrashHandler::Install();
+ 	GSRunner::InitializeConsole();
+@@ -3142,7 +3171,15 @@ int main(int argc, char* argv[])
+ 	}
+ 
+ 	// Override settings that shouldn't be picked up from defaults or INIs.
+-	GSRunner::SettingsOverride();
++    GSRunner::SettingsOverride();
++    if (GSReplay::callback)
++    {
++        INISettingsInterface matched(Path::Combine(GSReplay::path, "inis/armsx2-libretro.ini"));
++        if (!matched.Load()) { GSReplay::Error(); return EXIT_FAILURE; }
++        s_settings_interface.SetKeyValueList("EmuCore/GS", matched.GetKeyValueList("EmuCore/GS"));
++        s_settings_interface.SetIntValue("EmuCore/GS", "Renderer", static_cast<int>(GSRendererType::OGL));
++        s_settings_interface.SetBoolValue("EmuCore/GS", "FrameLimitEnable", true);
++    }
+ 
+ 	std::atomic<int> thread_ret;
+ 	std::thread cputhread(CPUThreadMain, &params, &thread_ret);
+@@ -3769,3 +3806,5 @@ void GSRunner::StopPlatformMessagePump()
+ }
+ 
+ #endif // _WIN32 / __APPLE__ / __linux__
++
++#include "RunnerBridge.inc"

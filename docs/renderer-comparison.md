@@ -1,5 +1,11 @@
 # Full-renderer comparison preparation
 
+Current scope: **GS-REPLAY-1 DISPATCHED** by
+[Master6420075065](https://github.com/WigglyDon/psx/issues/2#issuecomment-6420075065).
+The historical capture/replay hold below is superseded for this finite sequence.
+See [the capture/replay contract](gs-replay.md). Earlier comparisons stay closed;
+their frozen artifacts and coherent-mapping/failure repairs remain preserved.
+
 The implementation follows [Master6400483784](https://github.com/WigglyDon/psx/issues/2#issuecomment-6400483784), after preparation under Master6398308448 and the single
 common-result run of application/source `8e61eb2ccdf364cc4aa80e33dfc0796021c9dac1`.
 The new dispatch authorizes a conditional comparison after qualified bindings

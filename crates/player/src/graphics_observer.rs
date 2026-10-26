@@ -261,6 +261,12 @@ mod enabled {
     static RECORDER: OnceLock<Mutex<Recorder>> = OnceLock::new();
     static ORDER: AtomicU64 = AtomicU64::new(0);
     static FRAME: AtomicU64 = AtomicU64::new(0);
+    /// CPU-only correspondence for the build-only GS capture ledger. Does not
+    /// query GL or equate a renderer VSync/packet with an output generation.
+    #[cfg(feature = "gs-replay")]
+    pub fn producer_progress() -> u64 {
+        FRAME.load(Ordering::Acquire)
+    }
     static CONSUMED: AtomicU64 = AtomicU64::new(0);
     static DROPPED: AtomicU64 = AtomicU64::new(0);
     static FATAL: AtomicU32 = AtomicU32::new(0);

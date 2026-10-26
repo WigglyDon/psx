@@ -6,6 +6,12 @@ pub mod engine;
 pub mod files;
 mod firmware;
 pub mod graphics_observer;
+#[cfg(feature = "gs-replay")]
+pub mod gs_replay;
+#[cfg(feature = "gs-replay")]
+pub mod gs_replay_runner;
+#[cfg(all(feature = "gs-replay",target_os="linux"))]
+pub mod gs_replay_zstd;
 pub mod input;
 pub mod library;
 #[cfg(feature = "producer-local-output-sync")]

@@ -41,20 +41,31 @@ fn run() -> Result<()> {
     if env::var_os("PSX_BUILD_WORKSPACE").is_some()
         && !matches!(
             operation.as_deref(),
-            Some("apk" | "verify" | "ps2" | "notices" | "minimal-host")
+            Some(
+                "apk"
+                    | "verify"
+                    | "ps2"
+                    | "notices"
+                    | "minimal-host"
+                    | "gs-replay-apk"
+                    | "gs-runner-apk"
+            )
         )
     {
         return Err("External build output applies only to apk/verify/ps2/notices; source archives have their own admitted route".into());
     }
     let workspace = workspace::Admission::acquire(&root)?;
     let _lock = match operation.as_deref() {
-        Some("apk" | "verify" | "notices" | "source" | "firmware" | "ps2" | "minimal-host") => {
-            Some(storage::Lock::acquire(&root)?)
-        }
+        Some(
+            "apk" | "verify" | "notices" | "source" | "firmware" | "ps2" | "minimal-host"
+            | "gs-replay-apk" | "gs-runner-apk",
+        ) => Some(storage::Lock::acquire(&root)?),
         _ => None,
     };
     let _growth = match operation.as_deref() {
-        Some("minimal-host") => Some(storage::Growth::begin(&workspace.root, 2 * storage::GIB)?),
+        Some("minimal-host" | "gs-replay-apk" | "gs-runner-apk") => {
+            Some(storage::Growth::begin(&workspace.root, 2 * storage::GIB)?)
+        }
         // A source-matched warm diagnostic build reuses the existing native
         // objects/dependencies (<1 GiB here), not the 8 GiB cold-build peak.
         // Keep the full shared reserve and check again between every step.
@@ -73,6 +84,8 @@ fn run() -> Result<()> {
     match operation.as_deref() {
         Some("apk") => apk(),
         Some("minimal-host") => minimal::build(),
+        Some("gs-replay-apk") => minimal::build_replay(),
+        Some("gs-runner-apk") => minimal::build_runner(),
         Some("verify") => verify_apk(),
         Some("notices") => notices(),
         Some("source") => source_bundle(),

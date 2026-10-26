@@ -9,6 +9,7 @@ rust-version.workspace = true
 graphics-observer = ["dep:glow"]
 no-game-image-reader = ["graphics-observer"]
 producer-local-output-sync = ["no-game-image-reader"]
+gs-replay = ["producer-local-output-sync"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }

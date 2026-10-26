@@ -14,6 +14,7 @@ storage-scan = []
 graphics-observer = ["psx-player/graphics-observer"]
 no-game-image-reader = ["graphics-observer", "psx-player/no-game-image-reader"]
 producer-local-output-sync = ["no-game-image-reader", "psx-player/producer-local-output-sync"]
+gs-replay = ["producer-local-output-sync", "psx-player/gs-replay"]
 
 [dependencies]
 psx-player = { path = "../player" }

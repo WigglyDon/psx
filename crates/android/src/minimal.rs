@@ -24,6 +24,41 @@ use std::{
 };
 const API: egl::Instance<egl::Static> = egl::Instance::new(egl::Static);
 type Result<T> = std::result::Result<T, String>;
+enum Runtime {
+    Libretro(Host),
+    #[cfg(feature = "gs-replay")]
+    Runner(psx_player::gs_replay_runner::Runner),
+}
+impl Runtime {
+    fn frame_pending(&self) -> bool {
+        match self {
+            Self::Libretro(h) => h.frame_pending(),
+            #[cfg(feature = "gs-replay")]
+            Self::Runner(h) => h.frame_pending(),
+        }
+    }
+    fn is_ready(&self) -> bool {
+        match self {
+            Self::Libretro(h) => h.is_ready(),
+            #[cfg(feature = "gs-replay")]
+            Self::Runner(h) => h.is_ready(),
+        }
+    }
+    fn service(&mut self, force: bool) -> Result<bool> {
+        match self {
+            Self::Libretro(h) => h.service(force),
+            #[cfg(feature = "gs-replay")]
+            Self::Runner(h) => h.service(force),
+        }
+    }
+    fn stop(&mut self) -> serde_json::Value {
+        match self {
+            Self::Libretro(h) => serde_json::to_value(h.stop()).unwrap(),
+            #[cfg(feature = "gs-replay")]
+            Self::Runner(h) => serde_json::to_value(h.stop()).unwrap(),
+        }
+    }
+}
 struct AppWake(android_activity::AndroidAppWaker);
 #[derive(Default)]
 struct WindowSetup {
@@ -430,7 +465,11 @@ pub fn run(app: AndroidApp) -> Result<()> {
         .ok_or("no app storage")?
         .join("reference-v1");
     let marker = fs::read_to_string(root.join("prepared-v1")).map_err(|e| e.to_string())?;
-    if marker.trim() != minimal_host::NATIVE_SHA {
+    #[cfg(feature = "gs-replay")]
+    let native_sha = env!("PSX_GS_REPLAY_NATIVE_SHA");
+    #[cfg(not(feature = "gs-replay"))]
+    let native_sha = minimal_host::NATIVE_SHA;
+    if marker.trim() != native_sha {
         return Err("independent scratch not prepared for frozen core".into());
     }
     let config = fs::read(root.join("input.json")).map_err(|e| e.to_string())?;
@@ -447,6 +486,20 @@ pub fn run(app: AndroidApp) -> Result<()> {
     if !expected.iter().all(|v| (1..=16384).contains(v)) {
         return Err("invalid matched window".into());
     }
+    #[cfg(feature = "gs-replay")]
+    let gs_mode = match config["gs_replay_stage"].as_str() {
+        Some("capture") => psx_player::gs_replay::Mode::Capture,
+        Some("modified-replay") => psx_player::gs_replay::Mode::ModifiedReplay,
+        Some("pinned-replay") => psx_player::gs_replay::Mode::PinnedReplay,
+        _ => return Err("missing/unsupported admitted GS stage".into()),
+    };
+    #[cfg(feature = "gs-replay")]
+    let game = root.join(if gs_mode == psx_player::gs_replay::Mode::Capture {
+        "game.iso"
+    } else {
+        "workload.gs.zst"
+    });
+    #[cfg(not(feature = "gs-replay"))]
     let game = root.join("game.iso");
     for p in [
         &game,
@@ -462,7 +515,9 @@ pub fn run(app: AndroidApp) -> Result<()> {
     }
     let waker = Waker::from(Arc::new(AppWake(app.create_waker())));
     let mut graphics: Option<Graphics> = None;
-    let mut host: Option<Host> = None;
+    let mut host: Option<Runtime> = None;
+    #[cfg(feature = "gs-replay")]
+    let mut gs_owner: Option<psx_player::gs_replay::Native> = None;
     let mut lifecycle = Lifecycle::default();
     let mut launch = None;
     let started = Instant::now();
@@ -479,10 +534,12 @@ pub fn run(app: AndroidApp) -> Result<()> {
             if observe::stop_requested() {
                 return Err("observer/operator first stop".into());
             }
-            if started.elapsed() > Duration::from_secs(26) {
+            if started.elapsed()
+                > Duration::from_secs(if cfg!(feature = "gs-replay") { 40 } else { 26 })
+            {
                 return Err("startup/whole-arm deadline".into());
             }
-            let timeout = if host.as_ref().is_some_and(Host::frame_pending) {
+            let timeout = if host.as_ref().is_some_and(Runtime::frame_pending) {
                 Duration::ZERO
             } else if host.is_some() {
                 next.saturating_duration_since(Instant::now())
@@ -564,6 +621,33 @@ pub fn run(app: AndroidApp) -> Result<()> {
                 observe::start(&root, waker.clone()).map_err(|e| e.to_string())?;
                 lifecycle.begin()?;
                 launch = Some(Instant::now());
+                #[cfg(feature = "gs-replay")]
+                {
+                    gs_owner = Some(unsafe {
+                        psx_player::gs_replay::Native::configure(
+                            &library(&app)?,
+                            gs_mode,
+                            &if gs_mode == psx_player::gs_replay::Mode::PinnedReplay {
+                                root.join("system/pcsx2")
+                            } else {
+                                root.join("capture.png")
+                            },
+                        )
+                    }?);
+                }
+                #[cfg(feature = "gs-replay")]
+                if gs_mode == psx_player::gs_replay::Mode::PinnedReplay {
+                    let loaded = unsafe {
+                        psx_player::gs_replay_runner::Runner::load(
+                            &library(&app)?,
+                            &game,
+                            waker.clone(),
+                        )
+                    };
+                    graphics = Some(g);
+                    host = Some(Runtime::Runner(loaded?));
+                    continue;
+                }
                 let loaded = unsafe {
                     Host::load(
                         &library(&app)?,
@@ -580,7 +664,7 @@ pub fn run(app: AndroidApp) -> Result<()> {
                     )
                 };
                 graphics = Some(g);
-                host = Some(loaded?);
+                host = Some(Runtime::Libretro(loaded?));
                 continue;
             }
             let h = host.as_mut().unwrap();
@@ -594,7 +678,9 @@ pub fn run(app: AndroidApp) -> Result<()> {
                     graphics.as_ref().unwrap().swap()?;
                 }
             }
-            if launch.unwrap().elapsed() >= Duration::from_secs(20) {
+            if launch.unwrap().elapsed()
+                >= Duration::from_secs(if cfg!(feature = "gs-replay") { 30 } else { 20 })
+            {
                 break;
             }
         }
@@ -603,18 +689,36 @@ pub fn run(app: AndroidApp) -> Result<()> {
     if result.is_err() {
         observe::request_stop(observe::StopReason::Dependency);
     }
+    #[cfg(feature = "gs-replay")]
+    if result.is_err() {
+        psx_player::gs_replay::owner::cancel("minimal owner stopped");
+    }
     let evidence = host
         .as_mut()
-        .map(Host::stop)
-        .or_else(minimal_host::stopped_evidence);
+        .map(Runtime::stop)
+        .or_else(|| minimal_host::stopped_evidence().map(|e| serde_json::to_value(e).unwrap()));
     drop(host);
+    #[cfg(feature = "gs-replay")]
+    if let Some(stage) = gs_owner {
+        unsafe { stage.finish_after_join() };
+    }
     drop(graphics);
     observe::service(&root, true);
     observe::join_export();
+    #[cfg(feature = "gs-replay")]
+    {
+        let report = serde_json::to_vec(&psx_player::gs_replay::owner::report())
+            .map_err(|e| e.to_string())?;
+        if report.len() > 512 * 1024 {
+            return Err("capture correspondence sidecar cap".into());
+        }
+        psx_player::saves::atomic_write(&root.join("gs-replay.json"), &report)
+            .map_err(|e| e.to_string())?;
+    }
     let bytes=serde_json::to_vec(&serde_json::json!({
         "version":2,"minimal_host":true,
         "harness_source":env!("PSX_MINIMAL_SOURCE_REVISION"),
-        "frozen_player":minimal_host::PLAYER_SOURCE,"native":minimal_host::NATIVE_SHA,"baseline_native":minimal_host::BASELINE_NATIVE_SHA,
+        "frozen_player":minimal_host::PLAYER_SOURCE,"native":native_sha,"baseline_native":minimal_host::BASELINE_NATIVE_SHA,
         "result":result.as_ref().err(),"window":geometry,"expected_window":expected,
         "gles":gles,"egl_attributes":attributes,
         "egl_selection_matches_frozen_query":selection_matches_frozen_query,

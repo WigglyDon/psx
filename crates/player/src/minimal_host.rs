@@ -812,6 +812,11 @@ impl Host {
             unsafe {
                 (self.set_frame)(None);
                 if self.loaded {
+                    // Finite dump replay can already have ended its CPU queue.
+                    // Its unload contract aborts pacing, requests stop and joins;
+                    // do not enqueue an additional blocking pause into that
+                    // retiring queue. The earlier minimal operand is unchanged.
+                    #[cfg(not(feature="gs-replay"))]
                     let _ = (self.pause)(true);
                     (self.unload)();
                     self.loaded = false;
