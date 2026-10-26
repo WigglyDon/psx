@@ -170,3 +170,62 @@ preserve normal progress and original Home, remove only the newly owned package/
 scratch, retire clients, verify booted/screen OFF and released custody. A faulted
 reference closes this integration branch without automatically adding another
 UI variant or inferring a driver cause. #2 remains open for Master acceptance.
+
+## Observed minimal-host result and next common comparison
+
+The single admitted reference boot on 2026-10-26 used application source
+`e9908161fc097189093d8531cb27104f2ac69d11`, the frozen native binary above,
+and the corrected development operator. The independently staged input hashes
+matched. Actual window was1080×2280 with matched edge-to-edge setup, GLES3.2,
+4KiB pages and the same selected EGL attributes. All11 effective option answers
+matched the frozen settings; initialization, load, reset, ready and normal-speed
+transitions were observed. Input was queried and audio generated/consumed without
+rejections. The audio output device and successful platform clock hints were
+not established as equal: output was deliberately absent, and the native log
+reported its performance-hint session request failed.
+
+The first retained failure was a non-null output fence rejected by both existing
+validity routes on its creating graphics owner, before flush/publication:
+stage16, producer463 at10.790506s on the observer clock. Recorded dispatch and
+context comparisons matched; sampled GL errors were zero. The host had462
+hardware callbacks/notifications/metadata acknowledgements and404,352 generated
+audio frames. Real GS rendering, composition and donor overlay phases executed.
+Required download/readback remained inactive. The external runner retired the
+arm12.083352s after launch and suppressed the full-player control.
+
+This is a faulted reference, not the clean20s/512-output qualification. It reached
+the same failure class near the historical player's producer464, without the
+ordinary UI/compositing/session/checkpoint layers. Those removed layers are not
+necessary for this reproduction; the modified native engine/adapter, shared
+observer, bootstrap and platform remain candidates. It does not isolate a driver
+or particular native call, prove upstream failure or establish gameplay/saving.
+The contemporaneous full-player arm did not run and historical evidence does not
+replace it. Native/frontend context destruction and complete creator retirement
+were recorded; this run recorded no common GL OOM, including retirement.
+
+Close this integration branch. The next distinct common-renderer comparison
+to prepare for Master is replay of the same private failing GS command stream
+through the pinned donor's existing `pcsx2-gsrunner` path and the modified native
+path, rather than another product-shell/ownership/observer variation. Immutable
+donor83fe4e29 source checks establish these concrete boundaries:
+
+- `pcsx2-gsrunner/Main.cpp` validates `VMManager::IsGSDumpFileName`, then uses
+  `CPUThreadInitialize`, `GSDumpReplayer::SetIsDumpRunner` and
+  `VMManager::Initialize`. It is not a disc-boot substitute.
+- Its OpenGL surfaceless path opts into `GLContext::AllowHeadless`; windowed
+  setup and `GSHeadless` presentation must be audited before treating either
+  context/presentation route as equivalent. Both operands must use a declared
+  matched route and retain the real GS command stream, renderer settings and
+  native output/error evidence. Replayed GS work alone does not retain the live
+  EE/IOP/VU, libretro scheduling or output-fence contract of the disc boot.
+- No source-matched failing GS dump is retained. A private capture, bounded
+  storage/output budget, ARM64 runner build/packaging and actual replay support
+  need separate concrete scope and admission. A donor-clean/modified-fault result
+  would localize that changed set only; both-fault would retain common renderer,
+  capture/bootstrap/platform candidates; no reproduction would leave the removed
+  guest/scheduling/publication differences unresolved.
+
+This is off-device preparation, not authority to capture, rebuild the frozen
+engine, run another phone trial or replace the product. Preserve all frozen
+operands, symbols, private evidence and normal progress while Master chooses
+the next native/common boundary. No speculative production workaround follows.
