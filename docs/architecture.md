@@ -19,6 +19,15 @@ rendering. Transfer cost and device compatibility require actual measurement;
 this is an implementation route, not a qualified performance claim. Existing
 development GLES experiments stay frozen, with no user-facing backend selector.
 
+The `player-acceptance` build feature uses the full player with a prepared,
+marked app-private sibling of its normal `files` directory. Normal saves,
+layouts and even their enclosing directory metadata stay in place. The feature
+changes only storage selection; it neither enables graphics observation nor
+changes the renderer/settings/workload. A missing marker or redirected directory
+refuses launch. Ordinary builds return the original root without probing a
+test directory. The packager requires the verified Vulkan artifact and records
+this development capability in APK assets; it cannot mix with observer builds.
+
 Ordinary use remains pick a game and play, with no emulator tuning catalog or
 technical configuration flow. Engine/backend decisions belong to the product.
 Controller customization, volume and time remain ordinary player features. The

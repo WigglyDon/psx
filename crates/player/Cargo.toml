@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
+player-acceptance = []
 graphics-observer = ["dep:glow"]
 no-game-image-reader = ["graphics-observer"]
 producer-local-output-sync = ["no-game-image-reader"]

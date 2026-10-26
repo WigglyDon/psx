@@ -188,6 +188,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     let root = app
         .internal_data_path()
         .ok_or("App storage is unavailable.")?;
+    let root = psx_player::acceptance::storage_root(&root).map_err(|e| e.to_string())?;
     let root = psx_player::graphics_observer::storage_root(&root).map_err(|e| e.to_string())?;
     fs::create_dir_all(root.join("system")).map_err(|e| e.to_string())?;
     fs::create_dir_all(root.join("saves")).map_err(|e| e.to_string())?;

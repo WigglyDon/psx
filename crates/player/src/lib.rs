@@ -1,3 +1,4 @@
+pub mod acceptance;
 pub mod artwork;
 pub mod audio;
 pub mod content;

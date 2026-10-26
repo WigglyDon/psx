@@ -478,6 +478,16 @@ fn core_epoch() -> Result<String> {
 }
 
 fn apk() -> Result<()> {
+    let acceptance = env::var_os("PSX_PLAYER_ACCEPTANCE").is_some();
+    if acceptance
+        && (ps2::observer_enabled()
+            || env::var_os("PSX_VULKAN_NATIVE_STAGE").is_none()
+            || env::var_os("PSX_APK_STAGE").is_none())
+    {
+        return Err(
+            "Player acceptance needs the qualified Vulkan artifact and no observer mode".into(),
+        );
+    }
     if let Some(stage) = env::var_os("PSX_APK_STAGE") {
         if env::var_os("PSX_BUILD_WORKSPACE").is_none() || Path::new(&stage).exists() {
             return Err(
@@ -576,6 +586,9 @@ fn apk() -> Result<()> {
     }
     if scoped_storage {
         rust.arg("--no-default-features");
+    }
+    if acceptance {
+        rust.args(["--features", "player-acceptance"]);
     }
     let mut manifest = fs::read_to_string("android/AndroidManifest.xml")?;
     if !scoped_storage {
@@ -689,6 +702,22 @@ public final class PlaybackService extends android.app.Service {
     ))?;
     notices()?;
     ps2::resources()?;
+    let acceptance_manifest = PathBuf::from(artifact(
+        "build/apk/assets/development-player-acceptance.json",
+    ));
+    if acceptance {
+        fs::write(
+            &acceptance_manifest,
+            serde_json::to_vec_pretty(&serde_json::json!({"version":1,"developmentOnly":true,
+                "sourceRevision":output(&mut command("git",["rev-parse","HEAD"]))?.trim(),
+                "scratch":"player-acceptance-v1","scratchLocation":"private app-data sibling of files",
+                "marker":"PSX_PLAYER_ACCEPTANCE_V1\n","renderer":"Vulkan",
+                "nativeSha256":hash(vulkan.as_deref().ok_or("Acceptance native artifact")?)?,
+                "fullProductUi":true,"changesRenderingOrCoreSettings":false}))?,
+        )?;
+    } else if acceptance_manifest.exists() {
+        fs::remove_file(acceptance_manifest)?;
+    }
     let observer_manifest = PathBuf::from(artifact("build/apk/assets/development-observer.json"));
     if ps2::observer_enabled() {
         let revision = if Path::new(".git").exists() {
@@ -1012,6 +1041,12 @@ fn verify_apk() -> Result<()> {
         "unzip",
         ["-Z1", &artifact("build/psx-development.apk")],
     ))?;
+    let acceptance_asset = "assets/development-player-acceptance.json";
+    if entries.lines().any(|entry| entry == acceptance_asset)
+        != env::var_os("PSX_PLAYER_ACCEPTANCE").is_some()
+    {
+        return Err("APK acceptance capability does not match the requested build.".into());
+    }
     for entry in [
         "classes.dex",
         "resources.arsc",
