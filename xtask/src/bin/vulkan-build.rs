@@ -156,6 +156,32 @@ fn main() -> Result<()> {
                 .current_dir(stage.join("sources")),
         )?;
     }
+    // pragma once is file-identity based. An unchanged copied header can be
+    // reached once through an original relative include and once through the
+    // overlay, causing duplicate class definitions. Keep those headers on the
+    // same inode, and make quoted sibling includes resolvable without copying
+    // another source/dependency tree. Only this new generated stage is edited.
+    for file in &files {
+        let staged = stage.join("sources").join(file);
+        let original = source.join(file);
+        if file.ends_with(".h") && hash(&staged)? == hash(&original)? {
+            fs::remove_file(&staged)?;
+            std::os::unix::fs::symlink(&original, &staged)?;
+        }
+        for entry in fs::read_dir(original.parent().ok_or("Source parent")?)? {
+            let entry = entry?;
+            if !matches!(
+                entry.path().extension().and_then(OsStr::to_str),
+                Some("h" | "inl")
+            ) {
+                continue;
+            }
+            let alias = staged.parent().unwrap().join(entry.file_name());
+            if !alias.exists() {
+                std::os::unix::fs::symlink(entry.path(), alias)?;
+            }
+        }
+    }
     let composed: Value = Value::Object(
         files
             .iter()

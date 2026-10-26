@@ -2669,6 +2669,9 @@ impl Player {
         let before = Instant::now();
         core.run();
         if let Some(failure) = core.producer_failure() {
+            if let Some(detail) = core.state().last_message {
+                log::error!("PS2 graphics failure: {detail}");
+            }
             self.render_failed(RenderError::Producer(failure));
             return Ok(());
         }
