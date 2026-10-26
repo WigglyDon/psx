@@ -1,7 +1,11 @@
 # Full-renderer comparison preparation
 
-Current scope: **GS-REPLAY-1 stopped at its reproduction gate, awaiting review** under
-[Master6420075065](https://github.com/WigglyDon/psx/issues/2#issuecomment-6420075065).
+Historical scope: **GS-REPLAY-1 closed at its negative reproduction gate** under
+[Master6427077508](https://github.com/WigglyDon/psx/issues/2#issuecomment-6427077508).
+Current work is the outcome-owned playable PS2 loop in [architecture.md](architecture.md),
+with the retained Vulkan renderer selected for the next product candidate.
+Closed comparison gates below remain historical; they do not require another
+Master prompt for each new in-scope implementation or admitted test.
 The historical capture/replay hold below is superseded for this finite sequence.
 See [the capture/replay contract](gs-replay.md). Earlier comparisons stay closed;
 their frozen artifacts and coherent-mapping/failure repairs remain preserved.

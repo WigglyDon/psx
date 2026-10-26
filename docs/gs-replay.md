@@ -1,6 +1,10 @@
 # GS-REPLAY-1
 
-**Stopped at the reproduction gate; awaiting Master review.**
+**Closed at the negative reproduction gate**, accepted by
+[Master6427077508](https://github.com/WigglyDon/psx/issues/2#issuecomment-6427077508).
+The suppressed pinned operand stays suppressed. The ongoing assignment is the
+complete playable PS2 implementation loop; the historical bounds below do not
+require a new Master dispatch after every product test or device return.
 [Master6420075065](https://github.com/WigglyDon/psx/issues/2#issuecomment-6420075065)
 owns the executed conditional sequence.
 The earlier hold on capture/replay is superseded. Implementation and off-device

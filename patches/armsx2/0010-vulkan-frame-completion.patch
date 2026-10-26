@@ -1,0 +1,128 @@
+diff --git a/pcsx2/GS/Renderers/Vulkan/VKLibretro.h b/pcsx2/GS/Renderers/Vulkan/VKLibretro.h
+--- a/pcsx2/GS/Renderers/Vulkan/VKLibretro.h
++++ b/pcsx2/GS/Renderers/Vulkan/VKLibretro.h
+@@ -63,6 +63,7 @@
+ 	// and forwards it to the frontend via set_image + video_cb.
+ 	struct Frame
+ 	{
++		u64 serial = 0; // Assigned only by the handoff owner.
+ 		VkImage image = VK_NULL_HANDLE;
+ 		VkImageView view = VK_NULL_HANDLE;
+ 		VkFormat format = VK_FORMAT_UNDEFINED;
+@@ -70,10 +71,12 @@
+ 		u32 height = 0;
+ 	};
+ 	void PublishFrame(const Frame& frame);
+-	bool ConsumeFrame(Frame* out_frame); // true if a new frame arrived since the last consume
++	bool ConsumeFrame(Frame* out_frame);
++	bool CompleteFrame(const Frame& frame);
++	void SetFrameReadyCallback(void (*callback)());
+ 
+ 	// Frame pacing: when enabled, PublishFrame blocks the GS thread until
+-	// retro_run consumes the frame — the frontend's retro_run cadence becomes
++	// the frontend completes its image read — the frontend's retro_run cadence becomes
+ 	// the emulation's vsync. Abort before shutdown so the GS thread can't be
+ 	// left parked.
+ 	void SetPacing(bool enabled);
+diff --git a/pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp b/pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp
+--- a/pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp
++++ b/pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp
+@@ -153,15 +153,19 @@
+ 	static Frame s_frame;
+ 	static u64 s_frame_serial = 0;
+ 	static u64 s_frame_consumed = 0;
++	static u64 s_frame_delivered = 0;
++	static void (*s_frame_ready_callback)() = nullptr;
+ 	static bool s_pacing = false;
+ 
+ 	void PublishFrame(const Frame& frame)
+ 	{
+ 		std::unique_lock<std::mutex> lock(s_frame_mutex);
+ 		s_frame = frame;
+-		s_frame_serial++;
+-		// Block the GS thread until retro_run picks the frame up (or pacing
+-		// gets aborted for shutdown): one presented frame per retro_run.
++		s_frame.serial = ++s_frame_serial;
++		if (s_frame_ready_callback)
++			s_frame_ready_callback();
++		// Delivery is not completion: keep the image parked until the
++		// frontend has finished reading, or pacing is disabled for VM work.
+ 		s_frame_consumed_cv.wait(
+ 			lock, []() { return !s_pacing || s_frame_consumed == s_frame_serial; });
+ 	}
+@@ -169,14 +173,32 @@
+ 	bool ConsumeFrame(Frame* out_frame)
+ 	{
+ 		std::lock_guard<std::mutex> lock(s_frame_mutex);
+-		if (s_frame_serial == s_frame_consumed || s_frame.image == VK_NULL_HANDLE)
++		if (s_frame_serial == s_frame_delivered || s_frame.image == VK_NULL_HANDLE)
+ 			return false;
+-		s_frame_consumed = s_frame_serial;
++		s_frame_delivered = s_frame_serial;
+ 		*out_frame = s_frame;
++		return true;
++	}
++
++	bool CompleteFrame(const Frame& frame)
++	{
++		std::lock_guard<std::mutex> lock(s_frame_mutex);
++		if (!frame.serial || frame.serial != s_frame_serial ||
++			frame.serial != s_frame_delivered || frame.serial == s_frame_consumed || frame.image != s_frame.image)
++			return false;
++		s_frame_consumed = frame.serial;
+ 		s_frame_consumed_cv.notify_all();
+ 		return true;
+ 	}
+ 
++	void SetFrameReadyCallback(void (*callback)())
++	{
++		std::lock_guard<std::mutex> lock(s_frame_mutex);
++		s_frame_ready_callback = callback;
++		if (callback && s_frame_serial != s_frame_delivered && s_frame.image != VK_NULL_HANDLE)
++			callback();
++	}
++
+ 	void SetPacing(bool enabled)
+ 	{
+ 		std::lock_guard<std::mutex> lock(s_frame_mutex);
+@@ -198,6 +220,7 @@
+ 		s_frame = Frame();
+ 		s_frame_serial = 0;
+ 		s_frame_consumed = 0;
++		s_frame_delivered = 0;
+ 		s_pacing = false;
+ 		s_frame_consumed_cv.notify_all();
+ 	}
+diff --git a/pcsx2-libretro/Main.cpp b/pcsx2-libretro/Main.cpp
+--- a/pcsx2-libretro/Main.cpp
++++ b/pcsx2-libretro/Main.cpp
+@@ -2136,6 +2136,10 @@
+ 		vulkan->wait_sync_index(vulkan->handle);
+ 	}
+ 
++	// Request VM termination before releasing a parked failed image.
++	s_shutdown_requested.store(true, std::memory_order_release);
++	if (VMManager::HasValidVM())
++		VMManager::SetState(VMState::Stopping);
+ 	VKLibretro::AbortPacing(); // GS thread may be parked in PublishFrame
+ #endif
+ #ifdef ENABLE_OPENGL
+@@ -2275,6 +2279,8 @@
+ 			last_frame_width = frame.width;
+ 			last_frame_height = frame.height;
+ 			video_cb(RETRO_HW_FRAME_BUFFER_VALID, frame.width, frame.height, 0);
++			if (environ_cb(0x50535802u, nullptr))
++				VKLibretro::CompleteFrame(frame);
+ 		}
+ 		else
+ 		{
+@@ -2496,6 +2502,9 @@
+ // Clearing under the handoff mutex retires callbacks before host teardown.
+ extern "C" RETRO_API bool retro_psx_set_frame_callback(void (*callback)())
+ {
++#ifdef ENABLE_VULKAN
++	VKLibretro::SetFrameReadyCallback(callback);
++#endif
+ #ifdef ENABLE_OPENGL
+ 	GLLibretro::SetFrameReadyCallback(callback);
+ 	return true;

@@ -54,6 +54,11 @@ https://github.com/rust-mobile/android-activity
 It is MIT OR Apache-2.0; the build selects the MIT option where offered.
 Other direct Rust dependencies are `ndk` 0.9.0, JNI, khronos-egl, glow,
 android_logger, log, libloading, ab_glyph, libc, serde/serde_json and sha2.
+The Vulkan frontend uses ash0.37.3+1.3.251 (MIT OR Apache-2.0, selecting MIT),
+with its dynamic loader feature disabled and the existing libloading dependency
+retaining the system loader. Its C interface layout follows the pinned
+RetroArch-team MIT `libretro_vulkan.h`; the original header/notices remain in
+the donor source. The native frame-completion repair retains donor provenance.
 `Cargo.lock` pins all versions and registry checksums. The packaged
 `assets/notices/INDEX.txt` lists dependency versions, declared license terms
 and source links; retained license files are alongside it. The index also

@@ -20,6 +20,7 @@ mod native_signals;
 pub mod phone_buttons;
 pub mod producer_failure;
 pub mod ps2;
+mod ps2_vulkan;
 pub mod resume;
 pub mod retro;
 pub mod saves;

@@ -92,12 +92,15 @@ fn ps2_workers_close_before_retiring_the_shared_graphics_context() {
 #[ignore]
 fn teardown_fixture() {
     assert_eq!(std::env::var("PSX_TEARDOWN_FIXTURE").as_deref(), Ok("1"));
-    for fail_during_capture in [false, true] {
+    for (fail_during_capture, vulkan) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
         FAIL_CAPTURE.store(fail_during_capture, Ordering::Relaxed);
         for (loaded, context) in [(true, true), (true, false), (false, true), (false, false)] {
             let library = Arc::new(unsafe { Library::new("libc.so.6") }.unwrap());
             let mapping = Arc::downgrade(&library);
             let shared = Arc::new(Shared {
+                vulkan: vulkan.then(|| Arc::new(crate::ps2_vulkan::Frontend::default())),
                 system: CString::new("fixture-system").unwrap(),
                 save: CString::new("fixture-save").unwrap(),
                 options: BTreeMap::new(),
@@ -200,7 +203,7 @@ fn teardown_fixture() {
             drop(core);
             let mut expected = vec![("retire", true)];
             if loaded {
-                if !fail_during_capture {
+                if !fail_during_capture && !vulkan {
                     expected.push(("pause", true));
                 }
                 expected.push(("unload", true));

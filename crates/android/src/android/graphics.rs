@@ -85,6 +85,45 @@ unsafe extern "C" fn proc_address(name: *const c_char) -> Option<unsafe extern "
 }
 
 impl Graphics {
+    /// Upload completed host-owned Vulkan pixels into the same game target
+    /// used by the GL core. No native image/context crosses the UI boundary.
+    pub unsafe fn upload_game(&self, frame: &psx_player::ps2::Pixels) -> Result<(), RenderError> {
+        let gl = &self.objects.gl;
+        if frame.width == 0
+            || frame.height == 0
+            || frame.width > 1024
+            || frame.height > 1024
+            || frame.rgba.len() != frame.width as usize * frame.height as usize * 4
+        {
+            return Err(RenderError::Producer(
+                psx_player::producer_failure::Failure { kind: 3, result: 0 },
+            ));
+        }
+        gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+        gl.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
+        gl.pixel_store_i32(glow::UNPACK_SKIP_ROWS, 0);
+        gl.pixel_store_i32(glow::UNPACK_SKIP_PIXELS, 0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.objects.texture));
+        gl.tex_sub_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            0,
+            0,
+            frame.width as i32,
+            frame.height as i32,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(Some(frame.rgba.as_slice())),
+        );
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        let error = gl.get_error();
+        if error == glow::NO_ERROR {
+            Ok(())
+        } else {
+            Err(RenderError::Gl(error))
+        }
+    }
     /// EGL and all GL calls live on android_main, the sole core owner. A tiny
     /// pbuffer preserves the context while Android replaces its window surface.
     pub unsafe fn new() -> Result<Self, String> {

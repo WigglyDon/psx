@@ -5,6 +5,20 @@ experience while qualifying a PS2 engine and shared direct-game launch.
 PS2 implementation and qualification are in progress; the existing PS1
 observations do not establish PS2 acceptance.
 
+[Master6427077508](https://github.com/WigglyDon/psx/issues/2#issuecomment-6427077508)
+assigns the complete playable PS2 loop, including ordinary save/load, resume
+and switching. Closed diagnostic outcomes remain evidence; a failed hypothesis
+or verified device return does not itself end product implementation.
+
+The next product candidate uses the retained Vulkan GS renderer. Rust supplies
+the libretro negotiation/queue contract and copies completed native-resolution
+images through bounded host-visible staging into the existing GLES game target.
+The native producer retains its image until the frontend completes that copy;
+opaque image handles never cross into the UI. Guest rendering remains hardware
+rendering. Transfer cost and device compatibility require actual measurement;
+this is an implementation route, not a qualified performance claim. Existing
+development GLES experiments stay frozen, with no user-facing backend selector.
+
 Ordinary use remains pick a game and play, with no emulator tuning catalog or
 technical configuration flow. Engine/backend decisions belong to the product.
 Controller customization, volume and time remain ordinary player features. The

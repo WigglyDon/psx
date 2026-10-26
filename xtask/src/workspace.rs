@@ -5,6 +5,35 @@ use std::{
     os::unix::fs::MetadataExt,
 };
 
+/// Reuse the installed host custodian's actual open-file description. Opening
+/// the path again would try to acquire our own custodian's lock and deadlock.
+/// Validate inode and lock ownership before accepting the inherited descriptor;
+/// an environment token alone never admits a workspace.
+#[cfg(target_os = "linux")]
+fn inherited_lease(fd: i32, expected: &fs::Metadata) -> Result<File> {
+    use std::os::fd::FromRawFd;
+    unsafe extern "C" {
+        fn fcntl(fd: i32, command: i32, ...) -> i32;
+    }
+    if fd < 3 {
+        return Err("Invalid inherited host lease descriptor".into());
+    }
+    // Linux F_DUPFD_CLOEXEC: an owned duplicate, never a borrowed invalid fd,
+    // and never a descriptor leaked into unrelated child processes.
+    let owned = unsafe { fcntl(fd, 1030, 3) };
+    if owned < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let file = unsafe { File::from_raw_fd(owned) };
+    let actual = file.metadata()?;
+    if actual.dev() != expected.dev() || actual.ino() != expected.ino() {
+        return Err("Inherited host lease is not the admitted capacity inode".into());
+    }
+    file.try_lock()
+        .map_err(|e| format!("Inherited host capacity lease unavailable: {e}"))?;
+    Ok(file)
+}
+
 pub fn path(relative: &str) -> String {
     match env::var_os("PSX_BUILD_WORKSPACE") {
         Some(root) => PathBuf::from(root)
@@ -105,9 +134,34 @@ impl Admission {
         {
             return Err("Unqualified existing capacity lease".into());
         }
-        let file = OpenOptions::new().read(true).write(true).open(lease)?;
-        file.try_lock()
-            .map_err(|e| format!("Shared workspace capacity busy: {e}"))?;
+        let file = if let Some(fd) = env::var_os("CODEX_HOST_LEASE_FD") {
+            if env::var("CODEX_HOST_LEASE_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty())
+                .is_none()
+            {
+                return Err("Missing current host custodian token".into());
+            }
+            #[cfg(target_os = "linux")]
+            {
+                inherited_lease(
+                    fd.to_str()
+                        .ok_or("Host lease descriptor encoding")?
+                        .parse()?,
+                    &m,
+                )?
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = fd;
+                return Err("Inherited host leases need the qualified Linux host".into());
+            }
+        } else {
+            let file = OpenOptions::new().read(true).write(true).open(lease)?;
+            file.try_lock()
+                .map_err(|e| format!("Shared workspace capacity busy: {e}"))?;
+            file
+        };
         // Existing build caches must already have been separately admitted and
         // relocated. This command never moves data or silently creates a tree.
         for cache in ["target", "build/armsx2-android"] {
@@ -123,5 +177,43 @@ impl Admission {
             root,
             _lease: Some(file),
         })
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::os::fd::AsRawFd;
+    #[test]
+    fn inherited_capacity_is_the_same_locked_description_and_rejects_wrong_inodes() {
+        let path = env::temp_dir().join(format!("psx-inherited-capacity-{}", std::process::id()));
+        let owner = OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        owner.try_lock().unwrap();
+        let metadata = owner.metadata().unwrap();
+        let duplicate = inherited_lease(owner.as_raw_fd(), &metadata).unwrap();
+        assert!(inherited_lease(0, &metadata).is_err());
+        assert!(inherited_lease(i32::MAX, &metadata).is_err());
+        let wrong = File::open("/dev/null").unwrap();
+        assert!(inherited_lease(wrong.as_raw_fd(), &metadata).is_err());
+        let competitor = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        assert!(competitor.try_lock().is_err());
+        drop(owner);
+        assert!(
+            competitor.try_lock().is_err(),
+            "duplicate must retain the original lease"
+        );
+        drop(duplicate);
+        competitor.try_lock().unwrap();
+        drop(competitor);
+        fs::remove_file(path).unwrap();
     }
 }

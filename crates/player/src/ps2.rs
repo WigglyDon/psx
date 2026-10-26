@@ -1,5 +1,6 @@
-//! ARMSX2 adapter. The donor retains its CPU/GS owners and EGL share group.
+//! ARMSX2 adapter. The donor retains its CPU/GS owners and native renderer.
 //! Callback state is shared, never a TLS mutable reference on native workers.
+pub use crate::ps2_vulkan::Pixels;
 use crate::{
     audio::AudioQueue,
     native_signals::NativeSignals,
@@ -41,6 +42,13 @@ pub fn revision() -> &'static str {
             "{binding}+stream:{:x}",
             Sha256::digest(include_bytes!(
                 "../../../patches/armsx2/0004-stream-buffer-failure.patch"
+            ))
+        );
+        #[cfg(not(feature = "graphics-observer"))]
+        let binding = format!(
+            "{binding}+vulkan:{:x}",
+            sha2::Sha256::digest(include_bytes!(
+                "../../../patches/armsx2/0010-vulkan-frame-completion.patch"
             ))
         );
         #[cfg(feature = "graphics-observer")]
@@ -151,6 +159,9 @@ impl Drop for Checkpoint {
 }
 #[derive(Clone, Default)]
 pub struct Output {
+    /// Hardware-rendered Vulkan output, copied only after GPU completion.
+    /// CPU transport does not classify guest rendering as a software renderer.
+    pub pixels: Option<Pixels>,
     pub metrics: Option<[f32; 5]>,
     /// EE/GS/GPU usage, GS/GPU ms, draws/readbacks/barriers/blocking waits.
     pub render_costs: Option<[f32; 9]>,
@@ -164,6 +175,7 @@ pub struct Output {
     pub last_message: Option<String>,
 }
 struct Shared {
+    vulkan: Option<Arc<crate::ps2_vulkan::Frontend>>,
     system: CString,
     save: CString,
     options: BTreeMap<Vec<u8>, CString>,
@@ -219,11 +231,33 @@ unsafe extern "C" fn framebuffer() -> usize {
 }
 unsafe extern "C" fn video(data: *const c_void, w: u32, h: u32, _pitch: usize) {
     if let Some(s) = shared() {
+        let pixels = if data as usize == usize::MAX {
+            if let Some(vulkan) = &s.vulkan {
+                match vulkan.read(w, h) {
+                    Ok(pixels) => Some(pixels),
+                    Err(error) => {
+                        s.producer_failure
+                            .record(crate::producer_failure::Failure { kind: 3, result: 0 });
+                        if let Ok(mut o) = s.output.lock() {
+                            o.shutdown = true;
+                            o.last_message = Some(error);
+                        }
+                        s.frames.notify();
+                        return;
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         if let Ok(mut o) = s.output.lock() {
             if data as usize == usize::MAX {
                 o.hardware_frames += 1;
                 o.frame_width = w;
                 o.frame_height = h;
+                o.pixels = pixels;
             } else if !data.is_null() {
                 o.software_frames += 1;
             }
@@ -274,6 +308,11 @@ struct Message {
 }
 unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
     let Some(s) = shared() else { return false };
+    // The native producer remains parked until the frontend's synchronous
+    // copy completed. A failed read never acknowledges image reuse.
+    if command == 0x50535802 {
+        return s.vulkan.as_ref().is_some_and(|v| v.acknowledge());
+    }
     if command == crate::producer_failure::ENVIRONMENT_COMMAND && !data.is_null() {
         let failure = *(data as *const crate::producer_failure::Failure);
         if s.producer_failure.record(failure) {
@@ -333,6 +372,16 @@ unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
         10 => *(data as *const u32) == 1,
         14 => {
             let hw = &mut *(data as *mut HwRender);
+            if s.vulkan.is_some() {
+                if hw.context_type != 6 {
+                    return false;
+                }
+                if let Ok(mut o) = s.output.lock() {
+                    o.hw = Some(*hw);
+                    return true;
+                }
+                return false;
+            }
             let requested = match hw.context_type {
                 4 => [3, 0],
                 5 => [hw.major, hw.minor],
@@ -387,9 +436,27 @@ unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
             true
         } // English
         56 => {
-            *(data as *mut u32) = 4;
+            *(data as *mut u32) = if s.vulkan.is_some() { 6 } else { 4 };
             true
-        } // GLES3 preference
+        }
+        0x10029 => {
+            let Some(interface) = s.vulkan.as_ref().and_then(|v| v.interface()) else {
+                return false;
+            };
+            *(data as *mut *const crate::ps2_vulkan::Interface) = interface;
+            true
+        }
+        0x1002b => s.vulkan.as_ref().is_some_and(|v| v.negotiate(data)),
+        0x10049 => {
+            // The retained core supplies the v1 create_device entry even when
+            // advertising v2. Negotiate the prefix we actually implement.
+            let support = &mut *(data as *mut [u32; 2]);
+            if s.vulkan.is_none() || support[0] != 0 {
+                return false;
+            }
+            support[1] = 1;
+            true
+        }
         49 => {
             *(data as *mut bool) = s.fast.load(Ordering::Relaxed);
             true
@@ -431,7 +498,14 @@ fn host_options(firmware: String) -> Result<BTreeMap<Vec<u8>, CString>> {
         CString::new(firmware).map_err(|e| e.to_string())?,
     );
     for (key, value) in [
-        ("armsx2_renderer", "OpenGL"),
+        (
+            "armsx2_renderer",
+            if cfg!(feature = "graphics-observer") {
+                "OpenGL"
+            } else {
+                "Vulkan"
+            },
+        ),
         ("armsx2_upscale", "1x"),
         ("armsx2_ee_cycle_rate", "100%"),
         ("armsx2_ee_cycle_skip", "disabled"),
@@ -495,7 +569,7 @@ impl Core {
         config: HostConfig<'_>,
         gles: [u32; 2],
     ) -> Result<Self> {
-        if gles < [3, 1] {
+        if cfg!(feature = "graphics-observer") && gles < [3, 1] {
             return Err("PS2 needs an OpenGL ES 3.1 or newer device renderer.".into());
         }
         let lease = CoreLease::acquire()?;
@@ -506,6 +580,8 @@ impl Core {
         let firmware = firmware_binding(config.system)?;
         let options = host_options(firmware.file)?;
         let shared = Arc::new(Shared {
+            vulkan: (!cfg!(feature = "graphics-observer"))
+                .then(|| Arc::new(crate::ps2_vulkan::Frontend::default())),
             system: CString::new(config.system.as_os_str().as_encoded_bytes())
                 .map_err(|e| e.to_string())?,
             save: CString::new(config.save.as_os_str().as_encoded_bytes())
@@ -663,6 +739,9 @@ impl Core {
             );
         }
         core.loaded = true;
+        if let Some(vulkan) = &core.shared.vulkan {
+            vulkan.initialize()?;
+        }
         let mut info = AvInfo::default();
         av(&mut info);
         core.shared
@@ -830,7 +909,12 @@ impl Drop for Core {
             // Shared and its platform waker alive until all workers retire.
             (self.frame_callback_fn)(None);
             if self.loaded {
-                let _ = self.pause(true);
+                // A failed Vulkan read keeps the image producer parked. The
+                // native unload requests VM stop before releasing that park;
+                // the normal pause path would release it while still running.
+                if self.shared.vulkan.is_none() || self.producer_failure().is_none() {
+                    let _ = self.pause(true);
+                }
                 // Our EGL display/share group survives a game switch. Join
                 // the CPU/GS owners first so their normal live-context path
                 // frees resources and destroys the shared worker context.
@@ -846,6 +930,9 @@ impl Drop for Core {
                 self.context = false;
             }
             (self.deinit)();
+            if let Some(vulkan) = &self.shared.vulkan {
+                vulkan.retire();
+            }
             #[cfg(feature = "producer-local-output-sync")]
             {
                 crate::graphics_observer::output_sync::native_joined();
@@ -1335,6 +1422,7 @@ mod tests {
     #[test]
     fn callbacks_keep_their_binding_on_native_worker_threads() {
         let binding = Arc::new(Shared {
+            vulkan: None,
             system: CString::new("fixture-system").unwrap(),
             save: CString::new("fixture-save").unwrap(),
             options: BTreeMap::new(),

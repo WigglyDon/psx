@@ -75,6 +75,7 @@ impl Core {
             Self::Ps1(core) => {
                 let s = core.state();
                 ps2::Output {
+                    pixels: None,
                     metrics: None,
                     render_costs: None,
                     av: s.av,

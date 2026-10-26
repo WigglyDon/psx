@@ -71,6 +71,55 @@ const STREAM_PATCH: &str = "patches/armsx2/0004-stream-buffer-failure.patch";
 const STREAM_OBSERVER_PATCH: &str = "patches/armsx2/0005-development-stream-observer.patch";
 const CREATOR_OUTPUT_PATCH: &str = "patches/armsx2/0006-development-creator-output.patch";
 const COMMON_RESULTS_PATCH: &str = "patches/armsx2/0007-development-common-results.patch";
+const VULKAN_PATCH: &str = "patches/armsx2/0010-vulkan-frame-completion.patch";
+/// Build-only reuse of an independently bound incremental candidate. This
+/// changes neither runtime settings nor the ordinary zero-config interface.
+pub fn verified_vulkan_artifact() -> Result<Option<PathBuf>> {
+    let Some(stage) = env::var_os("PSX_VULKAN_NATIVE_STAGE") else {
+        return Ok(None);
+    };
+    if observer_enabled() {
+        return Err("Product Vulkan reuse cannot select a diagnostic mode".into());
+    }
+    let stage = PathBuf::from(stage).canonicalize()?;
+    let build = PathBuf::from(workspace::path("build")).canonicalize()?;
+    if stage.parent() != Some(build.as_path()) {
+        return Err("Vulkan native stage outside admitted output".into());
+    }
+    let binding: serde_json::Value =
+        serde_json::from_slice(&fs::read(stage.join("native-binding.json"))?)?;
+    let native = stage.join("libarmsx2-packaged.so");
+    if binding["upstream"] != REVISION
+        || binding["patchSha256"] != hash(Path::new(VULKAN_PATCH))?
+        || binding["independentStrip"] != true
+        || binding["retainedInactiveGlObservationCode"] != false
+        || binding["nativeSha256"] != hash(&native)?
+        || binding["symbolsSha256"] != hash(&stage.join("libarmsx2-symbols.so"))?
+        || binding["productionPatches"]
+            != serde_json::json!([
+                "0001-host-pause-and-card-flush.patch",
+                "0004-stream-buffer-failure.patch",
+                "0010-vulkan-frame-completion.patch"
+            ])
+    {
+        return Err("Vulkan native candidate/binding differs".into());
+    }
+    for (file, recorded) in binding["composedSourceHashes"]
+        .as_object()
+        .ok_or("Vulkan composed source inventory")?
+    {
+        let relative = Path::new(file);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+            || *recorded != hash(&stage.join("sources").join(relative))?
+        {
+            return Err("Vulkan composed source changed".into());
+        }
+    }
+    Ok(Some(native))
+}
 pub fn observer_mode() -> Result<&'static str> {
     match env::var("PSX_GRAPHICS_OBSERVER_MODE").as_deref() {
         Err(_) | Ok("normal") => Ok("normal"),
@@ -171,6 +220,8 @@ fn active_patches() -> Vec<&'static str> {
             patches.push(CREATOR_OUTPUT_PATCH);
             patches.push(COMMON_RESULTS_PATCH);
         }
+    } else {
+        patches.push(VULKAN_PATCH);
     }
     patches
 }

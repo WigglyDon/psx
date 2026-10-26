@@ -479,7 +479,10 @@ fn core_epoch() -> Result<String> {
 
 fn apk() -> Result<()> {
     verify_core()?;
-    ps2::build()?;
+    let vulkan = ps2::verified_vulkan_artifact()?;
+    if vulkan.is_none() {
+        ps2::build()?;
+    }
     let (sdk, ndk, build) = tools()?;
     let platform = env::var("ANDROID_PLATFORM").unwrap_or("android-37.0".into());
     let jar = sdk.join("platforms").join(platform).join("android.jar");
@@ -750,7 +753,9 @@ public final class PlaybackService extends android.app.Service {
         artifact("build/apk/package/lib/arm64-v8a/libswanstation.so"),
     )?;
     fs::copy(
-        "build/armsx2-android/bin/armsx2_libretro.so",
+        vulkan
+            .as_deref()
+            .unwrap_or_else(|| Path::new("build/armsx2-android/bin/armsx2_libretro.so")),
         artifact("build/apk/package/lib/arm64-v8a/libarmsx2.so"),
     )?;
     fs::copy(

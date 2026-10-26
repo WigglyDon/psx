@@ -52,6 +52,17 @@ actual interface contracts rather than importing another emulator's schedule.
 
 ## Work
 
+The active [execution amendment](https://github.com/WigglyDon/psx/issues/2#issuecomment-6427077508)
+assigns the complete playable Android PS2 loop: moving output, input, audio,
+ordinary saves, resume and switching with PS1 preserved. Continue implementing
+and testing after a failed hypothesis, completed build or verified device return;
+those are progress checkpoints, not automatic handbacks. Earlier closed
+experiments retain their interpretation gates, not a hold on new product work.
+Choose the retained renderer internally from demonstrated evidence and cost.
+Prepare substantial finite campaigns before custody. Stop a faulty run
+immediately, fulfill actual recovery/return/admission requirements, and continue
+useful off-device work. The personal Fold remains excluded.
+
 Advance the complete PLAYER-2 dispatch autonomously without waiting for #1's
 formal closure. Preserve the accepted PS1 build, signing/application identity,
 collection IDs, cards, checkpoints and controller profiles through migrations.

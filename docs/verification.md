@@ -1,5 +1,18 @@
 # FIRST-PLAYABLE-1 verification
 
+## Active PLAYER-2 execution
+
+[Master6427077508](https://github.com/WigglyDon/psx/issues/2#issuecomment-6427077508)
+accepts and closes the negative GS replay branch and assigns the full playable
+PS2 loop. The next candidate uses the retained Vulkan renderer with a bounded
+Rust staging/frontend adapter and the existing GLES UI. Off-device validation
+passed127 player unit tests (three subprocess fixtures ignored by the harness),
+the actual patched native handoff regression, retained C ABI layout comparison,
+software-Vulkan RGBA/BGRA image transfer and the Android target check. A focused
+host-lease test also passed. This establishes source/host behavior, not phone
+gameplay, speed, ordinary saves or Vulkan acceptance. Frozen diagnostic artifacts
+and the PS1 recovery baseline remain retained; the personal Fold is excluded.
+
 Reviewed 2026-10-19. Hardware-rendered gameplay, owner-confirmed clear sound,
 simultaneous touch controls and a completed memory-card save loaded after a
 fresh process have run on the stock Fold. Automatic session restore has also

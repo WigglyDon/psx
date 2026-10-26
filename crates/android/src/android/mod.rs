@@ -2672,6 +2672,15 @@ impl Player {
             self.render_failed(RenderError::Producer(failure));
             return Ok(());
         }
+        let state = core.state();
+        if state.hardware_frames != previous_frames {
+            if let Some(pixels) = &state.pixels {
+                if let Err(error) = unsafe { self.graphics.upload_game(pixels) } {
+                    self.render_failed(error);
+                    return Ok(());
+                }
+            }
+        }
         self.dirty |= !owns_clock || core.state().hardware_frames != previous_frames;
         self.checkpoint_dirty = true;
         self.run_time += before.elapsed();
@@ -2892,6 +2901,22 @@ impl Player {
             self.checkpoint_after_present = false;
             self.checkpoint_dirty = false;
             self.activity.user_paused = true;
+            if self
+                .core
+                .as_ref()
+                .is_some_and(|core| core.producer_failure().is_some())
+            {
+                // A failed producer must retire before any pause/flush callback
+                // can release its handoff and resume more guest graphics work.
+                self.cancel_input();
+                self.stop_sound();
+                self.finish_checkpoint()?;
+                self.checkpoint_valid = false;
+                self.core.take();
+                self.close()?;
+                unsafe { self.graphics.replace_context()? };
+                return Ok(());
+            }
             self.interrupt()?;
             self.finish_checkpoint()?;
             self.checkpoint_valid = false;
