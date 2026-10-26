@@ -144,6 +144,22 @@ incomplete output and its receipt are retained. No dependency tree is expanded.
 
 ## Protected work and other artifacts
 
+The Vulkan player source route is `source-update vulkan-update <full-commit>`.
+It streams from the frozen complete `d11d03e6d02c` archive, with the same bounded
+project delta and independent complete readback. Its sole registry exception is
+ash0.37.3+1.3.251: the lockfile must differ only by that exact package and its
+player dependency edge. The crate digest must match the pin; safe regular source
+members, both licenses and a complete Cargo checksum inventory are added directly
+to the archive in memory. Other dependency bodies stay unchanged. No expanded
+vendor tree, registry refresh or native rebuild is needed. Target/application,
+native compilation and archive-utility revisions remain separate bindings.
+
+Under the installed finite host-workspace route, build/source utilities adopt
+the custodian's actual inherited capacity descriptor after inode/token and lock
+validation. They retain private-root, volume and reserve checks and the existing
+project lock; opening a second competing capacity description would refuse the
+custodian's own already-held phase. An environment label alone is insufficient.
+
 Never automatically expire games, proprietary firmware, memory cards, saves,
 checkpoints, controller profiles, device backups, owner-selected screenshots,
 licensed fixtures, signing material, credentials, Git worktrees/unpushed work,

@@ -1,4 +1,4 @@
-//! Narrow, Linux-host-only 09e27cd -> 123e831 source delivery/retention.
+//! Bounded Linux source delivery/retention from verified complete predecessors.
 //! Uses the installed BSD-licensed libarchive ABI, not a TAR parser or extractor.
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -24,6 +24,8 @@ mod producer;
 #[allow(dead_code)]
 #[path = "../storage.rs"]
 mod storage;
+#[path = "source-update/vulkan_ash.rs"]
+mod vulkan_ash;
 const BASE: &str = "09e27cdb8ad000836ba47220179d7b563790940d";
 const TARGET: &str = "123e831e4afb6c7cec2d8e05a030e3cd82a72bba";
 const BASE_SHA: &str = "6ba74c41f828a4d9f5dcda8919fc9a504ef17a5145e3cd3ae43088a0d512b521";
@@ -523,7 +525,33 @@ fn capacity_lease() -> Result<Option<File>> {
     {
         return Err("Unqualified existing capacity lease".into());
     }
-    let file = OpenOptions::new().read(true).write(true).open(path)?;
+    let file = if let Some(fd) = std::env::var_os("CODEX_HOST_LEASE_FD") {
+        use std::os::fd::FromRawFd;
+        unsafe extern "C" {
+            fn fcntl(fd: i32, command: i32, ...) -> i32;
+        }
+        let fd: i32 = fd.to_str().ok_or("Host lease encoding")?.parse()?;
+        if fd < 3
+            || std::env::var("CODEX_HOST_LEASE_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty())
+                .is_none()
+        {
+            return Err("Invalid inherited host capacity lease".into());
+        }
+        let owned = unsafe { fcntl(fd, 1030, 3) }; // Linux F_DUPFD_CLOEXEC
+        if owned < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let file = unsafe { File::from_raw_fd(owned) };
+        let actual = file.metadata()?;
+        if actual.dev() != m.dev() || actual.ino() != m.ino() {
+            return Err("Inherited source capacity lease inode differs".into());
+        }
+        file
+    } else {
+        OpenOptions::new().read(true).write(true).open(path)?
+    };
     file.try_lock()
         .map_err(|e| format!("Shared workspace capacity busy: {e}"))?;
     Ok(Some(file))
@@ -1069,6 +1097,13 @@ fn main() -> Result<()> {
         .ok_or("Usage: source-update audit | retire | update | finish | verify")?;
     if op == "producer-update" {
         return producer::run(
+            &std::env::args()
+                .nth(2)
+                .ok_or("Missing exact target revision")?,
+        );
+    }
+    if op == "vulkan-update" {
+        return producer::vulkan(
             &std::env::args()
                 .nth(2)
                 .ok_or("Missing exact target revision")?,

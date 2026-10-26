@@ -1,4 +1,4 @@
-//! Exact 123e831 successor delivery without dependency expansion.
+//! Fixed-predecessor source delivery; the Vulkan route admits only pinned ash.
 use super::*;
 const FROM: &str = "123e831e4afb6c7cec2d8e05a030e3cd82a72bba";
 const FROM_SHA: &str = "b14f6e2a0ad5910058bc015b109896c4b631fe33bce71ec8381eddafb114b56f";
@@ -8,6 +8,22 @@ const SELF_SOURCE: &[u8] = include_bytes!(concat!(
 ));
 
 pub fn run(target: &str) -> Result<()> {
+    selected(target, false)
+}
+pub fn vulkan(target: &str) -> Result<()> {
+    selected(target, true)
+}
+fn selected(target: &str, vulkan: bool) -> Result<()> {
+    let (from, from_sha, from_bytes) = if vulkan {
+        (
+            "d11d03e6d02c6c4293b972af9aadb8f639bd1184",
+            "2790fbef78e3bdb82e3a34ef0ae2887ae9f3e2c0642e4fd36b131ff4439b4cb4",
+            204743679,
+        )
+    } else {
+        (FROM, FROM_SHA, 204585917)
+    };
+
     if target.len() != 40
         || !target.bytes().all(|c| c.is_ascii_hexdigit())
         || git(&["rev-parse", target])? != format!("{target}\n").as_bytes()
@@ -26,21 +42,34 @@ pub fn run(target: &str) -> Result<()> {
         }
     }
     let root = std::env::current_dir()?;
+    if vulkan
+        && git(&["show", "HEAD:xtask/src/bin/source-update/vulkan_ash.rs"])?
+            != super::vulkan_ash::SELF_SOURCE
+    {
+        return Err("Executed ash source utility differs from committed source".into());
+    }
     let _growth = storage::Growth::begin(&root, storage::GIB / 2)?;
-    let base = Path::new("build").join(format!("{}.tar.gz", name(FROM)));
+    let base = Path::new("build").join(format!("{}.tar.gz", name(from)));
     let meta = fs::symlink_metadata(&base)?;
-    if !meta.is_file() || meta.is_symlink() || meta.len() != 204585917 || hash(&base)? != FROM_SHA {
+    if !meta.is_file() || meta.is_symlink() || meta.len() != from_bytes || hash(&base)? != from_sha
+    {
         return Err("Retained complete predecessor differs".into());
     }
-    let (inventory, payload) = scan(&base, &name(FROM), &Payloads::new(), None)?;
-    validate(&inventory, &payload, FROM)?;
+    let (inventory, payload) = scan(&base, &name(from), &Payloads::new(), None)?;
+    validate(&inventory, &payload, from)?;
     let changes = String::from_utf8(git(&[
         "diff",
         "--name-status",
         "--no-renames",
-        FROM,
+        from,
         target,
     ])?)?;
+    if vulkan {
+        super::vulkan_ash::lock_change(
+            &git(&["show", &format!("{from}:Cargo.lock")])?,
+            &git(&["show", &format!("{target}:Cargo.lock")])?,
+        )?;
+    }
     let mut replacements = Payloads::new();
     let mut additions = BTreeMap::new();
     if changes.lines().count() > 64 {
@@ -50,11 +79,11 @@ pub fn run(target: &str) -> Result<()> {
     for line in changes.lines() {
         let (status, path) = line.split_once('\t').ok_or("Invalid Git delta")?;
         safe(path)?;
-        // This increment keeps all dependency sources/locks/configuration and
-        // native manifests unchanged. A later dependency change needs review.
+        // Legacy updates keep dependencies unchanged. The Vulkan route checks
+        // its sole lockfile exception independently before accepting this delta.
         if !matches!(status, "A" | "M")
             || path.starts_with("vendor/")
-            || path == "Cargo.lock"
+            || (path == "Cargo.lock" && !vulkan)
             || path == "Cargo.toml"
             || path == "upstream.lock.json"
             || path.starts_with(".cargo/")
@@ -98,6 +127,16 @@ pub fn run(target: &str) -> Result<()> {
             additions.insert(path.to_owned(), (mode, body));
         }
     }
+    if vulkan {
+        let crate_file = std::env::var_os("PSX_SOURCE_ASH_CRATE")
+            .map(PathBuf::from)
+            .ok_or("Pinned ash crate input required")?;
+        for (path, value) in super::vulkan_ash::additions(&crate_file)? {
+            if inventory.contains_key(&path) || additions.insert(path, value).is_some() {
+                return Err("Pinned Rust dependency source collision".into());
+            }
+        }
+    }
     let mut check: Value = serde_json::from_slice(&payload["SOURCE-CHECK.json"])?;
     check["projectRevision"] = json!(target);
     let mut patches = serde_json::Map::new();
@@ -118,6 +157,19 @@ pub fn run(target: &str) -> Result<()> {
             ])?)),
         );
     }
+    if vulkan {
+        let path = "patches/armsx2/0010-vulkan-frame-completion.patch";
+        patches.insert(
+            "0010-vulkan-frame-completion.patch".into(),
+            json!(digest(&git(&["show", &format!("{target}:{path}")])?)),
+        );
+        check["productNativePatches"] = json!([
+            "0001-host-pause-and-card-flush.patch",
+            "0004-stream-buffer-failure.patch",
+            "0010-vulkan-frame-completion.patch"
+        ]);
+        check["additionalRegistrySource"] = json!({"name":"ash","version":super::vulkan_ash::VERSION,"checksum":super::vulkan_ash::SHA});
+    }
     check["nativePatches"] = Value::Object(patches);
     replacements.insert(
         "SOURCE-CHECK.json".into(),
@@ -126,7 +178,7 @@ pub fn run(target: &str) -> Result<()> {
     replacements.insert(
         "SOURCE-REVISION.txt".into(),
         String::from_utf8(payload["SOURCE-REVISION.txt"].clone())?
-            .replacen(FROM, target, 1)
+            .replacen(from, target, 1)
             .into_bytes(),
     );
     let final_path = Path::new("build").join(format!("{}.tar.gz", name(target)));
@@ -141,11 +193,11 @@ pub fn run(target: &str) -> Result<()> {
         .open(&partial)?;
     durable(
         &partial.with_extension("receipt.json"),
-        &json!({"phase":"before-stream","predecessor":FROM,"predecessorSha256":FROM_SHA,"targetRevision":target,"gitDelta":changes,"replacements":replacements.keys().collect::<Vec<_>>(),"additions":additions.keys().collect::<Vec<_>>()}),
+        &json!({"phase":"before-stream","predecessor":from,"predecessorSha256":from_sha,"targetRevision":target,"gitDelta":changes,"replacements":replacements.keys().collect::<Vec<_>>(),"additions":additions.keys().collect::<Vec<_>>()}),
     )?;
     let (written, _) = scan_added(
         &base,
-        &name(FROM),
+        &name(from),
         &replacements,
         &additions,
         Some((Path::new(&name(target)), &f)),
@@ -167,13 +219,13 @@ pub fn run(target: &str) -> Result<()> {
         }
         let mut expected = old.clone();
         if let Some(link) = old["hardlink"].as_str() {
-            expected["hardlink"] = json!(link.replacen(&name(FROM), &name(target), 1));
+            expected["hardlink"] = json!(link.replacen(&name(from), &name(target), 1));
         }
         if actual.get(path) != Some(&expected) {
             return Err(format!("Unmodified source member changed: {path}").into());
         }
     }
-    if actual.len() != inventory.len() + additions.len() || hash(&base)? != FROM_SHA {
+    if actual.len() != inventory.len() + additions.len() || hash(&base)? != from_sha {
         return Err("Source set/predecessor changed".into());
     }
     let sha = hash(&partial)?;
@@ -195,7 +247,7 @@ pub fn run(target: &str) -> Result<()> {
     s.sync_all()?;
     durable(
         &final_path.with_extension("receipt.json"),
-        &json!({"phase":"verified-complete","targetRevision":target,"utilityRevision":utility.trim(),"utilitySourceSha256":digest(TOOL_SOURCE),"utilityProducerSourceSha256":digest(SELF_SOURCE),"utilityBinarySha256":hash(&std::env::current_exe()?)?,"predecessorRevision":FROM,"predecessorSha256":FROM_SHA,"archiveSha256":sha,"archiveBytes":f.metadata()?.len(),"members":actual.len(),"streamedReadback":true,"nativePatches":check["nativePatches"]}),
+        &json!({"phase":"verified-complete","targetRevision":target,"utilityRevision":utility.trim(),"utilitySourceSha256":digest(TOOL_SOURCE),"utilityProducerSourceSha256":digest(SELF_SOURCE),"utilityBinarySha256":hash(&std::env::current_exe()?)?,"predecessorRevision":from,"predecessorSha256":from_sha,"archiveSha256":sha,"archiveBytes":f.metadata()?.len(),"members":actual.len(),"streamedReadback":true,"nativePatches":check["nativePatches"]}),
     )?;
     fs::remove_file(partial)?;
     File::open("build")?.sync_all()?;
