@@ -132,6 +132,12 @@ fn runner(
     let glue = root.join("patches/armsx2/gs-replay");
     let mut objects = Vec::new();
     let mut compiled = Vec::new();
+    let previous = env::var_os("PSX_GS_RUNNER_PREVIOUS_STAGE").map(PathBuf::from);
+    if let Some(previous) = &previous {
+        if previous.canonicalize()?.parent() != Some(workspace.join("build").as_path()) {
+            return Err("runner reuse outside workspace".into());
+        }
+    }
     for (i, name) in [
         "Main.cpp",
         "GSLadder.cpp",
@@ -170,6 +176,35 @@ fn runner(
             quoted(&source.join("pcsx2-gsrunner"))?
         );
         fs::write(stage.join(format!("compile-{i}.command")), &recipe)?;
+        if i != 0 {
+            if let Some(previous) = &previous {
+                let prior_recipe =
+                    fs::read_to_string(previous.join(format!("compile-{i}.command")))?;
+                let normalized = prior_recipe.replace(
+                    previous.to_str().ok_or("prior path")?,
+                    stage.to_str().ok_or("stage path")?,
+                );
+                if normalized != recipe {
+                    return Err("unchanged runner compile input/flags differ".into());
+                }
+                let pinned = output(command("git", ["-C"]).arg(source).args([
+                    "show",
+                    &format!("83fe4e293f71ab5587ef81b06143725bf8c6a30b:pcsx2-gsrunner/{name}"),
+                ]))?;
+                if format!("{:x}", Sha256::digest(pinned.as_bytes())) != hash(&body)? {
+                    return Err("runner reuse source differs from immutable pin".into());
+                }
+                let previous_object = previous.join("objects").join(format!("{i}.o"));
+                let object_hash = hash(&previous_object)?;
+                fs::hard_link(&previous_object, &new_object)?;
+                if hash(&new_object)? != object_hash {
+                    return Err("runner reuse readback".into());
+                }
+                compiled.push(json!({"source":format!("pcsx2-gsrunner/{name}"),"sourceSha256":hash(&body)?,"recipeSha256":format!("{:x}",Sha256::digest(prior_recipe.as_bytes())),"objectSha256":object_hash,"reusedFromRetainedStage":previous.file_name(),"proof":"Exact compiler flags/forced header/path-normalized recipe, immutable pinned source, current common-source inventory and linked object readback; no claim of independent recompilation."}));
+                objects.push(new_object);
+                continue;
+            }
+        }
         run_recipe(&recipe, cache, &stage.join(format!("compile-{i}.log")))?;
         compiled.push(json!({"source":format!("pcsx2-gsrunner/{name}"),"sourceSha256":hash(&body)?,"recipeSha256":format!("{:x}",Sha256::digest(recipe.as_bytes())),"objectSha256":hash(&new_object)?}));
         objects.push(new_object);
@@ -226,15 +261,18 @@ fn runner(
         .to_owned();
     link = link.replacen(&format!(" -o {old}"), &format!(" -o {}", quoted(&raw)?), 1);
     fs::write(stage.join("link.command"), &link)?;
+    save(
+        &stage.join("runner-prelink-binding.json"),
+        &json!({"compiled":compiled,"common":binding,"runnerBridgeSha256":hash(&glue.join("RunnerBridge.inc"))?,"runnerPatchSha256":hash(&root.join("patches/armsx2/0009-development-gs-runner.patch"))?}),
+    )?;
     run_recipe(&link, cache, &stage.join("link.log"))?;
     let bin = required("ANDROID_NDK_HOME")?.join("toolchains/llvm/prebuilt/linux-x86_64/bin");
     output(
-        &mut command(bin.join("llvm-strip"), ["--strip-unneeded", "-o"])
+        command(bin.join("llvm-strip"), ["--strip-unneeded", "-o"])
             .arg(&packaged)
             .arg(&raw),
     )?;
-    let exports =
-        output(&mut command(bin.join("llvm-nm"), ["-D", "--defined-only"]).arg(&packaged))?;
+    let exports = output(command(bin.join("llvm-nm"), ["-D", "--defined-only"]).arg(&packaged))?;
     for name in [
         "retro_psx_gsrunner_entry",
         "retro_psx_runner_prepare",
@@ -251,7 +289,7 @@ fn runner(
     }
     save(
         &stage.join("native-binding.json"),
-        &json!({"experiment":"GS-REPLAY-1","role":"pinned-runner-with-declared-matched-common-repairs","upstream":"83fe4e293f71ab5587ef81b06143725bf8c6a30b","nativeSha256":hash(&packaged)?,"symbolsSha256":hash(&raw)?,"notes":output(&mut command(bin.join("llvm-readelf"),["-n"]).arg(&raw))?,"compiledRunner":compiled,"commonNative":binding,"runnerPatchSha256":hash(&root.join("patches/armsx2/0009-development-gs-runner.patch"))?,"runnerBridgeSha256":hash(&glue.join("RunnerBridge.inc"))?,"intentionalCommonRenderer":"Same repaired/instrumented GS implementation and creator output dependency. Pinned runner Main/host replaces libretro Main; this is NOT untouched upstream or an independent driver control.","libretroMainLinked":false}),
+        &json!({"experiment":"GS-REPLAY-1","role":"pinned-runner-with-declared-matched-common-repairs","upstream":"83fe4e293f71ab5587ef81b06143725bf8c6a30b","nativeSha256":hash(&packaged)?,"symbolsSha256":hash(&raw)?,"notes":output(command(bin.join("llvm-readelf"),["-n"]).arg(&raw))?,"compiledRunner":compiled,"commonNative":binding,"runnerPatchSha256":hash(&root.join("patches/armsx2/0009-development-gs-runner.patch"))?,"runnerBridgeSha256":hash(&glue.join("RunnerBridge.inc"))?,"intentionalCommonRenderer":"Same repaired/instrumented GS implementation and creator output dependency. Pinned runner Main/host replaces libretro Main; this is NOT untouched upstream or an independent driver control.","libretroMainLinked":false}),
     )?;
     println!("runner verified {}", stage.display());
     Ok(())
@@ -270,7 +308,7 @@ fn main() -> Result<()> {
     let expected: Value =
         serde_json::from_slice(&fs::read(root.join("patches/armsx2/composed-source.json"))?)?;
     if output(
-        &mut command("git", ["-C"])
+        command("git", ["-C"])
             .arg(&native_source)
             .args(["rev-parse", "HEAD"]),
     )?
@@ -425,13 +463,13 @@ fn main() -> Result<()> {
     run_recipe(&link, &cache, &stage.join("link.log"))?;
     let tools = required("ANDROID_NDK_HOME")?.join("toolchains/llvm/prebuilt/linux-x86_64/bin");
     output(
-        &mut command(tools.join("llvm-strip"), ["--strip-unneeded", "-o"])
+        command(tools.join("llvm-strip"), ["--strip-unneeded", "-o"])
             .arg(&packaged)
             .arg(&raw),
     )?;
     let independent = stage.join("libarmsx2-independent-strip.so");
     output(
-        &mut command(tools.join("llvm-strip"), ["--strip-unneeded", "-o"])
+        command(tools.join("llvm-strip"), ["--strip-unneeded", "-o"])
             .arg(&independent)
             .arg(&raw),
     )?;
@@ -439,9 +477,8 @@ fn main() -> Result<()> {
     if native_sha != hash(&independent)? {
         return Err("independent strip mismatch".into());
     }
-    let notes = output(&mut command(tools.join("llvm-readelf"), ["-n"]).arg(&raw))?;
-    let exports =
-        output(&mut command(tools.join("llvm-nm"), ["-D", "--defined-only"]).arg(&packaged))?;
+    let notes = output(command(tools.join("llvm-readelf"), ["-n"]).arg(&raw))?;
+    let exports = output(command(tools.join("llvm-nm"), ["-D", "--defined-only"]).arg(&packaged))?;
     for required in [
         "retro_psx_gs_replay_configure",
         "retro_psx_gs_replay_clear",

@@ -4,6 +4,9 @@
 #include "pcsx2/GS/Renderers/OpenGL/GLLibretro.h"
 #include "pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h"
 #define PSX_RUNNER_EXPORT extern "C" __attribute__((visibility("default")))
+// Shared libretro-compatible input objects name this frontend hook. Replay
+// has no live pad output; retain the native runner's inert rumble behavior.
+void Host::SetPadVibration(u32, float, float) {}
 PSX_RUNNER_EXPORT bool retro_psx_gs_replay_configure(unsigned mode, const char* path, GSReplay::Callback cb)
 { return mode == 3 && GSReplay::Configure(mode, path, cb); }
 PSX_RUNNER_EXPORT void retro_psx_gs_replay_clear() { GSReplay::Clear(); }

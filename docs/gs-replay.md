@@ -93,3 +93,21 @@ Current qualification is recorded on issue2. This document dispatches no device
 operation by itself. Normal APK/data verification, disposable package/input
 cleanup, retained private capture verification before removal, Home/display
 return and released clients/custody are mandatory at every physical stage.
+
+The runner input adapter preserves the admitted GS settings and applies the
+same three effective libretro post-load values: native-resolution upscale,
+stretch presentation, and enabled hardware downloads. The saved base INI
+precedes those libretro overrides and is therefore insufficient by itself.
+Duplicate GS sections/keys or malformed entries refuse preparation.
+
+The runner additionally installs SIGINT/SIGTERM handlers. Its Rust owner saves
+and conditionally restores those alongside the existing crash-handler scope;
+a newer foreign handler is preserved. Callback storage and native code remain
+live until the graphics owners and runner thread have actually joined.
+
+`gs-replay-build` reuses verified warm compiler recipes for the modified library
+and the pinned runner target. `xtask gs-replay-apk` and `xtask gs-runner-apk`
+package those libraries separately, checking source inventories, exports,
+independent stripping, ARM64/ELF and ZIP alignment, resources and the existing
+signing certificate. Failed native stages remain evidence. A corresponding
+source archive must be completed and independently streamed before admission.

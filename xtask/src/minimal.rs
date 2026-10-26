@@ -152,11 +152,9 @@ fn build_impl(replay: bool, runner: bool) -> Result<()> {
             || candidate_binding["role"] != "modified-capture-and-replay"
             || candidate_binding["baselineInventory"] != composition
             || candidate_binding["extraPatchSha256"]
-                != hash(&Path::new(
-                    "patches/armsx2/0008-development-gs-replay.patch",
-                ))?
+                != hash(Path::new("patches/armsx2/0008-development-gs-replay.patch"))?
             || candidate_binding["glueHeaderSha256"]
-                != hash(&Path::new("patches/armsx2/gs-replay/GSReplay.h"))?
+                != hash(Path::new("patches/armsx2/gs-replay/GSReplay.h"))?
             || candidate_binding["independentStrip"] != true
         {
             return Err("GS candidate source/patch binding differs".into());
@@ -184,17 +182,13 @@ fn build_impl(replay: bool, runner: bool) -> Result<()> {
             || candidate_binding["libretroMainLinked"] != false
             || common_binding["baselineInventory"] != composition
             || common_binding["extraPatchSha256"]
-                != hash(&Path::new(
-                    "patches/armsx2/0008-development-gs-replay.patch",
-                ))?
+                != hash(Path::new("patches/armsx2/0008-development-gs-replay.patch"))?
             || common_binding["glueHeaderSha256"]
-                != hash(&Path::new("patches/armsx2/gs-replay/GSReplay.h"))?
+                != hash(Path::new("patches/armsx2/gs-replay/GSReplay.h"))?
             || candidate_binding["runnerPatchSha256"]
-                != hash(&Path::new(
-                    "patches/armsx2/0009-development-gs-runner.patch",
-                ))?
+                != hash(Path::new("patches/armsx2/0009-development-gs-runner.patch"))?
             || candidate_binding["runnerBridgeSha256"]
-                != hash(&Path::new("patches/armsx2/gs-replay/RunnerBridge.inc"))?
+                != hash(Path::new("patches/armsx2/gs-replay/RunnerBridge.inc"))?
         {
             return Err("Pinned-runner common/source binding differs".into());
         }
@@ -589,18 +583,36 @@ fn build_impl(replay: bool, runner: bool) -> Result<()> {
             native.as_os_str(),
         ],
     ))?)?;
-    for symbol in [
-        "retro_run",
-        "retro_load_game",
-        "retro_psx_ready",
-        "retro_psx_set_paused",
-        "retro_psx_set_speed",
-        "retro_psx_set_frame_callback",
-        "retro_psx_observer_set_callback",
-        "retro_psx_observer_set_stream_callback",
-        "retro_psx_observer_set_output_callback",
-        "retro_psx_observer_set_result_callback",
-    ] {
+    let required_exports: &[&str] = if runner {
+        &[
+            "retro_psx_gsrunner_entry",
+            "retro_psx_runner_prepare",
+            "retro_psx_runner_service",
+            "retro_psx_runner_stop",
+            "retro_psx_runner_retired",
+            "retro_psx_gs_replay_configure",
+            "retro_psx_gs_replay_clear",
+            "retro_psx_observer_set_callback",
+            "retro_psx_observer_set_output_callback",
+            "retro_psx_observer_set_result_callback",
+            "retro_psx_observer_set_stream_callback",
+            "retro_psx_runner_set_failure",
+        ]
+    } else {
+        &[
+            "retro_run",
+            "retro_load_game",
+            "retro_psx_ready",
+            "retro_psx_set_paused",
+            "retro_psx_set_speed",
+            "retro_psx_set_frame_callback",
+            "retro_psx_observer_set_callback",
+            "retro_psx_observer_set_stream_callback",
+            "retro_psx_observer_set_output_callback",
+            "retro_psx_observer_set_result_callback",
+        ]
+    };
+    for &symbol in required_exports {
         if !native_exports
             .lines()
             .any(|l| l.split_whitespace().last() == Some(symbol) && !l.contains(" UND "))

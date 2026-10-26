@@ -372,6 +372,9 @@ fn donor_gate_requires_positive_output_dependency_reproduction_and_retirement() 
     let digest = "a".repeat(64);
     let snapshot = serde_json::json!({"first_failure":{"stage":16,"owner":1,"frame":2,"data":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],"detail":[1,1,1,1,0,0,1,1]},"output_sync":{"created":2,"retired_on_creator":1,"invalid_names_released":1,"live":0,"untracked_creates":0,"frontend_sync_operations":0,"context_reclaim_pending":0,"native_joined":true,"first_ownership_failure":null,"overflow":false},"common":{"native_context_destroyed":true,"frontend_context_destroyed":true,"phase_entries":[0,0,1,0,1,1,1]}});
     assert!(reproduction(&stream, &ledger, &snapshot, &digest, &digest).is_ok());
+    let mut missing_state = stream.clone();
+    missing_state.readback_provenance = false;
+    assert!(reproduction(&missing_state, &ledger, &snapshot, &digest, &digest).is_err());
     for path in [
         "/first_failure/stage",
         "/first_failure/data/26",
@@ -391,6 +394,24 @@ fn donor_gate_requires_positive_output_dependency_reproduction_and_retirement() 
     assert!(reproduction(&stream, &ledger, &snapshot, &digest, &"b".repeat(64)).is_err());
     ledger.mode = Mode::PinnedReplay;
     assert!(reproduction(&stream, &ledger, &snapshot, &digest, &digest).is_err());
+}
+
+#[test]
+fn runner_ini_mirrors_actual_post_load_gs_answers_without_a_tuning_catalog() {
+    let original="[EmuCore]\nEnableGameFixes = true\n[EmuCore/GS]\nAspectRatio = 4:3\nHWDownloadMode = 2\nupscale_multiplier = 3\nAccurateBlendingUnit = 1\n[Other]\nunchanged = yes\n";
+    let matched = gs::matched_runner_ini(original).unwrap();
+    assert!(matched.contains("AspectRatio = Stretch\nHWDownloadMode = 0\n"));
+    assert!(matched.contains("AccurateBlendingUnit = 1\n"));
+    assert!(matched.ends_with("[Other]\nunchanged = yes\n"));
+    assert_eq!(matched, gs::matched_runner_ini(&matched).unwrap());
+    for invalid in [
+        "",
+        "[EmuCore/GS]\na=1\na=2",
+        "[EmuCore/GS]\n[EmuCore/GS]\n",
+        "[EmuCore/GS]\nnot-an-entry",
+    ] {
+        assert!(gs::matched_runner_ini(invalid).is_err());
+    }
 }
 
 #[cfg(target_os = "linux")]

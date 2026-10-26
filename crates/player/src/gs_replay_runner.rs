@@ -73,7 +73,7 @@ impl Runner {
             "retro_psx_gsrunner_entry",
             unsafe extern "C" fn(i32, *mut *mut c_char) -> i32
         );
-        let signals = NativeSignals::capture(entry as *const () as *const c_void)
+        let signals = NativeSignals::capture_runner(entry as *const () as *const c_void)
             .map_err(|e| e.to_string())?;
         observe::session_ready();
         observe::output_sync::begin().map_err(str::to_owned)?;

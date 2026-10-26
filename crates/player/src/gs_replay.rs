@@ -18,6 +18,66 @@ pub const STATE_VERSION: u32 = 9;
 pub const FREEZE_BYTES: u32 = 425 + 4 * 1024 * 1024 + 84;
 type Result<T> = std::result::Result<T, String>;
 
+/// Mirror the three effective GS answers that the libretro adapter applies
+/// after loading/saving its base INI. The native runner has no GET_VARIABLE
+/// callback; copying the earlier on-disk INI alone would silently lose these.
+/// Renderer is explicitly selected by the runner bridge, not a numeric enum
+/// guessed here. All other sections and settings remain the admitted inputs.
+pub fn matched_runner_ini(input: &str) -> Result<String> {
+    use std::collections::BTreeSet;
+    if input.len() > 256 * 1024 || input.contains('\0') {
+        return Err("INI bound".into());
+    }
+    let mut output = String::new();
+    let mut in_gs = false;
+    let mut seen_section = false;
+    let mut seen = BTreeSet::new();
+    let add = |output: &mut String| {
+        output.push_str("upscale_multiplier = 1\nAspectRatio = Stretch\nHWDownloadMode = 0\n");
+    };
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if in_gs {
+                add(&mut output);
+            }
+            in_gs = trimmed == "[EmuCore/GS]";
+            if in_gs {
+                if seen_section {
+                    return Err("duplicate GS INI section".into());
+                }
+                seen_section = true;
+            }
+        }
+        if in_gs
+            && !trimmed.starts_with('[')
+            && !trimmed.starts_with([';', '#'])
+            && !trimmed.is_empty()
+        {
+            let (key, _) = trimmed.split_once('=').ok_or("invalid GS INI entry")?;
+            let key = key.trim();
+            if !seen.insert(key.to_owned()) {
+                return Err("duplicate GS INI key".into());
+            }
+            if ["upscale_multiplier", "AspectRatio", "HWDownloadMode"].contains(&key) {
+                continue;
+            }
+        }
+        output.push_str(line);
+        output.push('\n');
+    }
+    if in_gs {
+        add(&mut output);
+    }
+    if !seen_section {
+        return Err("missing GS INI section".into());
+    }
+    if output.len() > 256 * 1024 {
+        return Err("matched INI bound".into());
+    }
+    Ok(output)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Stream {
     pub decoded_bytes: u64,
@@ -410,6 +470,13 @@ pub fn reproduction(
     if expected_digest.len() != 64
         || !expected_digest.bytes().all(|b| b.is_ascii_hexdigit())
         || expected_digest != replay_digest
+        || !stream.readback_provenance
+        || stream.state_bytes != FREEZE_BYTES
+        || stream.transfers == 0
+        || stream.vsyncs == 0
+        || stream.vsyncs > VSYNC_LIMIT
+        || ledger.limit != BYTE_LIMIT
+        || ledger.first_failure.is_none()
         || ledger.mode != Mode::ModifiedReplay
         || ledger.started_at.is_some()
         || ledger.phase != Phase::Stopped
