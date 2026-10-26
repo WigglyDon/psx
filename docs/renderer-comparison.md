@@ -229,3 +229,53 @@ This is off-device preparation, not authority to capture, rebuild the frozen
 engine, run another phone trial or replace the product. Preserve all frozen
 operands, symbols, private evidence and normal progress while Master chooses
 the next native/common boundary. No speculative production workaround follows.
+
+## Coherent mapping repair and corrected minimal-host result
+
+Master6406832718 deferred GS capture/replay to correct the active persistent
+upload contract first. Exact seven-patch composition confirmed coherent storage
+with noncoherent mapping access and a skip-flush Unmap branch. Repair58a18f2 adds
+`GL_MAP_COHERENT_BIT` to coherent mapping access. The noncoherent explicit-flush
+branch, synchronization and earlier failure handling remain intact. Rust-owned
+fixtures execute retained Create/Map/Unmap through EXT and core/ARB dispatch:
+the predecessor fails the coherent access assertion, both corrected patch
+compositions pass, and exact explicit-flush ranges remain covered. This proves
+the source contract, not actual GPU cache visibility.
+
+The one admitted corrected minimal-host boot used source
+`a1fc211112801c27132e53e62772034ea4d5bcec`, APK SHA256
+`57ac4549f7a8fdae3ea246859a981715c665c53053b59b46068b1d1a3f12bb39`
+and native SHA256
+`b6bff788bc7676d67417beb89c5880590cd47038f6d3d3b2d235220addf5d9cf`.
+Exact symbols, source inventory and streamed complete-source bindings are in
+issue2 prerequisite report6407942129. This document's later commit is not the
+executed APK/source target. Frozen preceding operands remain unchanged.
+
+At producer463/10.991186s, stage16 again recorded a non-null output fence invalid
+on both creator-side validity routes before flush/publication. Recorded dispatch
+and context comparisons matched; sampled errors were zero. Seven persistent
+BufferStorage selections and946 map/unmap operations were recorded, with coherent
+Unmap active and zero stream waits. Real GS rendering/composition/overlay ran;
+the host received461 hardware callbacks and462 notifications. Two bounded numeric
+exports retained the final ledger. The external stop completed13.391298s after
+launch. The unchanged clean20s/512-output gate failed; no player arm ran.
+
+The retained application log also contains two submission deadlock warnings.
+No common error or OOM was recorded, including retirement; download/readback
+remained inactive. Native performance-hint session creation failed as in the
+preceding minimal run. Audio output remained intentionally absent; equal dynamic
+clock behavior, gameplay, sound, saving and sustained performance are not claimed.
+All463 fences were accounted for (462 creator retirements and one invalid-name
+release), with zero live/untracked/frontend sync operations, native joined, and
+both graphics contexts destroyed.
+
+Return was verified at2026-10-26T04:14:36Z: diagnostic package/input removed,
+actual normal APK and complete normal-data digests unchanged, Home preserved,
+normal player stopped, screen OFF and custody released without pending recovery.
+Private logs, workload and custody receipts remain local. The Fold was untouched.
+
+The source repair stands independently; this reproduction does not establish
+its historical causal role or a driver diagnosis. Close this corrected minimal
+run without another ownership/UI/wait variant. Retain the native/common runner
+boundaries above for a concrete next Master disposition; capture/replay has not
+been authorized or executed. Issue2 remains open for Master acceptance.
