@@ -1,6 +1,8 @@
 # GS-REPLAY-1
 
-**DISPATCHED**, [Master6420075065](https://github.com/WigglyDon/psx/issues/2#issuecomment-6420075065).
+**Stopped at the reproduction gate; awaiting Master review.**
+[Master6420075065](https://github.com/WigglyDon/psx/issues/2#issuecomment-6420075065)
+owns the executed conditional sequence.
 The earlier hold on capture/replay is superseded. Implementation and off-device
 qualification precede physical admission. No ordinary player setting or release
 execution path exposes this experiment. New orchestration, validation and bounds
@@ -13,6 +15,35 @@ relevant graphics fault with equivalent output coverage. Each is one fresh
 custodian admission and at most30 seconds of guest/replay work, followed by
 verified return. No Fold, normal-player replacement, restored checkpoint,
 automatic loop, recapture, optional image batch or backend sweep is included.
+
+## Observed boundary, 2026-10-26
+
+The single capture reproduced the producer output-fence failure at output462.
+Its stopped ledger does not assert clean codec closure; the retained original
+bytes independently pass format/state, bounded decompression, framing, complete
+trailer and VSync-end validation. Capture accepted/started at GS boundary1 and
+stopped at504, retaining503VSyncs and1,330packets. These identities are distinct
+from producer outputs. Original failed collection/return evidence was preserved,
+then cleanup-only recovery verified the original copy, normal data and return.
+
+The one modified replay consumed all1,330packets/503VSyncs, reached its EOF hook
+and created/retired493creator-owned outputs without the matching fence failure.
+A GPU submission warning was detected; the structured observer recorded no
+nonzero error, fatal or dependency failure. Both contexts and native owners
+retired. The positive reproduction gate refused the pinned-runner arm, which
+was never requested or executed. This is not a clean-run or driver verdict.
+Live EE/IOP/VU execution and pre-capture resource/scheduling history are absent
+from replay; the route did not preserve the original reproduction.
+
+The diagnostic sequence therefore stops here under the dispatch's negative
+reproduction branch. Both physical stages have verified normal APK/data,
+owned-package cleanup, display return and custody release. No repeat or new
+comparison follows without a further disposition; PLAYER-2 remains open.
+The frozen executable/source target is `d11d03e6d02c6c4293b972af9aadb8f639bd1184`;
+later documentation revisions do not rebind those binaries. Exact APK, native,
+symbol, signer and complete-source identities are in the
+[verified package handback](https://github.com/WigglyDon/psx/issues/2#issuecomment-6424370490).
+Streams, images, sidecars, input hashes and raw evidence remain private.
 
 ## Capture and validation
 
