@@ -1,7 +1,7 @@
 //! Conservative control-arm gate. A clean exit or old fence-only export is
 //! insufficient. UI/copy/swap counters intentionally absent in the reference
 //! are not required; real native guest/output and complete retirement are.
-use super::{NATIVE_SHA, PLAYER_SOURCE, SETTINGS};
+use super::{BASELINE_NATIVE_SHA, NATIVE_SHA, PLAYER_SOURCE, SETTINGS};
 use serde_json::Value;
 type Result<T> = std::result::Result<T, String>;
 fn require(ok: bool, why: &str) -> Result<()> {
@@ -21,13 +21,15 @@ fn null(v: &Value, key: &str) -> bool {
 }
 pub fn reference(result: &Value, snapshot: &Value, harness_source: &str) -> Result<()> {
     require(
-        result["version"] == 1
+        result["version"] == 2
             && result["minimal_host"] == true
             && result["harness_source"] == harness_source,
         "wrong/missing reference binding",
     )?;
     require(
-        result["frozen_native"] == NATIVE_SHA && result["frozen_player"] == PLAYER_SOURCE,
+        result["native"] == NATIVE_SHA
+            && result["baseline_native"] == BASELINE_NATIVE_SHA
+            && result["frozen_player"] == PLAYER_SOURCE,
         "frozen engine/control differs",
     )?;
     require(null(result, "result"), "reference fault or missing result")?;
@@ -236,7 +238,7 @@ mod tests {
         for (k, v) in SETTINGS {
             e["settings_queries"][k] = json!(v);
         }
-        let mut r = json!({"version":1,"minimal_host":true,"harness_source":"fixture","frozen_native":NATIVE_SHA,"frozen_player":PLAYER_SOURCE,"result":null,"host_page":4096,"window":[1080,2280],"expected_window":[1080,2280],"gles":[3,2],"egl_selection_matches_frozen_query":true,"egl_attributes":[1,8,8,8,8,0,0,0,5,64,3],"elapsed_since_guest_launch":22.0,"evidence":e});
+        let mut r = json!({"version":2,"minimal_host":true,"harness_source":"fixture","native":NATIVE_SHA,"baseline_native":BASELINE_NATIVE_SHA,"frozen_player":PLAYER_SOURCE,"result":null,"host_page":4096,"window":[1080,2280],"expected_window":[1080,2280],"gles":[3,2],"egl_selection_matches_frozen_query":true,"egl_attributes":[1,8,8,8,8,0,0,0,5,64,3],"elapsed_since_guest_launch":22.0,"evidence":e});
         r["window_setup_complete"] = json!(true);
         let mut p =
             serde_json::to_value(crate::graphics_observer::output_sync::Progress::default())
@@ -276,6 +278,17 @@ mod tests {
             let mut bad = r.clone();
             *bad.pointer_mut(path).unwrap() = json!(false);
             assert!(reference(&bad, &s, "fixture").is_err(), "{path}");
+        }
+        for (key, value) in [
+            ("version", json!(1)),
+            ("native", json!(BASELINE_NATIVE_SHA)),
+            ("baseline_native", json!("unbound")),
+        ] {
+            let mut bad = r.clone();
+            bad[key] = value;
+            assert!(reference(&bad, &s, "fixture").is_err(), "{key}");
+            bad.as_object_mut().unwrap().remove(key);
+            assert!(reference(&bad, &s, "fixture").is_err(), "missing{key}");
         }
         for (path, v) in [
             ("/progress/producer_frame", json!(511)),

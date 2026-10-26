@@ -1,0 +1,37 @@
+{
+  "upstream": "83fe4e293f71ab5587ef81b06143725bf8c6a30b",
+  "projectRevision": "58a18f2050578eb1bdfca82c1ec4829feee64f96",
+  "composedSourceSha256": "fb8172639bc1a12ef3bf56eda18c3241a6e338d904e1ba7b0b9952a23e548f15",
+  "nativePatchHashes": {
+    "0001-host-pause-and-card-flush.patch": "90b35554198d3cd87cb8be3e17747fd4bda348f2262627c471cc338afd5ff3a9",
+    "0002-development-graphics-observer.patch": "a08bf0c8842975eb307bccf2c64bdfa3816786994fc1ad265ff41f5d0f1dc56f",
+    "0003-development-matched-reader.patch": "020b4c2c5553d73b57c234f6bb2368b358dbbeebd1e2f669f8b4988003337cbf",
+    "0004-stream-buffer-failure.patch": "ab5db417de40732a17b1ce03bd73ce11a5546bb5baac557c4b27d50ae69a2c02",
+    "0005-development-stream-observer.patch": "7f64420d0bf9bb3d2928e00f44532707e0b5de7cf415f1266b8936d968f36ce3",
+    "0006-development-creator-output.patch": "99e0f9ff6475e4f512f55e870a929a75200f73097a0a53427cb20eb88f335d70",
+    "0007-development-common-results.patch": "e5904422a733ffc0ef8bd23d24177dab1d082a5c822118b5f3d8df6e7c558906"
+  },
+  "nativeSourceHashes": {
+    "pcsx2-libretro/Main.cpp": "b84c7e9433b5192306a4f320a7663493c39eda8806e91ced40c447d9066e2528",
+    "pcsx2/GS/Renderers/OpenGL/GLContextEGL.cpp": "049e1f4234e3e8da3fd824cf80725487f5cb92e30f2487099811f33782ad199f",
+    "pcsx2/GS/Renderers/OpenGL/GLLibretro.cpp": "efeff3f319ead5a25de5339ccc6968c7b00ab844f9e6aef43c1e17afa0ade2af",
+    "pcsx2/GS/Renderers/OpenGL/GLLibretro.h": "9b3f5aa3e3ecc2782f100947c37182afefb8222b93f5948bf385813ff8da21b8",
+    "pcsx2/GS/Renderers/OpenGL/GLProgram.cpp": "4abbb47201b457376c76b3a32a6c65a7ef8290577ea58da832f9b89c9b20c148",
+    "pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp": "47f5362b47d5f6a2ce7f3486bf9338bec95d9ab63ea8ddc0758fb54974bb2e1d",
+    "pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h": "ce2c79f9fa1d24d0c004f1ac59c0d65c22c781f9a711d6d54c7a278af85d9489",
+    "pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp": "aa2fe8e51942c9a15db0a1bfac72c8eda7c3da4a49beadf57f0adca92d21ee0c",
+    "pcsx2/GS/Renderers/OpenGL/GSTextureOGL.cpp": "4ac1fe8dab3c41bd553aaf001be359d5c5d7445273e4c22cc9a22e1838dde342",
+    "pcsx2/SIO/Memcard/MemoryCardFile.cpp": "a97fe18d4e91017071e4f1f840d2d4c3abcfd30221ae70e3dda97cc5dbd42aa0",
+    "pcsx2/SIO/Memcard/MemoryCardFile.h": "61d656bbcfc12609f61e3b97d7a28572e6ac43aeb84a6bd2f634911079d51366",
+    "pcsx2/SIO/Memcard/MemoryCardProtocol.cpp": "a2acd121fe9e3c243783319fc9f073eec049624aed7a3037aa1a15cc45c2740b",
+    "pcsx2/SIO/Sio2.cpp": "864183e00b48603658a5cf40d84f1089b43fe0980ffe23f503b3058cbd023f41",
+    "pcsx2/SaveState.cpp": "dda00fe7a042fd9780fd6f236a4929451a6cb88b44b91ac94a4836a67b566189",
+    "pcsx2/SaveState.h": "94ef0caed280ea768a4ebe8677b7d37a9746efd2530df7f96281f5a8be4426d4",
+    "pcsx2/VMManager.cpp": "42e4841b55039c9a53ea1a67be302f36348b52bb66aa9840ea59fda4a3788ddb"
+  },
+  "onlyNativeSourceDelta": "pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.cpp",
+  "exactOneLineDelta": true,
+  "baselineNativeSha256": "e9e648d8658c767c182d34ebccbfa52aa0672a3c3e7182ee77653ac201acf467",
+  "nativeSha256": "b6bff788bc7676d67417beb89c5880590cd47038f6d3d3b2d235220addf5d9cf",
+  "note": "Source-composed inventory of active changed donor files. Baseline source plus exact patch stack and this one-line repair; unused retained orphan is not a compilation input. Binary/source project bindings are distinct from the later wrapper/archive target."
+}

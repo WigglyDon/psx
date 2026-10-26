@@ -1,4 +1,4 @@
-//! Package only an independent Rust wrapper and the frozen reviewed engine.
+//! Package only the independent Rust wrapper and reviewed coherent-map candidate.
 //! No CMake/native builder, dependency expansion, Java or ordinary APK rebuild.
 use super::*;
 use serde_json::json;
@@ -18,8 +18,10 @@ fn output(command: &mut Command) -> Result<Vec<u8>> {
 }
 const PLAYER: &str = "8e61eb2ccdf364cc4aa80e33dfc0796021c9dac1";
 const APK: &str = "c90b0a52fca2d7f63780797bb82f68f02a2cc5af2c8409d6dc47562a10b9f8e9";
-const NATIVE: &str = "e9e648d8658c767c182d34ebccbfa52aa0672a3c3e7182ee77653ac201acf467";
-const SYMBOLS: &str = "94310cb5458881707e40c3895296f27bf6973d553efe2ad76dbba70aab91d41a";
+const NATIVE: &str = "b6bff788bc7676d67417beb89c5880590cd47038f6d3d3b2d235220addf5d9cf";
+const SYMBOLS: &str = "3a6ea954b03b6ea07718735b6fef669c8b747d15a7985828159a19b7e203c874";
+const BASELINE_NATIVE: &str = "e9e648d8658c767c182d34ebccbfa52aa0672a3c3e7182ee77653ac201acf467";
+const NATIVE_ID: &str = "57b560aba913a18b3eb3882f03fec1d3c12dfb20";
 const SOURCE: &str = "fc8435ef043d1a01ba6205da2bbe73c17c568e9af320369929c07da22ae4338f";
 const CERT: &str = "391bb44bb79ba157f06f550ec73dcf3074040e004d0fd5d72c232211d850fc25";
 fn checked(path: &Path, expected: &str) -> Result<()> {
@@ -83,8 +85,33 @@ pub fn build() -> Result<()> {
         .to_owned();
     let frozen = required("PSX_FROZEN_PLAYER_DIR")?;
     let player = frozen.join("psx.apk");
-    let native = frozen.join("libarmsx2-packaged.so");
-    let symbols = frozen.join("libarmsx2-symbols.so");
+    let candidate = required("PSX_COHERENT_NATIVE_DIR")?;
+    if candidate.canonicalize()? != root.join(".local/candidates/coherent-native") {
+        return Err("Require this independently verified native candidate".into());
+    }
+    let native = candidate.join("libarmsx2-packaged.so");
+    let symbols = candidate.join("libarmsx2-symbols.so");
+    let candidate_binding: serde_json::Value =
+        serde_json::from_slice(&fs::read(candidate.join("binding.json"))?)?;
+    let composition: serde_json::Value =
+        serde_json::from_slice(&fs::read("patches/armsx2/composed-source.json")?)?;
+    if candidate_binding["repair"] != "persistent-map-coherent"
+        || candidate_binding["nativeSha256"] != NATIVE
+        || candidate_binding["nativeSymbolsSha256"] != SYMBOLS
+        || candidate_binding["nativeBuildId"] != NATIVE_ID
+        || candidate_binding["baselineNativeSha256"] != BASELINE_NATIVE
+        || candidate_binding["exactOneLineDelta"] != true
+        || candidate_binding["mode"] != "producer-local-output-sync"
+        || candidate_binding["upstream"] != ps2::REVISION
+        || candidate_binding["composedSourceSha256"] != composition["composedSourceSha256"]
+        || candidate_binding["nativeSourceHashes"] != composition["nativeSourceHashes"]
+        || candidate_binding["nativePatchHashes"] != composition["nativePatchHashes"]
+        || composition["nativeSha256"] != NATIVE
+        || composition["upstream"] != ps2::REVISION
+        || composition["projectRevision"] != candidate_binding["projectRevision"]
+    {
+        return Err("New native composition/symbol provenance differs".into());
+    }
     checked(&player, APK)?;
     checked(&native, NATIVE)?;
     checked(&symbols, SYMBOLS)?;
@@ -133,8 +160,14 @@ pub fn build() -> Result<()> {
             "0007-development-common-results.patch",
         ),
     ] {
-        if manifest[key] != hash(&Path::new("patches/armsx2").join(path))? {
-            return Err("Frozen native patch drift".into());
+        let current = hash(&Path::new("patches/armsx2").join(path))?;
+        let baseline = if key == "streamRepairSha256" {
+            "18bb6fe213db13ecba1e8b6106e201401f3aac7d50aa977b2a13488dc8699ea7"
+        } else {
+            &current
+        };
+        if manifest[key] != baseline || candidate_binding["nativePatchHashes"][path] != current {
+            return Err("Baseline or repaired native patch drift".into());
         }
     }
     let stage = root.join(format!("build/minimal-host-{}", &revision[..12]));
@@ -150,6 +183,19 @@ pub fn build() -> Result<()> {
         .join(env::var("ANDROID_PLATFORM").unwrap_or_else(|_| "android-37.0".into()))
         .join("android.jar");
     let bin = ndk.join("toolchains/llvm/prebuilt/linux-x86_64/bin");
+    let native_strip = stage.join("libarmsx2-independent-strip.so");
+    execute(&mut command(
+        bin.join("llvm-strip"),
+        [
+            OsStr::new("--strip-unneeded"),
+            OsStr::new("-o"),
+            native_strip.as_os_str(),
+            symbols.as_os_str(),
+        ],
+    ))?;
+    if hash(&native_strip)? != NATIVE {
+        return Err("Native symbol-to-package independent strip differs".into());
+    }
     let mut cargo = command(
         "cargo",
         [
@@ -239,7 +285,12 @@ pub fn build() -> Result<()> {
         "unzip",
         [OsStr::new("-tq"), asset_zip.as_os_str()],
     ))?;
-    let binding = json!({"developmentOnly":true,"minimalHost":1,"projectRevision":revision,"frozenPlayerRevision":PLAYER,"frozenPlayerApkSha256":APK,"nativeSha256":NATIVE,"nativeSymbolsSha256":SYMBOLS,"nativeSourceSha256":SOURCE,"nativeBuildId":"9d848dcb7ba4412ad9c74bb4a27c19c6dc718a76","mode":"producer-local-output-sync","frozenEngineAssetsSha256":hash(&asset_zip)?,"nativeManifest":manifest,"noNativeRebuild":true,"ordinaryApplicationLogic":false});
+    let mut packaged_native = candidate_binding.clone();
+    packaged_native
+        .as_object_mut()
+        .ok_or("Native manifest object required")?
+        .remove("proof");
+    let binding = json!({"developmentOnly":true,"minimalHost":1,"projectRevision":revision,"frozenPlayerRevision":PLAYER,"frozenPlayerApkSha256":APK,"baselineNativeSha256":BASELINE_NATIVE,"nativeSha256":NATIVE,"nativeSymbolsSha256":SYMBOLS,"baselineCompleteSourceSha256":SOURCE,"nativeBuildId":NATIVE_ID,"nativeRepair":"persistent-map-coherent","mode":"producer-local-output-sync","frozenEngineAssetsSha256":hash(&asset_zip)?,"baselineObserverManifest":manifest,"nativeManifest":packaged_native,"noNativeRebuild":false,"packagingRebuildsNative":false,"ordinaryApplicationLogic":false});
     fs::write(
         asset_dir.join("minimal-host.json"),
         serde_json::to_vec_pretty(&binding)?,
@@ -406,8 +457,8 @@ pub fn build() -> Result<()> {
         bin.join("llvm-readelf"),
         [OsStr::new("-n"), native.as_os_str()],
     ))?)?;
-    if !native_notes.contains("9d848dcb7ba4412ad9c74bb4a27c19c6dc718a76") {
-        return Err("Frozen native build ID differs".into());
+    if !native_notes.contains(NATIVE_ID) {
+        return Err("Candidate native build ID differs".into());
     }
     let rust_notes = String::from_utf8(output(&mut command(
         bin.join("llvm-readelf"),

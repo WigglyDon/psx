@@ -26,7 +26,9 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 
 pub const PLAYER_SOURCE: &str = "8e61eb2ccdf364cc4aa80e33dfc0796021c9dac1";
-pub const NATIVE_SHA: &str = "e9e648d8658c767c182d34ebccbfa52aa0672a3c3e7182ee77653ac201acf467";
+pub const BASELINE_NATIVE_SHA: &str =
+    "e9e648d8658c767c182d34ebccbfa52aa0672a3c3e7182ee77653ac201acf467";
+pub const NATIVE_SHA: &str = "b6bff788bc7676d67417beb89c5880590cd47038f6d3d3b2d235220addf5d9cf";
 pub const SETTINGS: [(&str, &str); 11] = [
     ("armsx2_renderer", "OpenGL"),
     ("armsx2_upscale", "1x"),

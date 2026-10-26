@@ -135,6 +135,19 @@ while retaining negative failures, matching the
 
 ## Device verification
 
+The development-only `minimal-host` target packages the independent Rust
+NativeActivity and an already qualified native candidate; it does not invoke
+the native builder. For the coherent-map qualification, provide the admitted
+build-workspace variables, `PSX_FROZEN_PLAYER_DIR` for original resource/notices
+and baseline identity, `PSX_FROZEN_SOURCE_ARCHIVE` for its complete predecessor,
+and `PSX_COHERENT_NATIVE_DIR` for the separately verified new native/symbol pair
+and binding. The committed `patches/armsx2/composed-source.json` inventories the
+new composed native inputs. Baseline and candidate hashes are checked separately;
+the old binary/source is not relabeled. The wrapper's later complete source
+archive is qualified independently. This is build metadata, not a player option
+or device admission. Current limits and results belong to
+[the renderer comparison](renderer-comparison.md).
+
 Build before acquiring the device. Follow the current installed stock-device
 procedure, its private target binding, standing preferences and exclusive
 transaction. Do not select an arbitrary first ADB device or reinstall by

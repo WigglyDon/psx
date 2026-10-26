@@ -612,9 +612,9 @@ pub fn run(app: AndroidApp) -> Result<()> {
     observe::service(&root, true);
     observe::join_export();
     let bytes=serde_json::to_vec(&serde_json::json!({
-        "version":1,"minimal_host":true,
+        "version":2,"minimal_host":true,
         "harness_source":env!("PSX_MINIMAL_SOURCE_REVISION"),
-        "frozen_player":minimal_host::PLAYER_SOURCE,"frozen_native":minimal_host::NATIVE_SHA,
+        "frozen_player":minimal_host::PLAYER_SOURCE,"native":minimal_host::NATIVE_SHA,"baseline_native":minimal_host::BASELINE_NATIVE_SHA,
         "result":result.as_ref().err(),"window":geometry,"expected_window":expected,
         "gles":gles,"egl_attributes":attributes,
         "egl_selection_matches_frozen_query":selection_matches_frozen_query,
