@@ -85,6 +85,10 @@ retirement path. Failure is checked before draining, after draining and after
 native capture; a list captured during a reported failure is freed rather than
 published. Already frozen earlier snapshots retain their existing ownership.
 Successful synchronization keeps its existing scheduling.
+Persistent coherent storage also requests coherent mapping access, matching the
+retained skip-flush branch. Noncoherent mappings retain explicit written-range
+flushes. CPU-write visibility and completion before reusing ranges are separate
+contracts; this flag correction does not remove or add synchronization waits.
 This failure-handling correction is source-testable independently of whether
 that path caused an earlier device symptom. Development-only producer operation
 observation is described in [graphics-observer.md](graphics-observer.md).

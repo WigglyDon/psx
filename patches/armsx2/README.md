@@ -186,6 +186,16 @@ This native edit has its own revision binding and disables the old checkpoint ex
 Controlled-return tests compile the pinned helper and actual upload callers;
 these are source-level regression evidence, not GPU or historical-cause proof.
 
+The same retained patch requests `GL_MAP_COHERENT_BIT` in persistent mapping
+access when coherent storage is selected. Previously storage requested the bit,
+but mapping did not, while `Unmap` skipped range flushing. The noncoherent branch
+retains explicit-flush access and flushes only the written suballocation range.
+This corrects CPU-write visibility semantics independently of completion/reuse
+fences; the failed-wait repair remains unchanged. The Rust retained-code fixture
+captures storage/access arguments and exact flushes through actual Create/Map/
+Unmap on EXT and core/ARB routes, including the pinned pre-repair counterexample.
+It does not emulate driver caches or establish the historical graphics cause.
+
 Observer builds apply patches in order `0001`, `0004`, `0002`, `0003`, `0005`.
 The development-only `producer-local-output-sync` mode additionally applies
 `0006-development-creator-output.patch`. It adds necessary retained-native

@@ -226,6 +226,15 @@ index a89247f73..b97e0b7ce 100644
  			pxAssert((m_position + used_size) <= m_size);
  			if (!m_coherent)
  			{
+@@ -277,7 +335,7 @@ namespace
+ 			glBindBuffer(target, buffer_id);
+ 
+ 			const u32 flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | (coherent ? GL_MAP_COHERENT_BIT : 0);
+-			const u32 map_flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | (coherent ? 0 : GL_MAP_FLUSH_EXPLICIT_BIT);
++			const u32 map_flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | (coherent ? GL_MAP_COHERENT_BIT : GL_MAP_FLUSH_EXPLICIT_BIT);
+ 			if (GLAD_GL_VERSION_4_4 || GLAD_GL_ARB_buffer_storage)
+ 				glBufferStorage(target, size, nullptr, flags);
+ 			else if (GLAD_GL_EXT_buffer_storage)
 diff --git a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h b/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h
 index e16497cca..7664f847a 100644
 --- a/pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h

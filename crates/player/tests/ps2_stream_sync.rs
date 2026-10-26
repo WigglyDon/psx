@@ -60,10 +60,29 @@ struct Report {
     reason: u32,
     result: u32,
 }
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+struct MappingReport {
+    storage_flags: u32,
+    map_flags: u32,
+    core_storage_calls: u32,
+    ext_storage_calls: u32,
+    map_offset: u32,
+    map_length: u32,
+    flushes: u32,
+    flush_offset: [u32; 2],
+    flush_length: [u32; 2],
+    second_offset: u32,
+    position: u32,
+    unmaps_before_destroy: u32,
+    unmaps_after_destroy: u32,
+    bytes_written: u32,
+}
 struct Fixture {
     _library: Library,
     run: unsafe extern "C" fn(u32, u32, u32) -> Report,
     factory: unsafe extern "C" fn(u32) -> u32,
+    mapping: unsafe extern "C" fn(u32, u32) -> MappingReport,
     dir: PathBuf,
 }
 #[test]
@@ -140,7 +159,12 @@ fn complete_patch_stack_composes_with_the_retained_adapter_and_observer() {
 impl Fixture {
     fn build() -> Self {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let dir = std::env::temp_dir().join(format!("psx-stream-sync-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "psx-stream-sync-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         fs::create_dir_all(&dir).unwrap();
         let relative = "pcsx2/GS/Renderers/OpenGL";
         let root = dir.join(relative);
@@ -152,13 +176,37 @@ impl Fixture {
             )
             .unwrap();
         }
-        for patch in [
-            Some("0004-stream-buffer-failure.patch"),
-            cfg!(feature = "graphics-observer").then_some("0005-development-stream-observer.patch"),
-        ]
-        .into_iter()
-        .flatten()
-        {
+        let patches: &[&str] = if cfg!(feature = "graphics-observer") {
+            &[
+                "0001-host-pause-and-card-flush.patch",
+                "0002-development-graphics-observer.patch",
+                "0003-development-matched-reader.patch",
+                "0004-stream-buffer-failure.patch",
+                "0005-development-stream-observer.patch",
+                "0006-development-creator-output.patch",
+                "0007-development-common-results.patch",
+            ]
+        } else {
+            &[
+                "0001-host-pause-and-card-flush.patch",
+                "0004-stream-buffer-failure.patch",
+            ]
+        };
+        for patch in patches {
+            let patch_path = if *patch == "0004-stream-buffer-failure.patch"
+                && std::env::var("PSX_TEST_RETAINED_PREDECESSOR").as_deref() == Ok("1")
+            {
+                // Test-only red control: immutable pre-repair patch, not a
+                // reconstructed flag helper or the mutable build checkout.
+                let old = Command::new("git").args(["show", "a2f2a5544f15ccdb4086592bd2022b1cfa42db0a:patches/armsx2/0004-stream-buffer-failure.patch"])
+                    .current_dir(&repo).output().unwrap();
+                assert!(old.status.success());
+                let path = dir.join("predecessor-stream.patch");
+                fs::write(&path, old.stdout).unwrap();
+                path
+            } else {
+                repo.join("patches/armsx2").join(patch)
+            };
             let applied = Command::new("git")
                 .arg("apply")
                 .args([
@@ -166,7 +214,7 @@ impl Fixture {
                     "--include=pcsx2/GS/Renderers/OpenGL/GLStreamBuffer.h",
                     "--include=pcsx2/GS/Renderers/OpenGL/GSDeviceOGL.cpp",
                 ])
-                .arg(repo.join("patches/armsx2").join(patch))
+                .arg(patch_path)
                 .current_dir(&dir)
                 .output()
                 .unwrap();
@@ -238,6 +286,8 @@ static bool GLAD_GL_VERSION_4_4=false, GLAD_GL_ARB_buffer_storage=false, GLAD_GL
 static u8 mapped[256]; static u32 waits,creates,deletes,duplicate_delete,wait_result,null_at;
 static unsigned deleted[64];static u32 notified,fail_reason,fail_result,selected,observed_creates,observed_wait;
 static u32 errors_read,error_pending;static bool reject_storage=false;
+struct MappingReport {{u32 storage_flags,map_flags,core_storage_calls,ext_storage_calls,map_offset,map_length,flushes,flush_offset[2],flush_length[2],second_offset,position,unmaps_before_destroy,unmaps_after_destroy,bytes_written;}};
+static MappingReport mapping_report;
 static const char* renderer="Generated fixture";static const char* vendor="Generic";
 static GLenum glGetError() {{ ++errors_read;const auto result=error_pending;error_pending=0;return result; }}
 static const u8* glGetString(GLenum which) {{return reinterpret_cast<const u8*>(which==GL_RENDERER?renderer:vendor);}}
@@ -246,11 +296,11 @@ static void glGenBuffers(int,GLuint* id) {{*id=1;}}
 static void glDeleteBuffers(int,const GLuint*) {{}}
 static void glBufferData(GLenum,u32,const void*,GLenum) {{}}
 static void glBufferSubData(GLenum,u32,u32,const void*) {{}}
-static void glBufferStorage(GLenum,u32,const void*,u32) {{if(reject_storage)error_pending=0x505;}}
-static void glBufferStorageEXT(GLenum,u32,const void*,u32) {{if(reject_storage)error_pending=0x505;}}
-static void* glMapBufferRange(GLenum,u32,u32,u32) {{return mapped;}}
-static void glUnmapBuffer(GLenum) {{}}
-static void glFlushMappedBufferRange(GLenum,u32,u32) {{}}
+static void glBufferStorage(GLenum,u32,const void*,u32 flags) {{++mapping_report.core_storage_calls;mapping_report.storage_flags=flags;if(reject_storage)error_pending=0x505;}}
+static void glBufferStorageEXT(GLenum,u32,const void*,u32 flags) {{++mapping_report.ext_storage_calls;mapping_report.storage_flags=flags;if(reject_storage)error_pending=0x505;}}
+static void* glMapBufferRange(GLenum,u32 offset,u32 length,u32 flags) {{mapping_report.map_flags=flags;mapping_report.map_offset=offset;mapping_report.map_length=length;return mapped;}}
+static void glUnmapBuffer(GLenum) {{++mapping_report.unmaps_after_destroy;}}
+static void glFlushMappedBufferRange(GLenum,u32 offset,u32 length) {{const u32 n=mapping_report.flushes++;if(n<2){{mapping_report.flush_offset[n]=offset;mapping_report.flush_length[n]=length;}}}}
 static void glBindBufferRange(GLenum,u32,GLuint,u32,u32) {{}}
 static GLsync glFenceSync(GLenum,u32) {{++creates;return creates==null_at?nullptr:reinterpret_cast<void*>(uintptr_t(creates));}}
 static GLenum glClientWaitSync(GLsync,u32,u64) {{++waits;return wait_result;}}
@@ -258,6 +308,8 @@ static void glDeleteSync(GLsync s) {{ if(!s) return; ++deletes; const auto id=ui
 static void* _aligned_malloc(size_t size,size_t alignment) {{void* p=nullptr;return posix_memalign(&p,alignment,size)?nullptr:p;}}
 static void _aligned_free(void* p) {{free(p);}}
 namespace Common {{template<class T> T AlignUp(T value,T alignment) {{return ((value+alignment-1)/alignment)*alignment;}}}}
+// Only observer transport is stubbed; actual retained Create/Map/Unmap follows.
+namespace GSObservation {{struct Phase {{explicit Phase(u32){{}}}};static bool Unsafe(){{return false;}}static GLenum Error(u32,bool){{return glGetError();}}template<class... T> static u32 Result(T...){{return 0;}}}}
 {header}
 {helper}
 struct GSVertexPT1 {{u8 bytes[32];}};
@@ -307,6 +359,24 @@ extern "C" u32 factory(u32 scenario) {{
  if({observing}&&selected!=actual) std::abort();
  if(errors_read!=(scenario==4?4:2)) std::abort();
  return actual;
+}}
+extern "C" MappingReport mapping_contract(u32 coherent,u32 route) {{
+ GLStreamBuffer::SetFailureCallback(nullptr);reject_storage=false;errors_read=error_pending=0;
+ mapping_report={{}};waits=creates=deletes=duplicate_delete=0;null_at=0;wait_result=GL_ALREADY_SIGNALED;
+ std::fill(std::begin(deleted),std::end(deleted),0);std::memset(mapped,0,sizeof(mapped));
+ GLAD_GL_VERSION_4_4=route==0;GLAD_GL_ARB_buffer_storage=route==1;GLAD_GL_EXT_buffer_storage=route==2;
+ {{
+ auto buffer=BufferStorageStreamBuffer::Create(GL_ARRAY_BUFFER,256,coherent!=0);
+ if(!buffer)std::abort();
+ const auto first=buffer->Map(16,20);if(!first.pointer)std::abort();
+ std::memset(first.pointer,0x33,20);buffer->Unmap(20);
+ const auto second=buffer->Map(16,12);if(!second.pointer)std::abort();
+ mapping_report.second_offset=second.buffer_offset;std::memset(second.pointer,0x44,12);buffer->Unmap(12);
+ mapping_report.position=dynamic_cast<SyncingStreamBuffer*>(buffer.get())->m_position;
+ mapping_report.unmaps_before_destroy=mapping_report.unmaps_after_destroy;
+ mapping_report.bytes_written=mapped[0]==0x33&&mapped[19]==0x33&&mapped[20]==0&&mapped[32]==0x44&&mapped[43]==0x44&&mapped[44]==0;
+ }}
+ return mapping_report;
 }}
 "#,
             observing = if cfg!(feature = "graphics-observer") {
@@ -358,11 +428,55 @@ extern "C" u32 factory(u32 scenario) {{
                 .get::<unsafe extern "C" fn(u32) -> u32>(b"factory\0")
                 .unwrap()
         };
+        let mapping = unsafe {
+            *library
+                .get::<unsafe extern "C" fn(u32, u32) -> MappingReport>(b"mapping_contract\0")
+                .unwrap()
+        };
         Self {
             _library: library,
             run,
             factory,
+            mapping,
             dir,
+        }
+    }
+}
+#[test]
+fn actual_persistent_create_map_unmap_requests_the_visibility_it_relies_on() {
+    let fixture = Fixture::build();
+    // Exercise Android's EXT route first, then core and ARB selection.
+    for route in [2, 0, 1] {
+        for coherent in [0, 1] {
+            let r = unsafe { (fixture.mapping)(coherent, route) };
+            let access = 2 | 64 | if coherent == 1 { 128 } else { 16 };
+            assert_eq!(
+                r.storage_flags,
+                2 | 64 | if coherent == 1 { 128 } else { 0 },
+                "route{route} {r:?}"
+            );
+            assert_eq!(
+                r.map_flags, access,
+                "actual coherent mapping must request coherent access; route{route} {r:?}"
+            );
+            assert_eq!(
+                (r.core_storage_calls, r.ext_storage_calls),
+                if route == 2 { (0, 1) } else { (1, 0) },
+                "{r:?}"
+            );
+            assert_eq!((r.map_offset, r.map_length), (0, 256), "{r:?}");
+            assert_eq!(r.flushes, if coherent == 1 { 0 } else { 2 }, "{r:?}");
+            if coherent == 0 {
+                assert_eq!(r.flush_offset, [0, 32], "{r:?}");
+                assert_eq!(r.flush_length, [20, 12], "{r:?}");
+            }
+            assert_eq!((r.second_offset, r.position), (32, 44), "{r:?}");
+            assert_eq!(
+                (r.unmaps_before_destroy, r.unmaps_after_destroy),
+                (0, 1),
+                "suballocation Unmap must remain persistent: {r:?}"
+            );
+            assert_eq!(r.bytes_written, 1, "{r:?}");
         }
     }
 }
