@@ -478,6 +478,14 @@ fn core_epoch() -> Result<String> {
 }
 
 fn apk() -> Result<()> {
+    if let Some(stage) = env::var_os("PSX_APK_STAGE") {
+        if env::var_os("PSX_BUILD_WORKSPACE").is_none() || Path::new(&stage).exists() {
+            return Err(
+                "Use an absent admitted APK stage; preserve failed/existing candidates".into(),
+            );
+        }
+        fs::create_dir(stage)?;
+    }
     verify_core()?;
     let vulkan = ps2::verified_vulkan_artifact()?;
     if vulkan.is_none() {
@@ -744,6 +752,12 @@ public final class PlaybackService extends android.app.Service {
         ],
     ))?;
     fs::create_dir_all(artifact("build/apk/package/lib/arm64-v8a"))?;
+    if let Some(stage) = env::var_os("PSX_APK_STAGE") {
+        fs::copy(
+            "target/aarch64-linux-android/release/libpsx.so",
+            PathBuf::from(stage).join("libpsx-symbols.so"),
+        )?;
+    }
     fs::copy(
         "target/aarch64-linux-android/release/libpsx.so",
         artifact("build/apk/package/lib/arm64-v8a/libpsx.so"),

@@ -35,6 +35,18 @@ fn inherited_lease(fd: i32, expected: &fs::Metadata) -> Result<File> {
 }
 
 pub fn path(relative: &str) -> String {
+    if let Some(stage) = env::var_os("PSX_APK_STAGE") {
+        let stage = PathBuf::from(stage);
+        if let Some(suffix) = relative.strip_prefix("build/apk/") {
+            return stage.join(suffix).to_string_lossy().into_owned();
+        }
+        if relative == "build/psx-development.apk" {
+            return stage
+                .join("psx-development.apk")
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
     match env::var_os("PSX_BUILD_WORKSPACE") {
         Some(root) => PathBuf::from(root)
             .join(relative)
@@ -172,6 +184,15 @@ impl Admission {
         let temporary = env::temp_dir().canonicalize()?;
         if !temporary.starts_with(&root) {
             return Err("TMPDIR is outside the admitted build workspace".into());
+        }
+        if let Some(stage) = env::var_os("PSX_APK_STAGE") {
+            let stage = PathBuf::from(stage);
+            if stage.parent() != Some(root.join("build").as_path())
+                || stage.file_name().is_none()
+                || stage.is_symlink()
+            {
+                return Err("APK stage must be a direct admitted build child".into());
+            }
         }
         Ok(Self {
             root,
