@@ -1,4 +1,6 @@
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+mod android_packet;
 mod minimal;
 mod ps2;
 mod storage;

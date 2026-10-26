@@ -125,6 +125,25 @@ migration or other media is part of this route. Firmware and sidecars use the
 existing private authorized input packet; frozen resources/notices remain bundled.
 The exact private input identities and current access/capacity checks stay local.
 
+The development operator stages the packet through `adb shell -T`, with the
+payload opened only after the existing identity/lease preflight. It explicitly
+prepares the app's `files` directory, refuses an existing or redirected scratch
+root, and requires the expected manifest, remote success status and exact
+completion marker before checking individual input hashes. A missing manifest
+ends preparation before any guest launch. The narrow Rust command/completion
+helper and generated host fixtures are in `xtask/src/android_packet.rs`.
+
+Legacy `exec-in` is insufficient for this check: the
+[ADB client implementation](https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/client/commandline.cpp)
+copies input to its raw connection and returns without collecting the remote
+command's exit status or stderr. Host fixtures separately reproduce extraction
+failure when the destination directory is absent. These prove staging/reporting
+defects, not why a particular phone extraction failed or any graphics root cause.
+The failed zero-launch contact and its return remain separate evidence; neither
+this tool correction nor passing fixtures authorize another physical trial.
+Tool source/binary bindings are separate from the unchanged diagnostic APK and
+its complete corresponding-source archive.
+
 `minimal_host::qualification::reference` is the control-arm gate. It requires
 the source/engine binding, matched window/EGL/page/settings, successful hardware
 negotiation, ready/normal-speed transition, generated audio, at least20s bounded
