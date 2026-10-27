@@ -1,17 +1,38 @@
-# FIRST-PLAYABLE-1 verification
+# Player verification
 
 ## Active PLAYER-2 execution
 
 [Master6427077508](https://github.com/WigglyDon/psx/issues/2#issuecomment-6427077508)
 accepts and closes the negative GS replay branch and assigns the full playable
-PS2 loop. The next candidate uses the retained Vulkan renderer with a bounded
-Rust staging/frontend adapter and the existing GLES UI. Off-device validation
-passed127 player unit tests (three subprocess fixtures ignored by the harness),
-the actual patched native handoff regression, retained C ABI layout comparison,
-software-Vulkan RGBA/BGRA image transfer and the Android target check. A focused
-host-lease test also passed. This establishes source/host behavior, not phone
-gameplay, speed, ordinary saves or Vulkan acceptance. Frozen diagnostic artifacts
-and the PS1 recovery baseline remain retained; the personal Fold is excluded.
+PS2 loop. The current candidate uses the retained Vulkan renderer with a bounded
+Rust staging/frontend adapter and the existing GLES UI. Actual admitted lab
+tests show card formatting and game-data initialization, title/new-game/character
+menus, and the rendered 3D opening tavern dialogue. Touch changes the menus.
+The owner reports audible, clear dialogue/music in that scene; busy-scene speed
+varies and audio underrun counters increase in slow portions. Player-controlled
+movement, ordinary character save/load and sustained full speed remain unproved.
+
+An earlier candidate also restored machine state across a fresh process and
+switched PS2/PS1/PS2 in the same process, showing Crash startup. That is startup
+and lifecycle evidence, not a PS1 gameplay regression pass for every later build.
+Normal data, directory identity and the agreed baseline were verified after each
+return; failed installer returns and their successful cleanup-only recoveries
+remain separate retained evidence.
+
+The pre-load output drain fixes a demonstrated stale-image boundary, but a
+mid-dialogue paused restore can still initially be black until Play. Candidate
+`ba1f3a3035ed869f32869ab7cc2b8b71c5cb280c` adds a bounded atomic checkpoint
+picture without advancing the guest or counting a synthetic GPU frame. Its 129
+player tests pass (four explicitly ignored), both Android configurations compile,
+and package/signature, independent stripping and complete-source streaming
+readback pass. Actual picture-bearing restore qualification is pending, separately
+from those host results. Exact artifacts are bound in
+[PLAYER-2](https://github.com/WigglyDon/psx/issues/2#issuecomment-6432235554).
+
+The actual patched native handoff, retained C ABI layout comparison,
+software-Vulkan RGBA/BGRA transfer and focused host-lease checks also passed.
+Frozen diagnostics and the PS1 recovery baseline remain retained. The personal
+Fold has not qualified this Vulkan player path and remains excluded from testing.
 
 Reviewed 2026-10-19. Hardware-rendered gameplay, owner-confirmed clear sound,
 simultaneous touch controls and a completed memory-card save loaded after a
