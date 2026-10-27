@@ -9,9 +9,12 @@ Rust staging/frontend adapter and the existing GLES UI. Actual admitted lab
 tests show card formatting and game-data initialization, title/new-game/character
 menus, the rendered 3D opening tavern dialogue and visually confirmed analog
 movement. The owner reported audible, clear dialogue/music on the earlier
-`507481d` build. A later `ba1f3a3` busy-scene interval ran at 59–69% emulation
-speed, so sustained full speed remains unqualified. Ordinary character save/load
-also remains unproved; successful formatting is a separate observation.
+`507481d` build. The `47a703c` tavern trial subsequently reported approximately
+59.91–60.03 VPS /100.0–100.2% native speed and visibly responded to analog
+movement, following the earlier `ba1f3a3` 59–69% interval. These are bounded scene
+observations, not general title, frame-pacing or thermal acceptance. Audio
+underruns still rose on `47a703c`; fresh clear-audio acceptance and ordinary
+character save/load remain unproved. Successful formatting is separate.
 
 An earlier candidate also restored machine state across a fresh process and
 switched PS2/PS1/PS2 in the same process, showing Crash startup. That is startup
@@ -31,15 +34,38 @@ return to gameplay have now run, separately from those host results. Exact
 artifacts are bound in
 [PLAYER-2](https://github.com/WigglyDon/psx/issues/2#issuecomment-6432235554).
 
-The next frozen candidate is application/builder `47a703c`, with native input
+The executed frozen candidate is application/builder `47a703c`, with native input
 `325056a`: cached readback memory selection and completion-owned preparation of
 one next frame. Its 131 player tests, actual retained C++ handoff test, explicit
 host software-Vulkan copy test and both Android compilation checks pass. Package,
 signature, independent stripping and complete corresponding-source readback pass.
 The source-only `d8f5802` utility corrects generated patch metadata while preserving
-all application/native bytes; it is not a later player build. Actual performance,
-ordinary saves and regression results for this candidate remain pending. Current
-bindings and progress are on [#2](https://github.com/WigglyDon/psx/issues/2#issuecomment-6449515650).
+all application/native bytes; it is not a later player build. Its admitted
+rendering/movement/speed result and incomplete save attempt are recorded on
+[#2](https://github.com/WigglyDon/psx/issues/2#issuecomment-6452813708).
+The original install-timeout return and later completed cleanup-only recovery
+remain separate evidence. Ordinary saving and later regression acceptance do
+not follow from that trial.
+
+Rust-only successor `b648e92247aa8cd6692d721299871a55b7e6c17e` removes two
+redundant native flushes from each PS2 snapshot. One native pause/flush/capture
+is followed by authoritative card verification while the same writer stays
+paused. PS1 retains flush, serialization and RAM identity ordering. The actual
+callback-path regression reproduces the former three flushes, requires one in
+the successor, refuses capture after a failed flush and frees captured state
+after a failed card read. The focused check and full library suite pass
+(131 passed, four intentionally ignored), as do both Android configurations.
+
+The successor's APK is
+`07f8fea090564f08c22303adecd93382e2369da87f40dff604fdb47528ef671a`;
+complete 42,463-member corresponding source is
+`1120cf91871c3b356e5bbd4eb267cbd7ff19284c01af33fd3d3001f4e0785c21`.
+Independent symbols/strip, original signer and package checks pass; the exact
+PS1/PS2 native binaries were reused. The host phase completed with verified
+return. These are source/package observations, not a measured audio remedy.
+The finite save/load, snapshot-audio and separate PS1 switching/lifecycle
+blocks are prepared; hardware results remain pending. Exact bindings are on
+[#2](https://github.com/WigglyDon/psx/issues/2#issuecomment-6454728927).
 
 The actual patched native handoff, retained C ABI layout comparison,
 software-Vulkan RGBA/BGRA transfer and focused host-lease checks also passed.
