@@ -7,10 +7,11 @@ accepts and closes the negative GS replay branch and assigns the full playable
 PS2 loop. The current candidate uses the retained Vulkan renderer with a bounded
 Rust staging/frontend adapter and the existing GLES UI. Actual admitted lab
 tests show card formatting and game-data initialization, title/new-game/character
-menus, and the rendered 3D opening tavern dialogue. Touch changes the menus.
-The owner reports audible, clear dialogue/music in that scene; busy-scene speed
-varies and audio underrun counters increase in slow portions. Player-controlled
-movement, ordinary character save/load and sustained full speed remain unproved.
+menus, the rendered 3D opening tavern dialogue and visually confirmed analog
+movement. The owner reported audible, clear dialogue/music on the earlier
+`507481d` build. A later `ba1f3a3` busy-scene interval ran at 59–69% emulation
+speed, so sustained full speed remains unqualified. Ordinary character save/load
+also remains unproved; successful formatting is a separate observation.
 
 An earlier candidate also restored machine state across a fresh process and
 switched PS2/PS1/PS2 in the same process, showing Crash startup. That is startup
@@ -19,20 +20,33 @@ Normal data, directory identity and the agreed baseline were verified after each
 return; failed installer returns and their successful cleanup-only recoveries
 remain separate retained evidence.
 
-The pre-load output drain fixes a demonstrated stale-image boundary, but a
-mid-dialogue paused restore can still initially be black until Play. Candidate
+The pre-load output drain fixes a demonstrated stale-image boundary. An earlier
+mid-dialogue paused restore was initially black until Play. Candidate
 `ba1f3a3035ed869f32869ab7cc2b8b71c5cb280c` adds a bounded atomic checkpoint
 picture without advancing the guest or counting a synthetic GPU frame. Its 129
 player tests pass (four explicitly ignored), both Android configurations compile,
 and package/signature, independent stripping and complete-source streaming
-readback pass. Actual picture-bearing restore qualification is pending, separately
-from those host results. Exact artifacts are bound in
+readback pass. Its actual fresh-process paused-picture restoration and subsequent
+return to gameplay have now run, separately from those host results. Exact
+artifacts are bound in
 [PLAYER-2](https://github.com/WigglyDon/psx/issues/2#issuecomment-6432235554).
+
+The next frozen candidate is application/builder `47a703c`, with native input
+`325056a`: cached readback memory selection and completion-owned preparation of
+one next frame. Its 131 player tests, actual retained C++ handoff test, explicit
+host software-Vulkan copy test and both Android compilation checks pass. Package,
+signature, independent stripping and complete corresponding-source readback pass.
+The source-only `d8f5802` utility corrects generated patch metadata while preserving
+all application/native bytes; it is not a later player build. Actual performance,
+ordinary saves and regression results for this candidate remain pending. Current
+bindings and progress are on [#2](https://github.com/WigglyDon/psx/issues/2#issuecomment-6449515650).
 
 The actual patched native handoff, retained C ABI layout comparison,
 software-Vulkan RGBA/BGRA transfer and focused host-lease checks also passed.
 Frozen diagnostics and the PS1 recovery baseline remain retained. The personal
 Fold has not qualified this Vulkan player path and remains excluded from testing.
+
+## PS1 baseline
 
 Reviewed 2026-10-19. Hardware-rendered gameplay, owner-confirmed clear sound,
 simultaneous touch controls and a completed memory-card save loaded after a
