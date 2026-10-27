@@ -528,7 +528,7 @@ impl Bridge {
                 )
             })
             .collect();
-        log::info!(
+        eprintln!(
             "PS2 readback allocation: bytes={} memory_type={} flags={:#x} eligible={eligible:?}",
             required.size,
             index,
