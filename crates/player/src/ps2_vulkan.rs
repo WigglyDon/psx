@@ -307,6 +307,25 @@ unsafe extern "C" fn wait(handle: *mut c_void) {
     }
 }
 
+/// Readback is GPU-write/CPU-read, so CPU caching takes priority over avoiding
+/// an invalidate call. Coherence is the tie-breaker; visibility and the buffer's
+/// actual type mask remain mandatory. Uncached visible memory stays a fallback.
+fn readback_memory_type(properties: &vk::PhysicalDeviceMemoryProperties, bits: u32) -> Option<u32> {
+    (0..properties.memory_type_count)
+        .filter(|i| bits & (1 << i) != 0)
+        .filter(|i| {
+            properties.memory_types[*i as usize]
+                .property_flags
+                .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
+        })
+        .max_by_key(|i| {
+            let flags = properties.memory_types[*i as usize].property_flags;
+            (
+                flags.contains(vk::MemoryPropertyFlags::HOST_CACHED),
+                flags.contains(vk::MemoryPropertyFlags::HOST_COHERENT),
+            )
+        })
+}
 fn extent(width: u32, height: u32) -> Result<usize> {
     if width == 0 || height == 0 || width > MAX_WIDTH || height > MAX_HEIGHT {
         return Err("The PS2 picture exceeded its native-resolution buffer.".into());
@@ -495,22 +514,28 @@ impl Bridge {
         let properties = self
             .instance
             .get_physical_device_memory_properties(self.gpu);
-        let index = (0..properties.memory_type_count)
-            .filter(|i| required.memory_type_bits & (1 << i) != 0)
-            .filter(|i| {
-                properties.memory_types[*i as usize]
-                    .property_flags
-                    .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
-            })
-            .max_by_key(|i| {
-                properties.memory_types[*i as usize]
-                    .property_flags
-                    .contains(vk::MemoryPropertyFlags::HOST_COHERENT)
-            })
+        let index = readback_memory_type(&properties, required.memory_type_bits)
             .ok_or("PS2 Vulkan has no host-visible staging memory.")?;
         self.coherent = properties.memory_types[index as usize]
             .property_flags
             .contains(vk::MemoryPropertyFlags::HOST_COHERENT);
+        let eligible: Vec<_> = (0..properties.memory_type_count)
+            .filter(|i| required.memory_type_bits & (1 << i) != 0)
+            .map(|i| {
+                (
+                    i,
+                    properties.memory_types[i as usize].property_flags.as_raw(),
+                )
+            })
+            .collect();
+        log::info!(
+            "PS2 readback allocation: bytes={} memory_type={} flags={:#x} eligible={eligible:?}",
+            required.size,
+            index,
+            properties.memory_types[index as usize]
+                .property_flags
+                .as_raw()
+        );
         self.memory = device
             .allocate_memory(
                 &vk::MemoryAllocateInfo::builder()
@@ -694,6 +719,29 @@ impl Drop for Bridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn readback_prefers_cached_reads_but_respects_visibility_and_type_mask() {
+        let visible = vk::MemoryPropertyFlags::HOST_VISIBLE;
+        let coherent = vk::MemoryPropertyFlags::HOST_COHERENT;
+        let cached = vk::MemoryPropertyFlags::HOST_CACHED;
+        let mut properties = vk::PhysicalDeviceMemoryProperties::default();
+        properties.memory_type_count = 5;
+        for (slot, flags) in properties.memory_types.iter_mut().zip([
+            visible | coherent,
+            visible | cached,
+            cached | coherent, // Not host visible.
+            visible | cached | coherent,
+            visible,
+        ]) {
+            slot.property_flags = flags;
+        }
+        assert_eq!(readback_memory_type(&properties, 0b00011), Some(1));
+        assert_eq!(readback_memory_type(&properties, 0b01111), Some(3));
+        assert_eq!(readback_memory_type(&properties, 0b10101), Some(0));
+        assert_eq!(readback_memory_type(&properties, 0b10000), Some(4));
+        assert_eq!(readback_memory_type(&properties, 0b00100), None);
+        assert_eq!(readback_memory_type(&properties, 0), None);
+    }
     #[test]
     fn image_bounds_are_checked_before_any_driver_call() {
         assert_eq!(extent(640, 448).unwrap(), 640 * 448 * 4);

@@ -18,6 +18,9 @@ opaque image handles never cross into the UI. Guest rendering remains hardware
 rendering. Transfer cost and device compatibility require actual measurement;
 this is an implementation route, not a qualified performance claim. Existing
 development GLES experiments stay frozen, with no user-facing backend selector.
+Readback staging prefers host-cached visible memory, then coherence; the buffer's
+type mask remains authoritative and uncached visible memory remains a fallback.
+Noncoherent storage retains its checked invalidation after GPU completion.
 
 The `player-acceptance` build feature uses the full player with a prepared,
 marked app-private sibling of its normal `files` directory. Normal saves,
