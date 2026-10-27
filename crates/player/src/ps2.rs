@@ -878,6 +878,14 @@ impl Core {
     }
     pub fn restore(&mut self, bytes: &[u8]) -> Result<()> {
         self.flush()?;
+        // Pause releases native pacing but does not consume its last image.
+        // Drain that startup/previous-session handoff before GS defrost clears
+        // the current target. Otherwise the first poll after loading can count
+        // that old image as the restored picture and immediately pause again.
+        self.run();
+        if self.producer_failure().is_some() {
+            return Err("The graphics producer stopped before session restoration. The checkpoint and current card are kept.".into());
+        }
         if bytes.is_empty()
             || bytes.len() > MAX_STATE_SIZE
             || !unsafe { (self.unserialize)(bytes.as_ptr().cast(), bytes.len()) }

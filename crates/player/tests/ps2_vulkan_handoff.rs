@@ -58,7 +58,9 @@ static std::mutex s_frame_mutex;
 {body}
 static VKLibretro::Frame current, stale;
 extern "C" void publish() {{ VKLibretro::Frame f; f.image=42; VKLibretro::PublishFrame(f); }}
+extern "C" void publish_image(uintptr_t image) {{ VKLibretro::Frame f; f.image=image; VKLibretro::PublishFrame(f); }}
 extern "C" bool consume() {{ return VKLibretro::ConsumeFrame(&current); }}
+extern "C" uintptr_t current_image() {{ return current.image; }}
 extern "C" bool complete() {{ return VKLibretro::CompleteFrame(current); }}
 extern "C" void save_stale() {{ stale=current; }}
 extern "C" bool complete_stale() {{ return VKLibretro::CompleteFrame(stale); }}
@@ -147,6 +149,29 @@ extern "C" void shutdown() {{ VKLibretro::Shutdown(); }}
         shutdown();
         assert!(!consume());
         assert!(!complete());
+        // Actual pause disables pacing; it leaves a published startup image
+        // pending. A restore must drain it before GS defrost invalidates that
+        // target, then wait for a newly produced picture after unpausing.
+        let publish_image = *library
+            .get::<unsafe extern "C" fn(usize)>(b"publish_image\0")
+            .unwrap();
+        let current_image = *library
+            .get::<unsafe extern "C" fn() -> usize>(b"current_image\0")
+            .unwrap();
+        publish_image(100);
+        pacing(false);
+        assert!(
+            consume(),
+            "pause unexpectedly discarded the startup handoff"
+        );
+        assert_eq!(current_image(), 100);
+        assert!(complete());
+        assert!(!consume(), "drained startup image remained deliverable");
+        publish_image(200);
+        assert!(consume());
+        assert_eq!(current_image(), 200);
+        assert!(complete());
+        shutdown();
         *WAKE.lock().unwrap() = None;
     }
     fs::remove_dir_all(dir).unwrap();
