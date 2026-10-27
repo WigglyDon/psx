@@ -28,6 +28,14 @@ refuses launch. Ordinary builds return the original root without probing a
 test directory. The packager requires the verified Vulkan artifact and records
 this development capability in APK assets; it cannot mix with observer builds.
 
+After loading a PS2 checkpoint, the frontend waits for an actual new producer
+image before reinstating intentional pause. The poll is bounded and preserves
+the existing failure latch and retained checkpoint on failure. Completed CPU
+images upload during presentation, including paused presentation; emulation
+ticks only drain the producer. This also avoids uploading intermediate images
+that the display pacing will never compose. PS1 keeps its single-step restore
+and direct graphics path.
+
 Ordinary use remains pick a game and play, with no emulator tuning catalog or
 technical configuration flow. Engine/backend decisions belong to the product.
 Controller customization, volume and time remain ordinary player features. The

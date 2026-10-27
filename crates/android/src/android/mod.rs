@@ -584,7 +584,13 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
             // A failed presentation sets dirty again for its recovery/error
             // screen. Do not erase that request after handling the failure.
             player.dirty = false;
-            let rendered = unsafe {
+            let rendered = (|| unsafe {
+                // Presentation also runs for intentionally paused sessions.
+                // Upload the latest owned image here, rather than only while
+                // emulation is ticking (or for intermediate fast-mode frames).
+                if let Some(pixels) = player.core.as_ref().and_then(|core| core.state().pixels) {
+                    player.graphics.upload_game(&pixels)?;
+                }
                 player.graphics.render(
                     player.density,
                     &player.layout,
@@ -593,7 +599,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
                     player.editor.as_ref(),
                     &player.visuals,
                 )
-            };
+            })();
             let elapsed = before.elapsed();
             match rendered {
                 Ok(()) => {
@@ -2623,11 +2629,30 @@ impl Player {
             if let Some(card) = &self.card {
                 core.restore_card(card)?;
             }
+            let previous_frames = core.state().hardware_frames;
             core.pause(false)?;
-            core.run(); // Produce the restored picture, including paused resumes.
-            if let Some(failure) = core.producer_failure() {
-                return Err(RenderError::Producer(failure).to_string());
+            // The PS2 ABI polls a separately running producer. A null first
+            // poll is not a restored picture, particularly when the saved
+            // intent will prevent subsequent playback ticks.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                core.run();
+                if let Some(failure) = core.producer_failure() {
+                    if let Some(detail) = core.state().last_message {
+                        log::error!("PS2 graphics failure: {detail}");
+                    }
+                    return Err(RenderError::Producer(failure).to_string());
+                }
+                if game.system != System::Ps2 || core.state().hardware_frames > previous_frames {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    core.pause(true)?;
+                    return Err("The saved session's picture did not resume. Your checkpoint and cards are kept.".into());
+                }
+                std::thread::sleep(Duration::from_millis(1));
             }
+            core.pause(checkpoint.metadata.paused)?;
             self.activity.user_paused = checkpoint.metadata.paused;
             resume::mark_active(&self.root, &game).map_err(|e| e.to_string())?;
             log::info!("Automatic session restored");
@@ -2675,15 +2700,6 @@ impl Player {
             }
             self.render_failed(RenderError::Producer(failure));
             return Ok(());
-        }
-        let state = core.state();
-        if state.hardware_frames != previous_frames {
-            if let Some(pixels) = &state.pixels {
-                if let Err(error) = unsafe { self.graphics.upload_game(pixels) } {
-                    self.render_failed(error);
-                    return Ok(());
-                }
-            }
         }
         self.dirty |= !owns_clock || core.state().hardware_frames != previous_frames;
         self.checkpoint_dirty = true;
