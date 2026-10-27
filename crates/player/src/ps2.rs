@@ -159,7 +159,7 @@ impl Drop for Checkpoint {
 }
 #[derive(Clone, Default)]
 pub struct Output {
-    /// Hardware-rendered Vulkan output, copied only after GPU completion.
+    /// Owned Vulkan output after GPU completion, or its durable checkpoint picture.
     /// CPU transport does not classify guest rendering as a software renderer.
     pub pixels: Option<Pixels>,
     pub metrics: Option<[f32; 5]>,
@@ -173,6 +173,22 @@ pub struct Output {
     pub frame_height: u32,
     pub shutdown: bool,
     pub last_message: Option<String>,
+}
+impl Output {
+    fn restore_picture(&mut self, picture: Pixels) -> Result<()> {
+        if picture.width == 0
+            || picture.height == 0
+            || picture.width > 1024
+            || picture.height > 1024
+            || picture.rgba.len() != picture.width as usize * picture.height as usize * 4
+        {
+            return Err(
+                "The saved session picture is invalid. The checkpoint and cards are kept.".into(),
+            );
+        }
+        self.pixels = Some(picture);
+        Ok(())
+    }
 }
 struct Shared {
     vulkan: Option<Arc<crate::ps2_vulkan::Frontend>>,
@@ -770,6 +786,15 @@ impl Core {
                 shutdown: true,
                 ..Output::default()
             })
+    }
+    /// A checkpoint picture is presentation data, never a completed GPU frame.
+    /// The next real callback replaces it without incrementing synthetic counts.
+    pub fn restore_picture(&self, picture: Pixels) -> Result<()> {
+        self.shared
+            .output
+            .lock()
+            .map_err(|_| "PS2 output unavailable.")?
+            .restore_picture(picture)
     }
     pub fn input(&self, buttons: u16, axes: [i16; 4], fast: bool) {
         self.shared.buttons.store(buttons, Ordering::Relaxed);
@@ -1470,6 +1495,48 @@ mod tests {
         assert_eq!(binding.output.lock().unwrap().render_costs.unwrap()[0], 1.);
         assert!(binding.frames.pending.load(Ordering::Acquire));
         *ACTIVE.lock().unwrap() = None;
+    }
+    #[test]
+    fn checkpoint_picture_is_not_counted_as_a_new_gpu_frame() {
+        let mut output = Output {
+            hardware_frames: 17,
+            frame_width: 640,
+            frame_height: 448,
+            ..Output::default()
+        };
+        let pixels = Pixels {
+            width: 2,
+            height: 1,
+            rgba: Arc::new(vec![1, 2, 3, 255, 4, 5, 6, 255]),
+        };
+        output.restore_picture(pixels.clone()).unwrap();
+        assert_eq!(output.hardware_frames, 17);
+        assert_eq!((output.frame_width, output.frame_height), (640, 448));
+        assert!(Arc::ptr_eq(
+            &output.pixels.as_ref().unwrap().rgba,
+            &pixels.rgba
+        ));
+        for bad in [
+            Pixels {
+                width: u32::MAX,
+                ..pixels.clone()
+            },
+            Pixels {
+                height: 0,
+                ..pixels.clone()
+            },
+            Pixels {
+                rgba: Arc::new(vec![0; 7]),
+                ..pixels.clone()
+            },
+        ] {
+            assert!(output.restore_picture(bad).is_err());
+            assert!(Arc::ptr_eq(
+                &output.pixels.as_ref().unwrap().rgba,
+                &pixels.rgba
+            ));
+            assert_eq!(output.hardware_frames, 17);
+        }
     }
     #[test]
     fn checkpoints_retain_the_exact_native_archive_and_reject_bad_extents() {

@@ -28,19 +28,26 @@ refuses launch. Ordinary builds return the original root without probing a
 test directory. The packager requires the verified Vulkan artifact and records
 this development capability in APK assets; it cannot mix with observer builds.
 
-After loading a PS2 checkpoint, the frontend waits for an actual new producer
-image before reinstating intentional pause. The poll is bounded and preserves
-the existing failure latch and retained checkpoint on failure. Completed CPU
-images upload during presentation, including paused presentation; emulation
-ticks only drain the producer. This also avoids uploading intermediate images
-that the display pacing will never compose. PS1 keeps its single-step restore
-and direct graphics path.
+PS2 checkpoints atomically retain the last displayed owned RGBA picture with
+the native machine bytes. A bounded, separately checked picture trailer in
+`PSXRES02` lets intentional pause restore its frozen display without advancing
+the guest or counting a synthetic GPU frame. Native state, picture and current
+card identities are checked independently. Card sealing preserves the picture.
+The save worker hashes/packages the immutable image; no GPU handle or new live
+runtime enters durable storage. PS1 retains `PSXRES01` and its direct graphics
+path. Existing picture-less checkpoints remain readable; their bounded native
+redraw fallback can initially be black during scenes that redraw later.
+
+Completed CPU images upload during presentation, including paused presentation;
+emulation ticks only drain the producer. This also avoids uploading intermediate
+images that the display pacing will never compose.
 
 Before native state loading, the paused PS2 owner drains the preceding output
 handoff and checks the failure latch. Disabling native pacing alone leaves that
 image deliverable, while GS defrost clears its target. The subsequent restored
-image check must therefore observe a new guest picture rather than that stale
-startup output. This does not reset cards or alter the state format.
+image check for a legacy checkpoint must therefore observe new producer output
+rather than that stale startup output. This does not reset cards or alter the
+donor's native state format.
 
 Ordinary use remains pick a game and play, with no emulator tuning catalog or
 technical configuration flow. Engine/backend decisions belong to the product.

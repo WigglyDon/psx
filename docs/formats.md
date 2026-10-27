@@ -80,6 +80,11 @@ An uncatchable process kill during an unfinished save may lose unsynced
 changes. Acceptance requires an ordinary save loaded in a fresh process.
 
 Automatic sessions retain the emulated machine, selected disc and pause intent.
+New PS2 sessions also retain a bounded lossless displayed picture in the same
+atomic checkpoint, so restoring a paused game does not need to run it to redraw.
+The picture is private game data, separately checked from the native state and
+cards. Earlier checkpoints remain readable without that picture; an older app
+that cannot read the newer checkpoint format keeps it and the current cards.
 Backgrounding, explicit pause and Close game checkpoint the current session;
 periodic checkpoints run every 30 seconds. Reopening the app resumes its active
 game; choosing a closed game resumes its own checkpoint. Restart game boots

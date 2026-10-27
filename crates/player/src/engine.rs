@@ -135,6 +135,12 @@ impl Core {
             Self::Ps2(core, _) => core.restore(bytes),
         }
     }
+    pub fn restore_picture(&self, picture: ps2::Pixels) -> Result<()> {
+        match self {
+            Self::Ps2(core, _) => core.restore_picture(picture),
+            Self::Ps1(_) => Err("This saved picture belongs to another engine.".into()),
+        }
+    }
     pub fn restore_card(&mut self, card: &MemoryCard) -> Result<()> {
         match self {
             Self::Ps1(core) => core.restore_card(card),

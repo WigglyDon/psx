@@ -13,6 +13,8 @@ use std::{
 
 pub const MAX_STATE_SIZE: usize = 64 * 1024 * 1024;
 const MAGIC: &[u8; 8] = b"PSXRES01";
+const PICTURE_MAGIC: &[u8; 8] = b"PSXRES02";
+const MAX_PICTURE_SIZE: usize = 1024 * 1024 * 4;
 const CORE: &str = "e436e9b85374def58d211df7f78880f0f4a917b4";
 fn core(root: &Path, game: &Game) -> io::Result<String> {
     if game.system == System::Ps2 {
@@ -38,10 +40,27 @@ pub struct Metadata {
     pub paused: bool,
     card: String,
     state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    picture: Option<PictureMetadata>,
+}
+#[derive(Serialize, Deserialize)]
+struct PictureMetadata {
+    width: u32,
+    height: u32,
+    sha256: String,
+}
+fn picture_size(width: u32, height: u32) -> io::Result<usize> {
+    if width == 0 || height == 0 || width > 1024 || height > 1024 {
+        return Err(io::Error::other(
+            "The saved picture dimensions are invalid.",
+        ));
+    }
+    Ok(width as usize * height as usize * 4)
 }
 pub struct Checkpoint {
     pub metadata: Metadata,
     pub bytes: Vec<u8>,
+    pub picture: Option<crate::ps2::Pixels>,
 }
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -53,24 +72,58 @@ fn path(root: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(root.join("resume").join(format!("{id}.state")))
 }
 pub fn save(root: &Path, game: &Game, paused: bool, card: &[u8], state: &[u8]) -> io::Result<()> {
+    save_with_picture(root, game, paused, card, state, None)
+}
+/// One atomic checkpoint owns both machine bytes and its displayed picture.
+/// Legacy records omit the picture; native state bytes and card identity remain
+/// independently verified, with no GPU or platform handle in durable storage.
+pub fn save_with_picture(
+    root: &Path,
+    game: &Game,
+    paused: bool,
+    card: &[u8],
+    state: &[u8],
+    picture: Option<&crate::ps2::Pixels>,
+) -> io::Result<()> {
     if state.is_empty() || state.len() > max_size(game.system) {
         return Err(io::Error::other("Invalid checkpoint size."));
     }
+    let picture_metadata = picture
+        .map(|picture| {
+            if picture_size(picture.width, picture.height)? != picture.rgba.len() {
+                return Err(io::Error::other("The saved picture length is invalid."));
+            }
+            Ok(PictureMetadata {
+                width: picture.width,
+                height: picture.height,
+                sha256: digest(&picture.rgba),
+            })
+        })
+        .transpose()?;
     let metadata = serde_json::to_vec(&Metadata {
         core: core(root, game)?,
         game: game.clone(),
         paused,
         card: digest(card),
         state: digest(state),
+        picture: picture_metadata,
     })?;
     if metadata.len() > 64 * 1024 {
         return Err(io::Error::other("Checkpoint metadata is too large."));
     }
-    let mut bytes = Vec::with_capacity(12 + metadata.len() + state.len());
-    bytes.extend_from_slice(MAGIC);
+    let mut bytes =
+        Vec::with_capacity(12 + metadata.len() + state.len() + picture.map_or(0, |p| p.rgba.len()));
+    bytes.extend_from_slice(if picture.is_some() {
+        PICTURE_MAGIC
+    } else {
+        MAGIC
+    });
     bytes.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&metadata);
     bytes.extend_from_slice(state);
+    if let Some(picture) = picture {
+        bytes.extend_from_slice(&picture.rgba);
+    }
     atomic_write(&path(root, &game.id)?, &bytes)?;
     mark_active(root, game)
 }
@@ -108,12 +161,12 @@ pub fn load(root: &Path, game: &Game, card: &[u8]) -> io::Result<Option<Checkpoi
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
     };
-    if file.metadata()?.len() > (max_size(game.system) + 64 * 1024 + 12) as u64 {
+    if file.metadata()?.len() > (max_size(game.system) + MAX_PICTURE_SIZE + 64 * 1024 + 12) as u64 {
         return Err(io::Error::other("The saved session is too large."));
     }
     let mut header = [0; 12];
     file.read_exact(&mut header)?;
-    if &header[..8] != MAGIC {
+    if &header[..8] != MAGIC && &header[..8] != PICTURE_MAGIC {
         return Err(io::Error::other("The saved session format is unsupported."));
     }
     let length = u32::from_le_bytes(header[8..].try_into().unwrap()) as usize;
@@ -123,6 +176,11 @@ pub fn load(root: &Path, game: &Game, card: &[u8]) -> io::Result<Option<Checkpoi
     let mut metadata = vec![0; length];
     file.read_exact(&mut metadata)?;
     let metadata: Metadata = serde_json::from_slice(&metadata)?;
+    if (&header[..8] == PICTURE_MAGIC) != metadata.picture.is_some() {
+        return Err(io::Error::other(
+            "The saved picture format is unsupported. Your memory card is preserved.",
+        ));
+    }
     let same_discs = metadata
         .game
         .disc_list()
@@ -144,15 +202,43 @@ pub fn load(root: &Path, game: &Game, card: &[u8]) -> io::Result<Option<Checkpoi
     if metadata.card != digest(card) {
         return Err(io::Error::other("Your memory card changed after this checkpoint. Start again to keep the newer card progress."));
     }
+    let picture_len = metadata
+        .picture
+        .as_ref()
+        .map(|p| picture_size(p.width, p.height))
+        .transpose()?
+        .unwrap_or(0);
     let mut bytes = Vec::new();
-    file.take(max_size(game.system) as u64 + 1)
+    file.take((max_size(game.system) + picture_len + 1) as u64)
         .read_to_end(&mut bytes)?;
+    let state_len = bytes.len().checked_sub(picture_len).ok_or_else(|| {
+        io::Error::other("The saved picture is truncated. Your memory card is preserved.")
+    })?;
+    let picture = if let Some(picture) = &metadata.picture {
+        let rgba = bytes.split_off(state_len);
+        if digest(&rgba) != picture.sha256 {
+            return Err(io::Error::other(
+                "The saved picture is damaged. Your memory card is preserved.",
+            ));
+        }
+        Some(crate::ps2::Pixels {
+            width: picture.width,
+            height: picture.height,
+            rgba: std::sync::Arc::new(rgba),
+        })
+    } else {
+        None
+    };
     if bytes.is_empty() || bytes.len() > max_size(game.system) || digest(&bytes) != metadata.state {
         return Err(io::Error::other(
             "The saved session is damaged. Your memory card is preserved.",
         ));
     }
-    Ok(Some(Checkpoint { metadata, bytes }))
+    Ok(Some(Checkpoint {
+        metadata,
+        bytes,
+        picture,
+    }))
 }
 
 /// The PS2 donor stamps its change-detector on orderly close. Rebind only the
@@ -164,12 +250,13 @@ pub fn seal_closed_cards(root: &Path, game: &Game, before: &[u8], after: &[u8]) 
         return Ok(());
     }
     if let Some(checkpoint) = load(root, game, before)? {
-        save(
+        save_with_picture(
             root,
             game,
             checkpoint.metadata.paused,
             after,
             &checkpoint.bytes,
+            checkpoint.picture.as_ref(),
         )?;
     }
     Ok(())
@@ -178,6 +265,90 @@ pub fn seal_closed_cards(root: &Path, game: &Game, before: &[u8], after: &[u8]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frozen_picture_is_atomic_checked_and_survives_card_sealing() {
+        let root = std::env::temp_dir().join(format!("psx-picture-resume-{}", std::process::id()));
+        let game = Game {
+            system: System::Ps2,
+            id: "abcdef123".into(),
+            title: "Fixture".into(),
+            path: "fixture.iso".into(),
+            discs: vec![],
+            last_disc: 0,
+        };
+        fs::create_dir_all(root.join("ps2").join(&game.id)).unwrap();
+        fs::write(
+            root.join("ps2").join(&game.id).join("firmware.json"),
+            format!(r#"{{"file":"fixture.bin","sha256":"{}"}}"#, "a".repeat(64)),
+        )
+        .unwrap();
+        let picture = crate::ps2::Pixels {
+            width: 2,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![1, 2, 3, 255, 4, 5, 6, 255]),
+        };
+        save_with_picture(
+            &root,
+            &game,
+            true,
+            b"card",
+            b"exact native bytes",
+            Some(&picture),
+        )
+        .unwrap();
+        let state_path = path(&root, &game.id).unwrap();
+        let original = fs::read(&state_path).unwrap();
+        assert_eq!(&original[..8], PICTURE_MAGIC);
+        let restored = load(&root, &game, b"card").unwrap().unwrap();
+        assert_eq!(restored.bytes, b"exact native bytes");
+        assert!(restored.metadata.paused);
+        let restored_picture = restored.picture.unwrap();
+        assert_eq!((restored_picture.width, restored_picture.height), (2, 1));
+        assert_eq!(restored_picture.rgba, picture.rgba);
+        assert!(load(&root, &game, b"newer card").is_err());
+        assert_eq!(fs::read(&state_path).unwrap(), original);
+        for bad in [
+            crate::ps2::Pixels {
+                width: u32::MAX,
+                ..picture.clone()
+            },
+            crate::ps2::Pixels {
+                rgba: std::sync::Arc::new(vec![0; 7]),
+                ..picture.clone()
+            },
+        ] {
+            assert!(save_with_picture(&root, &game, true, b"card", b"state", Some(&bad)).is_err());
+            assert_eq!(fs::read(&state_path).unwrap(), original);
+        }
+        let mut corrupt = original.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        fs::write(&state_path, &corrupt).unwrap();
+        assert!(load(&root, &game, b"card").is_err());
+        assert_eq!(fs::read(&state_path).unwrap(), corrupt);
+        fs::write(&state_path, &original[..original.len() - 5]).unwrap();
+        assert!(load(&root, &game, b"card").is_err());
+        let metadata_len = u32::from_le_bytes(original[8..12].try_into().unwrap()) as usize;
+        let mut corrupt_state = original.clone();
+        corrupt_state[12 + metadata_len] ^= 1;
+        fs::write(&state_path, &corrupt_state).unwrap();
+        assert!(load(&root, &game, b"card").is_err());
+        assert_eq!(fs::read(&state_path).unwrap(), corrupt_state);
+        let mut wrong_version = original.clone();
+        wrong_version[..8].copy_from_slice(MAGIC);
+        fs::write(&state_path, &wrong_version).unwrap();
+        assert!(load(&root, &game, b"card").is_err());
+        fs::write(&state_path, &original).unwrap();
+        seal_closed_cards(&root, &game, b"card", b"closed card").unwrap();
+        let sealed = load(&root, &game, b"closed card").unwrap().unwrap();
+        assert_eq!(sealed.bytes, b"exact native bytes");
+        assert_eq!(sealed.picture.unwrap().rgba, picture.rgba);
+        save(&root, &game, true, b"card", b"legacy native bytes").unwrap();
+        assert_eq!(&fs::read(&state_path).unwrap()[..8], MAGIC);
+        let legacy = load(&root, &game, b"card").unwrap().unwrap();
+        assert!(legacy.picture.is_none());
+        assert_eq!(legacy.bytes, b"legacy native bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn native_revision_change_keeps_old_bytes_and_requires_the_exact_binding() {
         let root = std::env::temp_dir().join(format!("psx-fetch-upgrade-{}", std::process::id()));

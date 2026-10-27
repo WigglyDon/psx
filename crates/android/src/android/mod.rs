@@ -563,6 +563,9 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
         }
         let frame = player.core.as_ref().and_then(|core| {
             let state = core.state();
+            if let Some(pixels) = state.pixels {
+                return Some((pixels.width, pixels.height, false));
+            }
             (state.hardware_frames > 0).then_some((
                 state.frame_width,
                 state.frame_height,
@@ -2629,28 +2632,36 @@ impl Player {
             if let Some(card) = &self.card {
                 core.restore_card(card)?;
             }
-            let previous_frames = core.state().hardware_frames;
-            core.pause(false)?;
-            // The PS2 ABI polls a separately running producer. A null first
-            // poll is not a restored picture, particularly when the saved
-            // intent will prevent subsequent playback ticks.
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                core.run();
-                if let Some(failure) = core.producer_failure() {
-                    if let Some(detail) = core.state().last_message {
-                        log::error!("PS2 graphics failure: {detail}");
+            if let Some(failure) = core.producer_failure() {
+                return Err(RenderError::Producer(failure).to_string());
+            }
+            if let Some(picture) = checkpoint.picture {
+                core.restore_picture(picture)?;
+            } else {
+                let previous_frames = core.state().hardware_frames;
+                core.pause(false)?;
+                // The PS2 ABI polls a separately running producer. A null first
+                // poll is not a restored picture, particularly when the saved
+                // intent will prevent subsequent playback ticks.
+                let deadline = Instant::now() + Duration::from_secs(2);
+                loop {
+                    core.run();
+                    if let Some(failure) = core.producer_failure() {
+                        if let Some(detail) = core.state().last_message {
+                            log::error!("PS2 graphics failure: {detail}");
+                        }
+                        return Err(RenderError::Producer(failure).to_string());
                     }
-                    return Err(RenderError::Producer(failure).to_string());
+                    if game.system != System::Ps2 || core.state().hardware_frames > previous_frames
+                    {
+                        break;
+                    }
+                    if Instant::now() >= deadline {
+                        core.pause(true)?;
+                        return Err("The saved session's picture did not resume. Your checkpoint and cards are kept.".into());
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
                 }
-                if game.system != System::Ps2 || core.state().hardware_frames > previous_frames {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    core.pause(true)?;
-                    return Err("The saved session's picture did not resume. Your checkpoint and cards are kept.".into());
-                }
-                std::thread::sleep(Duration::from_millis(1));
             }
             core.pause(checkpoint.metadata.paused)?;
             self.activity.user_paused = checkpoint.metadata.paused;
@@ -2848,6 +2859,7 @@ impl Player {
             let game = game.clone();
             let root = self.root.clone();
             let paused = self.activity.user_paused;
+            let picture = core.state().pixels;
             let (tx, rx) = mpsc::sync_channel(1);
             self.checkpoint_work = Some(rx);
             std::thread::spawn(move || {
@@ -2857,7 +2869,7 @@ impl Player {
                         "Session archive packaged in {:.2} ms",
                         before.elapsed().as_secs_f64() * 1000.
                     );
-                    resume::save(&root, &game, paused, &card, &state)
+                    resume::save_with_picture(&root, &game, paused, &card, &state, picture.as_ref())
                         .map_err(|e| format!("The session could not be saved: {e}"))
                 });
                 if result.is_ok() {
