@@ -21,6 +21,14 @@ development GLES experiments stay frozen, with no user-facing backend selector.
 Readback staging prefers host-cached visible memory, then coherence; the buffer's
 type mask remains authoritative and uncached visible memory remains a fallback.
 Noncoherent storage retains its checked invalidation after GPU completion.
+The producer may prepare and submit one next frame on the retained caller's
+distinct rotating backbuffer while Rust reads the published image. Publication
+of that next image waits for the preceding read's real completion; consuming
+metadata is never an early acknowledgement. The three dedicated backbuffers
+and six-frame retirement window stay unchanged. Pause/stop still aborts pacing
+before joining workers. This bounds overlap without another output queue or
+runtime. The exact scheduling-only patch permits its immediate predecessor's
+checkpoints with identical firmware; other native bindings remain incompatible.
 
 The `player-acceptance` build feature uses the full player with a prepared,
 marked app-private sibling of its normal `files` directory. Normal saves,

@@ -1,5 +1,13 @@
 # Android development build
 
+The internal Vulkan successor builder can reuse the frozen `cf6f23e` native
+stage through `PSX_VULKAN_PREDECESSOR_STAGE`. It verifies exact native, symbol,
+source, object and recipe bindings, reproduces the unchanged symbol link, then
+compiles only the producer-handoff translation unit and relinks. It independently
+strips the output and checks unchanged exports and frozen inputs. Changed inputs
+refuse this route; it never falls back to an engine rebuild. The ordinary public
+source build applies the complete recorded product patch stack.
+
 Run the [storage preflight and retention procedure](storage.md) before large
 builds, backups or experiments. Writing xtask commands serialize project use
 and check shared-host capacity. Completed source bundles are reused, and their

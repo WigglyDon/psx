@@ -51,6 +51,13 @@ pub fn revision() -> &'static str {
                 "../../../patches/armsx2/0010-vulkan-frame-completion.patch"
             ))
         );
+        #[cfg(not(feature = "graphics-observer"))]
+        let binding = format!(
+            "{binding}+pipeline:{:x}",
+            Sha256::digest(include_bytes!(
+                "../../../patches/armsx2/0011-vulkan-producer-overlap.patch"
+            ))
+        );
         #[cfg(feature = "graphics-observer")]
         let binding = format!(
             "{binding}+observer:{:x}",
@@ -94,6 +101,17 @@ pub fn revision() -> &'static str {
 /// normal card renegotiation, never replacement of current media. Future edits
 /// disable this exact compatibility exception.
 pub fn compatible_checkpoint_binding(saved: &str, current: &str) -> bool {
+    // This exact scheduling-only repair changes neither the native archive
+    // fields nor card negotiation. Bind its predecessor explicitly: a future
+    // patch edit or any other native/firmware difference disables the exception.
+    const PIPELINE: &str =
+        "+pipeline:414bf589247a7ae3ca0d3260ed43442a0d61117fc6c4779d20a5fa74a8cc91a9";
+    if let Some(previous) = revision().strip_suffix(PIPELINE) {
+        return saved
+            .strip_prefix(&format!("{previous}+firmware:"))
+            .zip(current.strip_prefix(&format!("{}+firmware:", revision())))
+            .is_some_and(|(a, b)| !a.is_empty() && a == b);
+    }
     const BEFORE: [&str; 6] = [
         "878bdd9e47f6cb750c44ab6fca6413c8088b92a12c0e15e14a099e3ea6144ef6",
         "92542cb62995f80d750a88f0a4f8209ed1e6804b5ebba60827319128c0edc83c",
@@ -1319,6 +1337,31 @@ mod teardown_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "graphics-observer"))]
+    #[test]
+    fn pipeline_only_accepts_the_exact_previous_native_and_same_firmware() {
+        let current = format!("{}+firmware:fixture", revision());
+        let previous = format!(
+            "{}+firmware:fixture",
+            revision().split_once("+pipeline:").unwrap().0
+        );
+        assert!(compatible_checkpoint_binding(&previous, &current));
+        for (saved, target) in [
+            (previous.replace("fixture", "different"), current.clone()),
+            (previous.replace("+vulkan:", "+vulkan:bad"), current.clone()),
+            (
+                previous.clone(),
+                current.replace("+pipeline:", "+pipeline:bad"),
+            ),
+            (
+                previous.replace("fixture", ""),
+                current.replace("fixture", ""),
+            ),
+            (previous.replace("+stream:", "+stream:bad"), current.clone()),
+        ] {
+            assert!(!compatible_checkpoint_binding(&saved, &target));
+        }
+    }
     #[test]
     fn later_native_repair_disables_the_old_checkpoint_exception() {
         let previous = format!("{REVISION}+510a3f5ebfc1df15cfdb6c59b125ef387712069875fdaa7439080667cc0858f1+firmware:fixture");

@@ -72,6 +72,7 @@ const STREAM_OBSERVER_PATCH: &str = "patches/armsx2/0005-development-stream-obse
 const CREATOR_OUTPUT_PATCH: &str = "patches/armsx2/0006-development-creator-output.patch";
 const COMMON_RESULTS_PATCH: &str = "patches/armsx2/0007-development-common-results.patch";
 const VULKAN_PATCH: &str = "patches/armsx2/0010-vulkan-frame-completion.patch";
+const VULKAN_OVERLAP_PATCH: &str = "patches/armsx2/0011-vulkan-producer-overlap.patch";
 /// Build-only reuse of an independently bound incremental candidate. This
 /// changes neither runtime settings nor the ordinary zero-config interface.
 pub fn verified_vulkan_artifact() -> Result<Option<PathBuf>> {
@@ -91,6 +92,7 @@ pub fn verified_vulkan_artifact() -> Result<Option<PathBuf>> {
     let native = stage.join("libarmsx2-packaged.so");
     if binding["upstream"] != REVISION
         || binding["patchSha256"] != hash(Path::new(VULKAN_PATCH))?
+        || binding["overlapPatchSha256"] != hash(Path::new(VULKAN_OVERLAP_PATCH))?
         || binding["independentStrip"] != true
         || binding["retainedInactiveGlObservationCode"] != false
         || binding["nativeSha256"] != hash(&native)?
@@ -99,7 +101,8 @@ pub fn verified_vulkan_artifact() -> Result<Option<PathBuf>> {
             != serde_json::json!([
                 "0001-host-pause-and-card-flush.patch",
                 "0004-stream-buffer-failure.patch",
-                "0010-vulkan-frame-completion.patch"
+                "0010-vulkan-frame-completion.patch",
+                "0011-vulkan-producer-overlap.patch"
             ])
     {
         return Err("Vulkan native candidate/binding differs".into());
@@ -222,6 +225,7 @@ fn active_patches() -> Vec<&'static str> {
         }
     } else {
         patches.push(VULKAN_PATCH);
+        patches.push(VULKAN_OVERLAP_PATCH);
     }
     patches
 }
@@ -548,6 +552,8 @@ pub fn build() -> Result<()> {
                 ],
                 patches.clone(),
             ]);
+        } else {
+            phases.extend([vec![PATCH, STREAM_PATCH, VULKAN_PATCH], patches.clone()]);
         }
         for phase in phases {
             if patch_diff(&source, &phase)? == actual {

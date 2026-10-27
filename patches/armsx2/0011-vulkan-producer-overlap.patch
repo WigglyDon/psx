@@ -1,0 +1,23 @@
+--- a/pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp
++++ b/pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp
+@@ -160,14 +160,16 @@
+ 	void PublishFrame(const Frame& frame)
+ 	{
+ 		std::unique_lock<std::mutex> lock(s_frame_mutex);
++		// Keep the preceding published image until its read really completes.
++		// The caller's three dedicated backbuffers let it prepare/submit one
++		// next frame before waiting here, overlapping GS CPU work and GPU readback.
++		// Never replace the handoff metadata while that read is outstanding.
++		s_frame_consumed_cv.wait(
++			lock, []() { return !s_pacing || s_frame_consumed == s_frame_serial; });
+ 		s_frame = frame;
+ 		s_frame.serial = ++s_frame_serial;
+ 		if (s_frame_ready_callback)
+ 			s_frame_ready_callback();
+-		// Delivery is not completion: keep the image parked until the
+-		// frontend has finished reading, or pacing is disabled for VM work.
+-		s_frame_consumed_cv.wait(
+-			lock, []() { return !s_pacing || s_frame_consumed == s_frame_serial; });
+ 	}
+ 
+ 	bool ConsumeFrame(Frame* out_frame)

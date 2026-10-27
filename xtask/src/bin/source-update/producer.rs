@@ -1,5 +1,6 @@
 //! Fixed-predecessor source delivery; the Vulkan route admits only pinned ash.
 use super::*;
+use std::process::Stdio;
 const FROM: &str = "123e831e4afb6c7cec2d8e05a030e3cd82a72bba";
 const FROM_SHA: &str = "b14f6e2a0ad5910058bc015b109896c4b631fe33bce71ec8381eddafb114b56f";
 const SELF_SOURCE: &[u8] = include_bytes!(concat!(
@@ -168,6 +169,23 @@ fn selected(target: &str, vulkan: bool) -> Result<()> {
             "0004-stream-buffer-failure.patch",
             "0010-vulkan-frame-completion.patch"
         ]);
+        let overlap = "patches/armsx2/0011-vulkan-producer-overlap.patch";
+        if Command::new("git")
+            .args(["cat-file", "-e", &format!("{target}:{overlap}")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?
+            .success()
+        {
+            patches.insert(
+                "0011-vulkan-producer-overlap.patch".into(),
+                json!(digest(&git(&["show", &format!("{target}:{overlap}")])?)),
+            );
+            check["productNativePatches"]
+                .as_array_mut()
+                .ok_or("Product patches")?
+                .push(json!("0011-vulkan-producer-overlap.patch"));
+        }
         check["additionalRegistrySource"] = json!({"name":"ash","version":super::vulkan_ash::VERSION,"checksum":super::vulkan_ash::SHA});
     }
     check["nativePatches"] = Value::Object(patches);

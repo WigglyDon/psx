@@ -3,6 +3,7 @@
 use libloading::Library;
 use std::{
     fs,
+    path::{Path, PathBuf},
     process::Command,
     sync::{mpsc, Mutex},
     time::Duration,
@@ -14,32 +15,7 @@ unsafe extern "C" fn wake() {
     }
 }
 
-#[test]
-fn producer_cannot_reuse_delivered_image_until_completed_and_abort_joins() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let dir = std::env::temp_dir().join(format!("psx-vulkan-handoff-{}", std::process::id()));
-    let relative = "pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp";
-    fs::create_dir_all(dir.join("pcsx2/GS/Renderers/Vulkan")).unwrap();
-    fs::copy(
-        root.join("vendor/armsx2").join(relative),
-        dir.join(relative),
-    )
-    .unwrap();
-    let patch = Command::new("git")
-        .args([
-            "apply",
-            "--include=pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp",
-        ])
-        .arg(root.join("patches/armsx2/0010-vulkan-frame-completion.patch"))
-        .current_dir(&dir)
-        .output()
-        .unwrap();
-    assert!(
-        patch.status.success(),
-        "{}",
-        String::from_utf8_lossy(&patch.stderr)
-    );
-    let actual = fs::read_to_string(dir.join(relative)).unwrap();
+fn compile(dir: &Path, actual: &str, name: &str) -> PathBuf {
     let body = actual
         .split_once("\tstatic std::mutex s_frame_mutex;")
         .unwrap()
@@ -69,16 +45,16 @@ extern "C" void callback(void(*f)()) {{ VKLibretro::SetFrameReadyCallback(f); }}
 extern "C" void shutdown() {{ VKLibretro::Shutdown(); }}
 "#
     );
-    fs::write(dir.join("handoff.cpp"), source).unwrap();
+    fs::write(dir.join(format!("{name}.cpp")), source).unwrap();
     let compiled = Command::new("c++")
         .args([
             "-std=c++17",
             "-shared",
             "-fPIC",
             "-pthread",
-            "handoff.cpp",
+            &format!("{name}.cpp"),
             "-o",
-            "handoff.so",
+            &format!("{name}.so"),
         ])
         .current_dir(&dir)
         .output()
@@ -88,8 +64,44 @@ extern "C" void shutdown() {{ VKLibretro::Shutdown(); }}
         "{}",
         String::from_utf8_lossy(&compiled.stderr)
     );
+    dir.join(format!("{name}.so"))
+}
+
+#[test]
+fn frozen_and_overlapped_publication_preserve_completion_and_abort_join() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = std::env::temp_dir().join(format!("psx-vulkan-handoff-{}", std::process::id()));
+    let relative = "pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp";
+    let caller =
+        fs::read_to_string(root.join("vendor/armsx2/pcsx2/GS/Renderers/Vulkan/GSDeviceVK.cpp"))
+            .unwrap();
+    assert!(caller.contains("constexpr int kLibretroBackbuffers = 3;"));
+    assert!(caller.contains("constexpr u64 kLibretroRetireFrames = 6;"));
+    assert!(caller.contains("s_libretro_bb_idx = (s_libretro_bb_idx + 1) % kLibretroBackbuffers;\n\t\tVKLibretro::PublishFrame(frame);"));
+    fs::create_dir_all(dir.join("pcsx2/GS/Renderers/Vulkan")).unwrap();
+    fs::copy(
+        root.join("vendor/armsx2").join(relative),
+        dir.join(relative),
+    )
+    .unwrap();
+    let patch = Command::new("git")
+        .args([
+            "apply",
+            "--include=pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp",
+        ])
+        .arg(root.join("patches/armsx2/0010-vulkan-frame-completion.patch"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        patch.status.success(),
+        "{}",
+        String::from_utf8_lossy(&patch.stderr)
+    );
+    let actual = fs::read_to_string(dir.join(relative)).unwrap();
+    let frozen = compile(&dir, &actual, "handoff-frozen");
     unsafe {
-        let library = Library::new(dir.join("handoff.so")).unwrap();
+        let library = Library::new(&frozen).unwrap();
         let publish = *library.get::<unsafe extern "C" fn()>(b"publish\0").unwrap();
         let consume = *library
             .get::<unsafe extern "C" fn() -> bool>(b"consume\0")
@@ -173,6 +185,98 @@ extern "C" void shutdown() {{ VKLibretro::Shutdown(); }}
         assert!(complete());
         shutdown();
         *WAKE.lock().unwrap() = None;
+    }
+    let patched = Command::new("git")
+        .args([
+            "apply",
+            "--include=pcsx2/GS/Renderers/Vulkan/VKLibretro.cpp",
+        ])
+        .arg(root.join("patches/armsx2/0011-vulkan-producer-overlap.patch"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        patched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&patched.stderr)
+    );
+    let actual = fs::read_to_string(dir.join(relative)).unwrap();
+    let overlap = compile(&dir, &actual, "handoff-overlap");
+    unsafe {
+        let library = Library::new(overlap).unwrap();
+        let publish = *library
+            .get::<unsafe extern "C" fn(usize)>(b"publish_image\0")
+            .unwrap();
+        let consume = *library
+            .get::<unsafe extern "C" fn() -> bool>(b"consume\0")
+            .unwrap();
+        let image = *library
+            .get::<unsafe extern "C" fn() -> usize>(b"current_image\0")
+            .unwrap();
+        let complete = *library
+            .get::<unsafe extern "C" fn() -> bool>(b"complete\0")
+            .unwrap();
+        let stale = *library
+            .get::<unsafe extern "C" fn()>(b"save_stale\0")
+            .unwrap();
+        let complete_stale = *library
+            .get::<unsafe extern "C" fn() -> bool>(b"complete_stale\0")
+            .unwrap();
+        let pacing = *library
+            .get::<unsafe extern "C" fn(bool)>(b"pacing\0")
+            .unwrap();
+        let shutdown = *library
+            .get::<unsafe extern "C" fn()>(b"shutdown\0")
+            .unwrap();
+        pacing(true);
+        let (prepared, preparation) = mpsc::channel();
+        let (published, publication) = mpsc::channel();
+        let producer = std::thread::spawn(move || {
+            publish(42);
+            // Mirrors the retained caller's next, distinct backbuffer: its
+            // CPU/GPU preparation may proceed before the prior image read ends.
+            prepared.send(()).unwrap();
+            publish(43);
+            published.send(()).unwrap();
+        });
+        preparation
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first publication still blocks next-frame preparation");
+        assert!(consume());
+        assert_eq!(image(), 42);
+        stale();
+        assert!(!consume());
+        assert!(
+            publication.recv_timeout(Duration::from_millis(30)).is_err(),
+            "next publication overwrote an incomplete read"
+        );
+        assert_eq!(image(), 42);
+        assert!(complete());
+        publication.recv_timeout(Duration::from_secs(1)).unwrap();
+        producer.join().unwrap();
+        assert!(consume());
+        assert_eq!(image(), 43);
+        assert!(!complete_stale(), "old completion released the next image");
+        // A failed read supplies no completion. Stop must release the pending
+        // publication without waiting on the failed dependency or another owner.
+        let (started, entered) = mpsc::channel();
+        let (finished, stopped) = mpsc::channel();
+        let producer = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            publish(44);
+            finished.send(()).unwrap();
+        });
+        entered.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(stopped.recv_timeout(Duration::from_millis(30)).is_err());
+        assert!(!consume());
+        pacing(false);
+        stopped.recv_timeout(Duration::from_secs(1)).unwrap();
+        producer.join().unwrap();
+        assert!(consume());
+        assert_eq!(image(), 44);
+        shutdown();
+        assert!(!consume());
+        assert!(!complete());
     }
     fs::remove_dir_all(dir).unwrap();
 }

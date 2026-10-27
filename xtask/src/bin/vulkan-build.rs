@@ -11,6 +11,8 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+#[path = "vulkan-build/overlap.rs"]
+mod overlap;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[allow(dead_code)]
 #[path = "../storage.rs"]
@@ -108,6 +110,17 @@ fn main() -> Result<()> {
     if stage.parent() != Some(admission.root.join("build").as_path()) || stage.exists() {
         return Err("Require absent direct project native stage".into());
     }
+    if let Some(previous) = env::var_os("PSX_VULKAN_PREDECESSOR_STAGE") {
+        return overlap::build(
+            &root,
+            &admission.root,
+            &cache,
+            &stage,
+            &PathBuf::from(previous),
+            &expected,
+            &revision,
+        );
+    }
     let recipes =
         output(&mut command("ninja", ["-t", "commands", "pcsx2-libretro"]).current_dir(&cache))?;
     let baseline_hash = hash(&cache.join("bin/armsx2_libretro.so"))?;
@@ -148,6 +161,7 @@ fn main() -> Result<()> {
         "0001-host-pause-and-card-flush.patch",
         "0004-stream-buffer-failure.patch",
         "0010-vulkan-frame-completion.patch",
+        "0011-vulkan-producer-overlap.patch",
     ];
     for file in patches {
         output(
@@ -298,7 +312,7 @@ fn main() -> Result<()> {
     if exports.contains("retro_psx_observer_") || exports.contains("retro_psx_gs_") {
         return Err("Development-only native exports entered product candidate".into());
     }
-    let binding = json!({"productCandidate":"Vulkan with synchronous Rust staging","sourceRevision":revision,"upstream":expected["upstream"],"baselineCacheNativeSha256":baseline_hash,"commonSource":expected,"patchSha256":patch_sha,"productionPatches":patches,"composedSourceHashes":composed,"compiled":compiled,"headerSha256":hash(&stage.join("sources/pcsx2/GS/Renderers/Vulkan/VKLibretro.h"))?,"nativeSha256":native_sha,"symbolsSha256":hash(&symbols)?,"symbolNotes":output(command(tools.join("llvm-readelf"),["-n"]).arg(&symbols))?,"linkRecipeSha256":format!("{:x}",Sha256::digest(link.as_bytes())),"independentStrip":true,"retainedInactiveGlObservationCode":false,"noGeneratedProbeOrReplay":true});
+    let binding = json!({"productCandidate":"Vulkan with synchronous Rust staging","sourceRevision":revision,"upstream":expected["upstream"],"baselineCacheNativeSha256":baseline_hash,"commonSource":expected,"patchSha256":patch_sha,"overlapPatchSha256":hash(&root.join("patches/armsx2/0011-vulkan-producer-overlap.patch"))?,"productionPatches":patches,"composedSourceHashes":composed,"compiled":compiled,"headerSha256":hash(&stage.join("sources/pcsx2/GS/Renderers/Vulkan/VKLibretro.h"))?,"nativeSha256":native_sha,"symbolsSha256":hash(&symbols)?,"symbolNotes":output(command(tools.join("llvm-readelf"),["-n"]).arg(&symbols))?,"linkRecipeSha256":format!("{:x}",Sha256::digest(link.as_bytes())),"independentStrip":true,"retainedInactiveGlObservationCode":false,"noGeneratedProbeOrReplay":true});
     let binding_path = stage.join("native-binding.json");
     fs::write(&binding_path, serde_json::to_vec_pretty(&binding)?)?;
     fs::File::open(binding_path)?.sync_all()?;
