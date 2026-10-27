@@ -329,7 +329,9 @@ pub fn repair_overlap_metadata() -> Result<()> {
         "SOURCE-CHECK.json".into(),
         serde_json::to_vec_pretty(&check)?,
     )]);
-    let final_path = Path::new("build").join(format!("{root}-metadata-v2.tar.gz"));
+    // The v2 output hit its admitted 32MiB file ceiling. Keep that failed
+    // stream/receipt intact; this single corrected attempt has a new name.
+    let final_path = Path::new("build").join(format!("{root}-metadata-v3.tar.gz"));
     let partial = final_path.with_extension("gz.incomplete");
     if final_path.exists() || partial.exists() {
         return Err("Preserve existing metadata repair output".into());

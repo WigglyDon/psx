@@ -158,11 +158,13 @@ native compilation and archive-utility revisions remain separate bindings.
 `47a703c` source archive and its recorded digest. Its patch file is present,
 but an unanchored Git lookup omitted `0011` from generated patch metadata.
 The corrected lookup uses the source repository and propagates Git failures.
-The repair streams a distinct `-metadata-v2` archive, changes only
+The repair streams a distinct `-metadata-v3` archive, changes only
 `SOURCE-CHECK.json`, and independently verifies every unchanged member and the
 complete source graph. The original archive, application/native binaries and
 symbols remain intact. Its target stays `47a703c`; the repair utility revision
-is recorded separately. No engine/application rebuild or expanded tree is needed.
+is recorded separately. The interrupted `-metadata-v2` stream and failure receipt
+remain retained; its 32 MiB output ceiling was too small for this archive.
+No engine/application rebuild or expanded tree is needed.
 
 Under the installed finite host-workspace route, build/source utilities adopt
 the custodian's actual inherited capacity descriptor after inode/token and lock
