@@ -107,8 +107,20 @@ fn main() -> Result<()> {
         }
     }
     let stage = required("PSX_VULKAN_NATIVE_STAGE")?;
-    if stage.parent() != Some(admission.root.join("build").as_path()) || stage.exists() {
-        return Err("Require absent direct project native stage".into());
+    let args: Vec<_> = env::args().skip(1).collect();
+    let resume = match args.as_slice() {
+        [] => false,
+        [flag] if flag == "--resume-overlap" => true,
+        _ => return Err("Only --resume-overlap is supported".into()),
+    };
+    if stage.parent() != Some(admission.root.join("build").as_path())
+        || stage.parent().ok_or("Stage parent")?.canonicalize()? != admission.root.join("build")
+        || stage.exists() != resume
+        || (resume && fs::symlink_metadata(&stage)?.file_type().is_symlink())
+    {
+        return Err(
+            "Require an absent native stage, or the explicit unfinished-stage resume".into(),
+        );
     }
     if let Some(previous) = env::var_os("PSX_VULKAN_PREDECESSOR_STAGE") {
         return overlap::build(
@@ -119,7 +131,11 @@ fn main() -> Result<()> {
             &PathBuf::from(previous),
             &expected,
             &revision,
+            resume,
         );
+    }
+    if resume {
+        return Err("Resume requires the frozen Vulkan predecessor".into());
     }
     let recipes =
         output(&mut command("ninja", ["-t", "commands", "pcsx2-libretro"]).current_dir(&cache))?;

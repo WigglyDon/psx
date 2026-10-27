@@ -8,6 +8,14 @@ strips the output and checks unchanged exports and frozen inputs. Changed inputs
 refuse this route; it never falls back to an engine rebuild. The ordinary public
 source build applies the complete recorded product patch stack.
 
+`vulkan-build --resume-overlap` is limited to its recorded precompile failure.
+It keeps the original source/proof/logs, checks the complete existing source
+inventory and aliases, recomposes only the changed file for comparison and
+revalidates the frozen link in a separate attempt directory. CMake's `-MT`,
+`-MF` and `-o` object operands move together. Divergent, unknown or already
+compiled output refuses this resume. Native-input and build-tool revisions
+are recorded separately; no expanded dependency tree is created.
+
 Run the [storage preflight and retention procedure](storage.md) before large
 builds, backups or experiments. Writing xtask commands serialize project use
 and check shared-host capacity. Completed source bundles are reused, and their

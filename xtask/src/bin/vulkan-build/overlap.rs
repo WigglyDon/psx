@@ -25,6 +25,116 @@ fn safe_relative(file: &str) -> Result<&Path> {
     }
     Ok(p)
 }
+/// CMake uses the output object for dependency targets as well as -o. Only
+/// those explicit operands may change; unrelated flags/includes stay exact.
+fn rewrite_compile(
+    recipe: &str,
+    old: &str,
+    new: &str,
+    source: &str,
+    target: &str,
+) -> Result<String> {
+    let mut outputs = 0;
+    for (index, _) in recipe.match_indices(old) {
+        let prefix = &recipe[..index];
+        let suffix = &recipe[index + old.len()..];
+        let boundary = |s: &str| s.is_empty() || s.starts_with(char::is_whitespace);
+        if prefix.ends_with(" -MF ") && suffix.starts_with(".d") && boundary(&suffix[2..]) {
+            continue;
+        }
+        if (prefix.ends_with(" -MT ") || prefix.ends_with(" -o ")) && boundary(suffix) {
+            outputs += usize::from(prefix.ends_with(" -o "));
+            continue;
+        }
+        return Err("Object occurs outside checked compiler output operands".into());
+    }
+    let positions: Vec<_> = recipe.match_indices(source).collect();
+    if outputs != 1
+        || positions.len() != 1
+        || !recipe[..positions[0].0].ends_with(" -c ")
+        || !recipe[positions[0].0 + source.len()..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
+    {
+        return Err("Compiler output/source is missing or ambiguous".into());
+    }
+    Ok(recipe.replace(old, new).replacen(source, target, 1))
+}
+
+fn compose_cpp(root: &Path, previous: &Path, destination: &Path) -> Result<PathBuf> {
+    let target = destination.join(FILE);
+    fs::create_dir_all(target.parent().unwrap())?;
+    fs::copy(previous.join("sources").join(FILE), &target)?;
+    let stat = output(
+        command("git", ["apply", "--numstat"])
+            .arg(root.join(PATCH))
+            .current_dir(destination),
+    )?;
+    if stat.lines().count() != 1
+        || stat.lines().next().and_then(|l| l.split('\t').last()) != Some(FILE)
+    {
+        return Err("Overlap patch changes another source".into());
+    }
+    output(
+        command("git", ["apply"])
+            .arg(root.join(PATCH))
+            .current_dir(destination),
+    )?;
+    Ok(target)
+}
+
+fn verify_source_tree(
+    stage: &Path,
+    previous: &Path,
+    sources: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    let base = stage.join("sources");
+    let kind = fs::symlink_metadata(&base)?;
+    if !kind.is_dir() || kind.is_symlink() {
+        return Err("Redirected resume source root".into());
+    }
+    let mut expected = std::collections::BTreeSet::new();
+    for file in sources.keys() {
+        let mut p = safe_relative(file)?;
+        while !p.as_os_str().is_empty() {
+            expected.insert(p.to_path_buf());
+            p = p.parent().unwrap();
+        }
+    }
+    let mut pending = vec![base.clone()];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            let relative = path.strip_prefix(&base)?;
+            let metadata = fs::symlink_metadata(&path)?;
+            if !expected.contains(relative) {
+                return Err("Unknown resume source/header; preserve unfinished stage".into());
+            }
+            seen.insert(relative.to_path_buf());
+            if metadata.is_dir() && !metadata.is_symlink() {
+                if sources.contains_key(relative.to_str().ok_or("Source encoding")?) {
+                    return Err("Changed resume source to a directory".into());
+                }
+                pending.push(path);
+            } else if relative == Path::new(FILE) {
+                if !metadata.is_file() || metadata.is_symlink() {
+                    return Err("Changed primary source type".into());
+                }
+            } else if !sources.contains_key(relative.to_str().ok_or("Source encoding")?)
+                || !metadata.is_symlink()
+                || fs::read_link(&path)? != previous.join("sources").join(relative)
+            {
+                return Err("Changed resume header/source alias".into());
+            }
+        }
+    }
+    if seen != expected {
+        return Err("Incomplete resume source inventory".into());
+    }
+    Ok(())
+}
 pub fn build(
     root: &Path,
     workspace: &Path,
@@ -33,6 +143,7 @@ pub fn build(
     previous: &Path,
     expected: &Value,
     revision: &str,
+    resume: bool,
 ) -> Result<()> {
     let previous = previous.canonicalize()?;
     if previous.parent() != Some(workspace.join("build").as_path()) || previous == stage {
@@ -121,16 +232,74 @@ pub fn build(
     if before["linkRecipeSha256"] != text_sha(&link) {
         return Err("Frozen linker recipe changed".into());
     }
-    fs::create_dir(stage)?;
-    fs::create_dir(stage.join("sources"))?;
-    fs::create_dir(stage.join("objects"))?;
-    fs::write(
-        stage.join("started.json"),
-        serde_json::to_vec_pretty(&json!({
-            "sourceRevision":revision,"predecessor":before,"operation":"one-unit producer overlap",
-            "overlapPatchSha256":hash(&root.join(PATCH))?,"noColdBuild":true
-        }))?,
-    )?;
+    let native_revision;
+    let logs = if resume {
+        for name in [
+            "started.json",
+            "predecessor-link-proof.json",
+            "predecessor-link.command",
+        ] {
+            let metadata = fs::symlink_metadata(stage.join(name))?;
+            if !metadata.is_file() || metadata.is_symlink() {
+                return Err("Redirected resume metadata".into());
+            }
+        }
+        let objects = fs::symlink_metadata(stage.join("objects"))?;
+        if !objects.is_dir() || objects.is_symlink() {
+            return Err("Redirected resume object root".into());
+        }
+        let started: Value = serde_json::from_slice(&fs::read(stage.join("started.json"))?)?;
+        if started["predecessor"] != before
+            || started["overlapPatchSha256"] != hash(&root.join(PATCH))?
+            || started["operation"] != "one-unit producer overlap"
+            || started["noColdBuild"] != true
+            || fs::read_dir(stage.join("objects"))?.next().is_some()
+            || [
+                "native-binding.json",
+                "libarmsx2-symbols.so",
+                "libarmsx2-packaged.so",
+                "libarmsx2-independent-strip.so",
+            ]
+            .iter()
+            .any(|p| fs::symlink_metadata(stage.join(p)).is_ok())
+        {
+            return Err("Stage is not the retained precompile failure; preserve it".into());
+        }
+        native_revision = started["sourceRevision"]
+            .as_str()
+            .ok_or("Native source revision")?
+            .to_owned();
+        if native_revision.len() != 40 || !native_revision.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Invalid retained native revision".into());
+        }
+        let proof: Value =
+            serde_json::from_slice(&fs::read(stage.join("predecessor-link-proof.json"))?)?;
+        let old_recipe = fs::read_to_string(stage.join("predecessor-link.command"))?;
+        if proof["sha256"] != SYMBOLS
+            || proof["expected"] != SYMBOLS
+            || proof["verifiedDuplicate"] != true
+            || proof["recipeSha256"] != text_sha(&old_recipe)
+        {
+            return Err("Retained predecessor proof differs".into());
+        }
+        verify_source_tree(stage, &previous, sources)?;
+        let logs = stage.join("resume-1");
+        fs::create_dir(&logs)?; // Never overwrite an earlier failed resume.
+        logs
+    } else {
+        native_revision = revision.to_owned();
+        fs::create_dir(stage)?;
+        fs::create_dir(stage.join("sources"))?;
+        fs::create_dir(stage.join("objects"))?;
+        fs::write(
+            stage.join("started.json"),
+            serde_json::to_vec_pretty(&json!({
+                "sourceRevision":revision,"predecessor":before,"operation":"one-unit producer overlap",
+                "overlapPatchSha256":hash(&root.join(PATCH))?,"noColdBuild":true
+            }))?,
+        )?;
+        stage.to_path_buf()
+    };
     // Re-link unchanged inputs into a new path, then compare all symbol bytes.
     // This proves dependencies omitted from the predecessor's nine-object
     // inventory, rather than silently accepting a changed shared cache.
@@ -138,15 +307,15 @@ pub fn build(
     if link.matches(&old_symbols).count() != 1 {
         return Err("Frozen link output ambiguous".into());
     }
-    let reproduction = stage.join("predecessor-link-reproduction.so");
+    let reproduction = logs.join("predecessor-link-reproduction.so");
     let repro_link = link.replacen(&old_symbols, &quote(&reproduction)?, 1);
-    fs::write(stage.join("predecessor-link.command"), &repro_link)?;
-    run(&repro_link, cache, &stage.join("predecessor-link.log"))?;
+    fs::write(logs.join("predecessor-link.command"), &repro_link)?;
+    run(&repro_link, cache, &logs.join("predecessor-link.log"))?;
     let repro_sha = hash(&reproduction)?;
     if repro_sha != SYMBOLS {
         return Err("Unchanged link did not reproduce frozen symbols; preserve evidence".into());
     }
-    let receipt = stage.join("predecessor-link-proof.json");
+    let receipt = logs.join("predecessor-link-proof.json");
     fs::write(
         &receipt,
         serde_json::to_vec_pretty(&json!({"sha256":repro_sha,
@@ -161,56 +330,47 @@ pub fn build(
     // All unchanged headers/translation units keep their verified identities.
     // The only copied/modified source is the .cpp named by this patch.
     let new_source = stage.join("sources").join(FILE);
-    fs::create_dir_all(new_source.parent().unwrap())?;
-    fs::copy(previous.join("sources").join(FILE), &new_source)?;
-    output(
-        command("git", ["apply", "--numstat"])
-            .arg(root.join(PATCH))
-            .current_dir(stage.join("sources")),
-    )?
-    .lines()
-    .try_for_each(|line| -> Result<()> {
-        if line.split('\t').last() != Some(FILE) {
-            return Err("Overlap patch changes another source".into());
+    if resume {
+        let verify = logs.join("verify-source");
+        fs::create_dir(&verify)?;
+        let recomposed = compose_cpp(root, &previous, &verify)?;
+        if hash(&recomposed)? != hash(&new_source)? {
+            return Err("Retained patched source differs; keep both for review".into());
         }
-        Ok(())
-    })?;
-    output(
-        command("git", ["apply"])
-            .arg(root.join(PATCH))
-            .current_dir(stage.join("sources")),
-    )?;
-    for (file, _) in sources {
-        if file == FILE {
-            continue;
+    } else {
+        compose_cpp(root, &previous, &stage.join("sources"))?;
+        for (file, _) in sources {
+            if file == FILE {
+                continue;
+            }
+            let alias = stage.join("sources").join(file);
+            fs::create_dir_all(alias.parent().unwrap())?;
+            std::os::unix::fs::symlink(previous.join("sources").join(file), alias)?;
         }
-        let alias = stage.join("sources").join(file);
-        fs::create_dir_all(alias.parent().unwrap())?;
-        std::os::unix::fs::symlink(previous.join("sources").join(file), alias)?;
     }
     let old_object = previous.join(format!("objects/{index}.o"));
     let new_object = stage.join(format!("objects/{index}.o"));
     let old_source = previous.join("sources").join(FILE);
     let old_object_str = old_object.to_str().ok_or("Object encoding")?;
-    let old_source_str = old_source.to_str().ok_or("Source encoding")?;
-    if compile.matches(old_object_str).count() != 1
-        || compile.matches(old_source_str).count() != 1
-        || link.matches(old_object_str).count() != 1
-    {
-        return Err("Compile/link replacement ambiguous".into());
+    if link.matches(old_object_str).count() != 1 {
+        return Err("Link replacement ambiguous".into());
     }
-    let recipe = compile
-        .replacen(old_object_str, new_object.to_str().unwrap(), 1)
-        .replacen(old_source_str, new_source.to_str().unwrap(), 1);
-    fs::write(stage.join(format!("compile-{index}.command")), &recipe)?;
-    run(&recipe, cache, &stage.join(format!("compile-{index}.log")))?;
+    let recipe = rewrite_compile(
+        &compile,
+        old_object_str,
+        &quote(&new_object)?,
+        old_source.to_str().ok_or("Source encoding")?,
+        &quote(&new_source)?,
+    )?;
+    fs::write(logs.join(format!("compile-{index}.command")), &recipe)?;
+    run(&recipe, cache, &logs.join(format!("compile-{index}.log")))?;
     let symbols = stage.join("libarmsx2-symbols.so");
     let packaged = stage.join("libarmsx2-packaged.so");
     let link = link
-        .replacen(old_object_str, new_object.to_str().unwrap(), 1)
+        .replacen(old_object_str, &quote(&new_object)?, 1)
         .replacen(&old_symbols, &quote(&symbols)?, 1);
-    fs::write(stage.join("link.command"), &link)?;
-    run(&link, cache, &stage.join("link.log"))?;
+    fs::write(logs.join("link.command"), &link)?;
+    run(&link, cache, &logs.join("link.log"))?;
     let tools = required("ANDROID_NDK_HOME")?.join("toolchains/llvm/prebuilt/linux-x86_64/bin");
     let independent = stage.join("libarmsx2-independent-strip.so");
     for path in [&packaged, &independent] {
@@ -221,7 +381,8 @@ pub fn build(
         )?;
     }
     let native_sha = hash(&packaged)?;
-    if hash(&independent)? != native_sha
+    if native_sha == NATIVE
+        || hash(&independent)? != native_sha
         || hash(&previous.join("libarmsx2-symbols.so"))? != SYMBOLS
         || hash(&previous.join("libarmsx2-packaged.so"))? != NATIVE
         || before["baselineCacheNativeSha256"] != hash(&cache.join("bin/armsx2_libretro.so"))?
@@ -245,7 +406,10 @@ pub fn build(
     let mut composed = sources.clone();
     composed.insert(FILE.into(), json!(hash(&new_source)?));
     let mut binding = before.clone();
-    binding["sourceRevision"] = json!(revision);
+    binding["sourceRevision"] = json!(native_revision);
+    binding["builderSourceRevision"] = json!(revision);
+    binding["resumedPrecompileStage"] = json!(resume);
+    binding["attempt"] = json!(logs.strip_prefix(stage)?.to_string_lossy());
     binding["productCandidate"] = json!("Vulkan with completion-owned one-frame producer overlap");
     binding["overlapPatchSha256"] = json!(hash(&root.join(PATCH))?);
     let mut patches = PRIOR.to_vec();
@@ -274,4 +438,80 @@ pub fn build(
         stage.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cmake_dependency_outputs_follow_the_object_without_changing_other_flags() {
+        let old = "/before/12.o";
+        let source = "/before/source.cpp";
+        let recipe = "clang++ -I/before/header -MT /before/12.o -MF /before/12.o.d -o /before/12.o -c /before/source.cpp";
+        let result = rewrite_compile(
+            recipe,
+            old,
+            "'/after path/12.o'",
+            source,
+            "'/after path/source.cpp'",
+        )
+        .unwrap();
+        assert_eq!(result,"clang++ -I/before/header -MT '/after path/12.o' -MF '/after path/12.o'.d -o '/after path/12.o' -c '/after path/source.cpp'");
+        for bad in [
+            recipe.replace("-MT", "-unknown"),
+            format!("{recipe} -o /before/12.o"),
+            recipe.replace("/before/source.cpp", "/before/source.cpp.other"),
+            recipe.replace("-o /before/12.o", "-o other.o"),
+        ] {
+            assert!(rewrite_compile(&bad, old, "new.o", source, "new.cpp").is_err());
+        }
+    }
+
+    #[test]
+    fn retained_source_inventory_rejects_extra_headers_and_redirected_aliases() {
+        let temp = env::temp_dir().join(format!(
+            "vulkan-resume-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let previous = temp.join("previous");
+        let stage = temp.join("stage");
+        let header = "pcsx2/GS/Renderers/Vulkan/VKLibretro.h";
+        fs::create_dir_all(
+            previous
+                .join("sources")
+                .join(Path::new(header).parent().unwrap()),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            stage
+                .join("sources")
+                .join(Path::new(FILE).parent().unwrap()),
+        )
+        .unwrap();
+        fs::write(previous.join("sources").join(header), b"header").unwrap();
+        fs::write(stage.join("sources").join(FILE), b"composed cpp").unwrap();
+        let alias = stage.join("sources").join(header);
+        std::os::unix::fs::symlink(previous.join("sources").join(header), &alias).unwrap();
+        let sources = serde_json::Map::from_iter([
+            (FILE.into(), json!("cpp")),
+            (header.into(), json!("header")),
+        ]);
+        verify_source_tree(&stage, &previous, &sources).unwrap();
+        let injected = alias.parent().unwrap().join("Injected.h");
+        fs::write(&injected, b"unknown").unwrap();
+        assert!(verify_source_tree(&stage, &previous, &sources).is_err());
+        assert_eq!(fs::read(&injected).unwrap(), b"unknown");
+        fs::remove_file(injected).unwrap(); // Only this test's synthetic file.
+        fs::remove_file(&alias).unwrap();
+        fs::write(&alias, b"header").unwrap();
+        assert!(verify_source_tree(&stage, &previous, &sources).is_err());
+        fs::remove_file(&alias).unwrap();
+        fs::create_dir(&alias).unwrap();
+        assert!(verify_source_tree(&stage, &previous, &sources).is_err());
+        fs::remove_dir_all(temp).unwrap();
+    }
 }
