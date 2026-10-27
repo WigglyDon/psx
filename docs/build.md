@@ -15,6 +15,10 @@ revalidates the frozen link in a separate attempt directory. CMake's `-MT`,
 `-MF` and `-o` object operands move together. Divergent, unknown or already
 compiled output refuses this resume. Native-input and build-tool revisions
 are recorded separately; no expanded dependency tree is created.
+The relocated translation unit retains an explicit quoted-include root for
+its predecessor's sibling headers. Their contents are checked against the
+recorded composed source or pinned vendor body. Failed attempts remain intact;
+each retry uses a new bounded attempt directory in the same stage.
 
 Run the [storage preflight and retention procedure](storage.md) before large
 builds, backups or experiments. Writing xtask commands serialize project use

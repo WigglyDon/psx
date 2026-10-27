@@ -62,6 +62,48 @@ fn rewrite_compile(
     Ok(recipe.replace(old, new).replacen(source, target, 1))
 }
 
+fn sibling_includes(recipe: &str, directory: &Path) -> Result<String> {
+    let (compiler, arguments) = recipe.split_once(' ').ok_or("Compiler syntax")?;
+    // A relocated .cpp and its aliased interface retain quoted includes into
+    // the predecessor's verified sibling headers. Keep their physical identity.
+    Ok(format!(
+        "{compiler} -iquote {} {arguments}",
+        quote(directory)?
+    ))
+}
+
+fn sibling_header_hashes(
+    root: &Path,
+    previous: &Path,
+    sources: &serde_json::Map<String, Value>,
+) -> Result<Value> {
+    let parent = Path::new(FILE).parent().unwrap();
+    let mut hashes = serde_json::Map::new();
+    for entry in fs::read_dir(previous.join("sources").join(parent))? {
+        let entry = entry?;
+        if !matches!(
+            entry.path().extension().and_then(OsStr::to_str),
+            Some("h" | "inl")
+        ) {
+            continue;
+        }
+        let relative = parent.join(entry.file_name());
+        let actual = hash(&entry.path())?;
+        let expected = match sources.get(relative.to_str().ok_or("Header encoding")?) {
+            Some(sha) => sha.as_str().ok_or("Header digest")?.to_owned(),
+            None => hash(&root.join("vendor/armsx2").join(&relative))?,
+        };
+        if actual != expected {
+            return Err("Predecessor sibling header differs from composed or pinned source".into());
+        }
+        hashes.insert(relative.to_string_lossy().into_owned(), json!(actual));
+    }
+    if hashes.is_empty() {
+        return Err("Missing predecessor sibling headers".into());
+    }
+    Ok(json!(hashes))
+}
+
 fn compose_cpp(root: &Path, previous: &Path, destination: &Path) -> Result<PathBuf> {
     let target = destination.join(FILE);
     fs::create_dir_all(target.parent().unwrap())?;
@@ -228,6 +270,7 @@ pub fn build(
         }
     }
     let (index, compile) = selected.ok_or("Missing exact handoff translation unit")?;
+    let sibling_headers = sibling_header_hashes(root, &previous, sources)?;
     let link = fs::read_to_string(previous.join("link.command"))?;
     if before["linkRecipeSha256"] != text_sha(&link) {
         return Err("Frozen linker recipe changed".into());
@@ -283,7 +326,12 @@ pub fn build(
             return Err("Retained predecessor proof differs".into());
         }
         verify_source_tree(stage, &previous, sources)?;
-        let logs = stage.join("resume-1");
+        let logs = (1..=8)
+            .map(|n| stage.join(format!("resume-{n}")))
+            .find(|p| {
+                fs::symlink_metadata(p).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            })
+            .ok_or("No unused bounded resume attempt; preserve all existing attempts")?;
         fs::create_dir(&logs)?; // Never overwrite an earlier failed resume.
         logs
     } else {
@@ -362,6 +410,7 @@ pub fn build(
         old_source.to_str().ok_or("Source encoding")?,
         &quote(&new_source)?,
     )?;
+    let recipe = sibling_includes(&recipe, old_source.parent().ok_or("Sibling header root")?)?;
     fs::write(logs.join(format!("compile-{index}.command")), &recipe)?;
     run(&recipe, cache, &logs.join(format!("compile-{index}.log")))?;
     let symbols = stage.join("libarmsx2-symbols.so");
@@ -409,6 +458,7 @@ pub fn build(
     binding["sourceRevision"] = json!(native_revision);
     binding["builderSourceRevision"] = json!(revision);
     binding["resumedPrecompileStage"] = json!(resume);
+    binding["quotedSiblingHeaderHashes"] = sibling_headers;
     binding["attempt"] = json!(logs.strip_prefix(stage)?.to_string_lossy());
     binding["productCandidate"] = json!("Vulkan with completion-owned one-frame producer overlap");
     binding["overlapPatchSha256"] = json!(hash(&root.join(PATCH))?);
@@ -512,6 +562,48 @@ mod tests {
         fs::remove_file(&alias).unwrap();
         fs::create_dir(&alias).unwrap();
         assert!(verify_source_tree(&stage, &previous, &sources).is_err());
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn relocated_interface_can_include_its_original_sibling_header() {
+        let temp = env::temp_dir().join(format!(
+            "vulkan-quoted-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let previous = temp.join("original headers");
+        let overlay = temp.join("overlay");
+        fs::create_dir_all(&previous).unwrap();
+        fs::create_dir_all(&overlay).unwrap();
+        fs::write(
+            previous.join("Sibling.h"),
+            "constexpr int sibling_value=42;\n",
+        )
+        .unwrap();
+        fs::write(previous.join("Interface.h"), "#include \"Sibling.h\"\n").unwrap();
+        std::os::unix::fs::symlink(previous.join("Interface.h"), overlay.join("Interface.h"))
+            .unwrap();
+        let source = overlay.join("unit.cpp");
+        fs::write(
+            &source,
+            "#include \"Interface.h\"\nstatic_assert(sibling_value==42);\n",
+        )
+        .unwrap();
+        let recipe = sibling_includes(
+            &format!("c++ -fsyntax-only {}", quote(&source).unwrap()),
+            &previous,
+        )
+        .unwrap();
+        let result = Command::new("sh").args(["-c", &recipe]).output().unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
         fs::remove_dir_all(temp).unwrap();
     }
 }
