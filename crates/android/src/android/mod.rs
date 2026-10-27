@@ -2841,21 +2841,18 @@ impl Player {
         if self.checkpoint_work.is_some() {
             return Ok(());
         }
-        self.flush()?;
         if !self.checkpoint_dirty {
-            return Ok(());
+            return self.flush();
         }
         if let (Some(core), Some(game)) = (&mut self.core, &self.game) {
-            let before = Instant::now();
-            let state = core.checkpoint()?;
-            let captured_in = before.elapsed();
-            let before_cards = Instant::now();
-            let card = core.card_identity()?;
+            let snapshot = core.checkpoint(self.card.as_mut())?;
             log::info!(
                 "Session snapshot captured in {:.2} ms; cards verified in {:.2} ms",
-                captured_in.as_secs_f64() * 1000.,
-                before_cards.elapsed().as_secs_f64() * 1000.
+                snapshot.captured_in.as_secs_f64() * 1000.,
+                snapshot.cards_in.as_secs_f64() * 1000.
             );
+            let state = snapshot.state;
+            let card = snapshot.card;
             let game = game.clone();
             let root = self.root.clone();
             let paused = self.activity.user_paused;

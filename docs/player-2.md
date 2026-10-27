@@ -85,6 +85,12 @@ packaging has been removed from that wait, not proved cost-free on the device.
 Capture, card verification and worker packaging have separate timings. See
 [formats.md](formats.md) and [adapter details](../patches/armsx2/README.md).
 
+Rust captures the state and authoritative card identity as one paused operation.
+PS2's native capture acknowledges the required durable flush; identity reading
+then follows without another native flush or resuming the VM. PS1 still flushes
+its RAM-backed card before serialization. Capture timing includes the pause and
+flush. This changes no card/state format and caches no card identity.
+
 The PowerVR shader repair enables the EXT framebuffer-fetch language contract
 when its backend emits EXT `inout`, preserving the donor's Mali/ARM preference
 and ARM-only fallback. Actual GTA/Red Dead scenes rendered with EXT fetch

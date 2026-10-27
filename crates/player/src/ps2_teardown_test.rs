@@ -4,6 +4,8 @@ use super::*;
 
 static EVENTS: Mutex<Vec<(&str, bool)>> = Mutex::new(Vec::new());
 static FAIL_CAPTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CAPTURE_OK: AtomicBool = AtomicBool::new(false);
+static FLUSH_OK: AtomicBool = AtomicBool::new(true);
 
 fn record(name: &'static str) {
     EVENTS
@@ -34,6 +36,10 @@ unsafe extern "C" fn frame_callback(callback: Option<unsafe extern "C" fn()>) ->
 unsafe extern "C" fn yes() -> bool {
     true
 }
+unsafe extern "C" fn recorded_flush() -> bool {
+    record("flush");
+    FLUSH_OK.load(Ordering::Relaxed)
+}
 unsafe extern "C" fn speed(_: f32) -> bool {
     true
 }
@@ -54,7 +60,12 @@ unsafe extern "C" fn capture() -> *mut c_void {
         .unwrap();
         return NonNull::<u8>::dangling().as_ptr().cast();
     }
-    std::ptr::null_mut()
+    if CAPTURE_OK.load(Ordering::Relaxed) {
+        // An opaque fixture token; the mechanical free callback never dereferences it.
+        NonNull::<u8>::dangling().as_ptr().cast()
+    } else {
+        std::ptr::null_mut()
+    }
 }
 unsafe extern "C" fn pack(_: *mut c_void, _: *mut c_void, _: usize) -> usize {
     0
@@ -157,6 +168,79 @@ fn teardown_fixture() {
                 _owner: PhantomData,
                 _lease: CoreLease::acquire().unwrap(),
             };
+            if !fail_during_capture && !vulkan && loaded && context {
+                let root = std::env::temp_dir().join(format!(
+                    "psx-snapshot-flush-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+                ));
+                fs::create_dir(&root).unwrap();
+                let card_path = root.join("Mcd001.ps2");
+                fs::write(&card_path, b"synthetic current card").unwrap();
+                let expected_card = card_identity(&root).unwrap();
+                CAPTURE_OK.store(true, Ordering::Relaxed);
+                core.flush_fn = recorded_flush;
+                // Reproduce the actual former host sequence through retained
+                // native callbacks: outer flush, capture, then card identity.
+                core.flush().unwrap();
+                let old_state = core.checkpoint().unwrap();
+                core.flush().unwrap();
+                assert_eq!(card_identity(&root).unwrap(), expected_card);
+                drop(old_state);
+                assert_eq!(
+                    EVENTS
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|e| e.0 == "flush")
+                        .count(),
+                    3
+                );
+                core.pause(false).unwrap();
+                EVENTS.lock().unwrap().clear();
+                let mut engine = crate::engine::Core::Ps2(Box::new(core), root.clone());
+                let snapshot = engine.checkpoint(None).unwrap();
+                assert_eq!(snapshot.card, expected_card);
+                drop(snapshot);
+                assert_eq!(
+                    *EVENTS.lock().unwrap(),
+                    vec![
+                        ("pause", true),
+                        ("flush", true),
+                        ("capture", true),
+                        ("free", true)
+                    ]
+                );
+                engine.pause(false).unwrap();
+                EVENTS.lock().unwrap().clear();
+                FLUSH_OK.store(false, Ordering::Relaxed);
+                assert!(engine.checkpoint(None).is_err());
+                assert_eq!(
+                    *EVENTS.lock().unwrap(),
+                    vec![("pause", true), ("flush", true)]
+                );
+                FLUSH_OK.store(true, Ordering::Relaxed);
+                EVENTS.lock().unwrap().clear();
+                // A failed authoritative-card read must free the captured list.
+                fs::remove_file(card_path).unwrap();
+                assert!(engine.checkpoint(None).is_err());
+                assert_eq!(
+                    *EVENTS.lock().unwrap(),
+                    vec![("flush", true), ("capture", true), ("free", true)]
+                );
+                let crate::engine::Core::Ps2(restored, _) = engine else {
+                    unreachable!()
+                };
+                core = *restored;
+                core.pause(false).unwrap();
+                core.flush_fn = yes;
+                CAPTURE_OK.store(false, Ordering::Relaxed);
+                EVENTS.lock().unwrap().clear();
+                fs::remove_dir(root).unwrap();
+            }
             // The actual environment callback may run on the GS worker. It must
             // only latch/wake, with no reentrant teardown or state capture.
             let mut failure = crate::producer_failure::Failure {

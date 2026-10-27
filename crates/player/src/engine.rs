@@ -8,6 +8,7 @@ use crate::{
 };
 use std::path::{Path, PathBuf};
 use std::task::Waker;
+use std::time::{Duration, Instant};
 type Result<T> = std::result::Result<T, String>;
 pub enum Core {
     Ps1(retro::Core),
@@ -17,6 +18,14 @@ pub enum Core {
 pub enum Checkpoint {
     Ps1(Vec<u8>),
     Ps2(ps2::Checkpoint),
+}
+/// One paused capture and its authoritative card identity. Packaging can move
+/// to the save worker only after both have succeeded under the same writer.
+pub struct Snapshot {
+    pub state: Checkpoint,
+    pub card: Vec<u8>,
+    pub captured_in: Duration,
+    pub cards_in: Duration,
 }
 impl Checkpoint {
     pub fn into_bytes(self) -> Result<Vec<u8>> {
@@ -123,10 +132,37 @@ impl Core {
             Self::Ps2(core, _) => core.producer_failure(),
         }
     }
-    pub fn checkpoint(&mut self) -> Result<Checkpoint> {
+    pub fn checkpoint(&mut self, card: Option<&mut MemoryCard>) -> Result<Snapshot> {
+        let before = Instant::now();
         match self {
-            Self::Ps1(core) => core.checkpoint().map(Checkpoint::Ps1),
-            Self::Ps2(core, _) => core.checkpoint().map(Checkpoint::Ps2),
+            Self::Ps1(core) => {
+                core.flush_card(card.ok_or("PS1 card is unavailable.")?)?;
+                let state = Checkpoint::Ps1(core.checkpoint()?);
+                let captured_in = before.elapsed();
+                let before_cards = Instant::now();
+                let card = core.card_ram()?.to_vec();
+                Ok(Snapshot {
+                    state,
+                    card,
+                    captured_in,
+                    cards_in: before_cards.elapsed(),
+                })
+            }
+            Self::Ps2(core, root) => {
+                // The native checkpoint already pauses, acknowledges the durable
+                // card flush and checks producer failure. Keep it paused while
+                // reading identity; do not enqueue a second/third native flush.
+                let state = Checkpoint::Ps2(core.checkpoint()?);
+                let captured_in = before.elapsed();
+                let before_cards = Instant::now();
+                let card = ps2::card_identity(root).map_err(|e| e.to_string())?;
+                Ok(Snapshot {
+                    state,
+                    card,
+                    captured_in,
+                    cards_in: before_cards.elapsed(),
+                })
+            }
         }
     }
     pub fn restore_checkpoint(&mut self, bytes: &[u8]) -> Result<()> {
