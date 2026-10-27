@@ -80,16 +80,24 @@ stored ZIP, hashes and writes it; it does not enter emulation, GL or live
 configuration. The native library remains loaded through packaging/cancellation,
 and the host joins its single writer before teardown or switching. The existing
 reader, archive fields and authoritative-card checks are retained. No thumbnail
-is generated. Capture and current-card hashing/synchronization still stop play;
-packaging has been removed from that wait, not proved cost-free on the device.
-Capture, card verification and worker packaging have separate timings. See
+is generated. Capture and current-card hashing still stop play. The existing
+worker synchronizes the captured card descriptors before packaging/publication;
+neither stage is proved cost-free on the device. Capture, card hashing, worker
+synchronization and packaging have separate timings. See
 [formats.md](formats.md) and [adapter details](../patches/armsx2/README.md).
 
 Rust captures the state and authoritative card identity as one paused operation.
-PS2's native capture acknowledges the required durable flush; identity reading
-then follows without another native flush or resuming the VM. PS1 still flushes
-its RAM-backed card before serialization. Capture timing includes the pause and
-flush. This changes no card/state format and caches no card identity.
+PS2's native capture acknowledges its stdio flush; identity reading then follows
+without another native flush or resuming the VM. It retains read-only descriptors
+for those same card inodes and their directory (at most nine descriptors). The
+single save worker must sync them successfully before consuming the native
+snapshot or publishing it. Failure frees the snapshot without publication.
+Later game writes can invalidate the captured digest; resume still checks the
+current cards and never replaces newer progress. The host waits for its worker
+before switching or releasing the writer. Synchronous startup/teardown identity
+checks retain their durability barrier. PS1 still flushes its RAM-backed card
+before serialization. This changes no card/state format, copies no full cards
+and caches no card identity. Hardware hitch reduction remains unqualified.
 
 The PowerVR shader repair enables the EXT framebuffer-fetch language contract
 when its backend emits EXT `inout`, preserving the donor's Mali/ARM preference

@@ -19,13 +19,49 @@ pub enum Checkpoint {
     Ps1(Vec<u8>),
     Ps2(ps2::Checkpoint),
 }
-/// One paused capture and its authoritative card identity. Packaging can move
-/// to the save worker only after both have succeeded under the same writer.
+pub(crate) enum CapturedCards {
+    Ram(Vec<u8>),
+    Files(ps2::PendingCardIdentity),
+}
+impl CapturedCards {
+    fn synchronize(self) -> Result<Vec<u8>> {
+        match self {
+            Self::Ram(bytes) => Ok(bytes),
+            Self::Files(pending) => pending
+                .synchronize()
+                .map_err(|e| format!("The captured memory cards could not be synchronized: {e}")),
+        }
+    }
+}
+/// One paused state/card-identity capture. The existing save worker must finish
+/// the card durability barrier before packaging/publishing the checkpoint.
 pub struct Snapshot {
-    pub state: Checkpoint,
-    pub card: Vec<u8>,
+    pub(crate) state: Checkpoint,
+    pub(crate) card: CapturedCards,
     pub captured_in: Duration,
     pub cards_in: Duration,
+}
+pub struct SnapshotBytes {
+    pub state: Vec<u8>,
+    pub card: Vec<u8>,
+    pub cards_in: Duration,
+    pub packed_in: Duration,
+}
+impl Snapshot {
+    pub fn into_bytes(self) -> Result<SnapshotBytes> {
+        let before = Instant::now();
+        // Failure drops the still-owned native entry list without packaging it.
+        let card = self.card.synchronize()?;
+        let cards_in = before.elapsed();
+        let before = Instant::now();
+        let state = self.state.into_bytes()?;
+        Ok(SnapshotBytes {
+            state,
+            card,
+            cards_in,
+            packed_in: before.elapsed(),
+        })
+    }
 }
 impl Checkpoint {
     pub fn into_bytes(self) -> Result<Vec<u8>> {
@@ -140,7 +176,7 @@ impl Core {
                 let state = Checkpoint::Ps1(core.checkpoint()?);
                 let captured_in = before.elapsed();
                 let before_cards = Instant::now();
-                let card = core.card_ram()?.to_vec();
+                let card = CapturedCards::Ram(core.card_ram()?.to_vec());
                 Ok(Snapshot {
                     state,
                     card,
@@ -149,13 +185,15 @@ impl Core {
                 })
             }
             Self::Ps2(core, root) => {
-                // The native checkpoint already pauses, acknowledges the durable
-                // card flush and checks producer failure. Keep it paused while
-                // reading identity; do not enqueue a second/third native flush.
+                // Native capture pauses, acknowledges the stdio flush and checks
+                // producer failure. Hash while paused; the existing save worker
+                // syncs the retained card/directory descriptors before publication.
                 let state = Checkpoint::Ps2(core.checkpoint()?);
                 let captured_in = before.elapsed();
                 let before_cards = Instant::now();
-                let card = ps2::card_identity(root).map_err(|e| e.to_string())?;
+                let card = CapturedCards::Files(
+                    ps2::capture_card_identity(root).map_err(|e| e.to_string())?,
+                );
                 Ok(Snapshot {
                     state,
                     card,

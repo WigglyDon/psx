@@ -1278,9 +1278,35 @@ pub fn install_resource(root: &Path, name: &str, digest: &str, bytes: &[u8]) -> 
     atomic_write(&path, bytes).map_err(|e| e.to_string())
 }
 
+/// Captured while the native writer is paused. The digest cannot be used until
+/// all retained descriptors have passed the durability barrier. Synchronizing
+/// may run on the existing checkpoint worker; it never writes card contents.
+pub(crate) struct PendingCardIdentity {
+    identity: Vec<u8>,
+    files: Vec<fs::File>,
+    directory: fs::File,
+}
+impl PendingCardIdentity {
+    pub(crate) fn synchronize(self) -> std::io::Result<Vec<u8>> {
+        for file in self.files {
+            file.sync_all()?;
+        }
+        self.directory.sync_all()?;
+        Ok(self.identity)
+    }
+}
+
 /// Call only after the native flush acknowledgement or complete donor teardown,
 /// while holding the game's Writer. This reads and syncs, never replaces cards.
 pub fn card_identity(root: &Path) -> std::io::Result<Vec<u8>> {
+    capture_card_identity(root)?.synchronize()
+}
+
+/// Hash current bytes under the paused sole writer, retaining the same inodes
+/// for later sync. Keep the Writer until the checkpoint worker completes.
+/// Later native writes can invalidate this captured binding, just as they can
+/// during archive packaging; restoration must still check the current cards.
+pub(crate) fn capture_card_identity(root: &Path) -> std::io::Result<PendingCardIdentity> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
     let mut files = Vec::new();
@@ -1300,6 +1326,7 @@ pub fn card_identity(root: &Path) -> std::io::Result<Vec<u8>> {
         ));
     }
     let mut hash = Sha256::new();
+    let mut retained = Vec::with_capacity(files.len());
     for path in files {
         let mut file = fs::File::open(&path)?;
         let len = file.metadata()?.len();
@@ -1308,7 +1335,6 @@ pub fn card_identity(root: &Path) -> std::io::Result<Vec<u8>> {
                 "The PS2 memory card size is unsupported.",
             ));
         }
-        file.sync_all()?;
         let name = path.file_name().unwrap().as_encoded_bytes();
         hash.update((name.len() as u32).to_le_bytes());
         hash.update(name);
@@ -1321,9 +1347,13 @@ pub fn card_identity(root: &Path) -> std::io::Result<Vec<u8>> {
             }
             hash.update(&buffer[..read]);
         }
+        retained.push(file);
     }
-    fs::File::open(root)?.sync_all()?;
-    Ok(hash.finalize().to_vec())
+    Ok(PendingCardIdentity {
+        identity: hash.finalize().to_vec(),
+        files: retained,
+        directory: fs::File::open(root)?,
+    })
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -1337,6 +1367,54 @@ mod teardown_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn captured_card_identity_keeps_its_bytes_and_inodes_until_worker_sync() {
+        use std::os::unix::fs::MetadataExt;
+        let root = std::env::temp_dir().join(format!(
+            "psx-card-barrier-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("Mcd002.ps2"), b"two").unwrap();
+        fs::write(root.join("Mcd001.ps2"), b"one").unwrap();
+        // Recorded from the retained pre-split implementation using these two
+        // synthetic files, including its sorted names and length framing.
+        let legacy = "9bce19c11825e85fefa5c0ca1481dda7d90792c42fd0f392261656e3af99b6ec";
+        let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(hex(&card_identity(&root).unwrap()), legacy);
+        let captured = capture_card_identity(&root).unwrap();
+        let moved = root.with_extension("retained");
+        fs::write(root.join("Mcd001.ps2"), b"newer guest write").unwrap();
+        fs::rename(&root, &moved).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("Mcd001.ps2"), b"different file at old path").unwrap();
+        assert_eq!(
+            captured.files[0].metadata().unwrap().ino(),
+            fs::metadata(moved.join("Mcd001.ps2")).unwrap().ino()
+        );
+        assert_eq!(
+            captured.directory.metadata().unwrap().ino(),
+            fs::metadata(&moved).unwrap().ino()
+        );
+        assert_ne!(
+            captured.directory.metadata().unwrap().ino(),
+            fs::metadata(&root).unwrap().ino()
+        );
+        let identity = std::thread::spawn(move || captured.synchronize())
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(hex(&identity), legacy);
+        assert_ne!(card_identity(&moved).unwrap(), identity);
+        assert_ne!(card_identity(&root).unwrap(), identity);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+    }
     #[cfg(not(feature = "graphics-observer"))]
     #[test]
     fn pipeline_only_accepts_the_exact_previous_native_and_same_firmware() {

@@ -2682,6 +2682,10 @@ impl Player {
         self.message = game.title;
         self.screen = Screen::Settings;
         self.session.as_mut().unwrap().state = SessionState::Restoring;
+        // Cold launch can arrive after the initial window has already drawn.
+        // A paused restore produces no tick to request its first presentation.
+        self.dirty = true;
+        self.next_present = Instant::now();
         Ok(())
     }
     fn ensure_session_available(&self) -> Result<(), String> {
@@ -2847,12 +2851,10 @@ impl Player {
         if let (Some(core), Some(game)) = (&mut self.core, &self.game) {
             let snapshot = core.checkpoint(self.card.as_mut())?;
             log::info!(
-                "Session snapshot captured in {:.2} ms; cards verified in {:.2} ms",
+                "Session snapshot captured in {:.2} ms; card identity captured in {:.2} ms",
                 snapshot.captured_in.as_secs_f64() * 1000.,
                 snapshot.cards_in.as_secs_f64() * 1000.
             );
-            let state = snapshot.state;
-            let card = snapshot.card;
             let game = game.clone();
             let root = self.root.clone();
             let paused = self.activity.user_paused;
@@ -2860,14 +2862,21 @@ impl Player {
             let (tx, rx) = mpsc::sync_channel(1);
             self.checkpoint_work = Some(rx);
             std::thread::spawn(move || {
-                let before = Instant::now();
-                let result = state.into_bytes().and_then(|state| {
+                let result = snapshot.into_bytes().and_then(|snapshot| {
                     log::info!(
-                        "Session archive packaged in {:.2} ms",
-                        before.elapsed().as_secs_f64() * 1000.
+                        "Session cards synced in {:.2} ms; archive packaged in {:.2} ms",
+                        snapshot.cards_in.as_secs_f64() * 1000.,
+                        snapshot.packed_in.as_secs_f64() * 1000.
                     );
-                    resume::save_with_picture(&root, &game, paused, &card, &state, picture.as_ref())
-                        .map_err(|e| format!("The session could not be saved: {e}"))
+                    resume::save_with_picture(
+                        &root,
+                        &game,
+                        paused,
+                        &snapshot.card,
+                        &snapshot.state,
+                        picture.as_ref(),
+                    )
+                    .map_err(|e| format!("The session could not be saved: {e}"))
                 });
                 if result.is_ok() {
                     log::info!("Automatic session saved");

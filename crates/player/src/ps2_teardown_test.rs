@@ -68,6 +68,7 @@ unsafe extern "C" fn capture() -> *mut c_void {
     }
 }
 unsafe extern "C" fn pack(_: *mut c_void, _: *mut c_void, _: usize) -> usize {
+    record("pack");
     0
 }
 unsafe extern "C" fn free(_: *mut c_void) {
@@ -202,9 +203,12 @@ fn teardown_fixture() {
                 core.pause(false).unwrap();
                 EVENTS.lock().unwrap().clear();
                 let mut engine = crate::engine::Core::Ps2(Box::new(core), root.clone());
-                let snapshot = engine.checkpoint(None).unwrap();
-                assert_eq!(snapshot.card, expected_card);
-                drop(snapshot);
+                let crate::engine::Snapshot { state, card, .. } = engine.checkpoint(None).unwrap();
+                let crate::engine::CapturedCards::Files(card) = card else {
+                    panic!("PS2 checkpoint did not retain its card barrier")
+                };
+                assert_eq!(card.synchronize().unwrap(), expected_card);
+                drop(state);
                 assert_eq!(
                     *EVENTS.lock().unwrap(),
                     vec![
@@ -216,6 +220,39 @@ fn teardown_fixture() {
                 );
                 engine.pause(false).unwrap();
                 EVENTS.lock().unwrap().clear();
+                for directory_failure in [false, true] {
+                    let mut snapshot = engine.checkpoint(None).unwrap();
+                    snapshot.card = crate::engine::CapturedCards::Files(PendingCardIdentity {
+                        identity: expected_card.clone(),
+                        // Real failing sync descriptors exercise both required
+                        // barriers without filesystem exhaustion/card mutation.
+                        files: vec![fs::File::open(if directory_failure {
+                            &card_path
+                        } else {
+                            Path::new("/dev/null")
+                        })
+                        .unwrap()],
+                        directory: fs::File::open(if directory_failure {
+                            Path::new("/dev/null")
+                        } else {
+                            &root
+                        })
+                        .unwrap(),
+                    });
+                    let error = snapshot.into_bytes().err().expect("Card sync must fail");
+                    assert!(error.contains("could not be synchronized"));
+                    assert_eq!(
+                        *EVENTS.lock().unwrap(),
+                        vec![
+                            ("pause", true),
+                            ("flush", true),
+                            ("capture", true),
+                            ("free", true)
+                        ]
+                    );
+                    engine.pause(false).unwrap();
+                    EVENTS.lock().unwrap().clear();
+                }
                 FLUSH_OK.store(false, Ordering::Relaxed);
                 assert!(engine.checkpoint(None).is_err());
                 assert_eq!(

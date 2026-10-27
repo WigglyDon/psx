@@ -51,7 +51,9 @@ redraw fallback can initially be black during scenes that redraw later.
 
 Completed CPU images upload during presentation, including paused presentation;
 emulation ticks only drain the producer. This also avoids uploading intermediate
-images that the display pacing will never compose.
+images that the display pacing will never compose. Installing a session requests
+an immediate presentation explicitly: a paused cold restore must not depend on
+another lifecycle event, touch or emulation tick to draw its saved picture.
 
 Before native state loading, the paused PS2 owner drains the preceding output
 handoff and checks the failure latch. Disabling native pacing alone leaves that
@@ -302,9 +304,13 @@ Do not let an old save state silently roll back newer memory-card progress.
 Automatic checkpoints use the pinned engine's state interfaces on the same
 execution/GL owner. PS1 uses public serialize/unserialize. PS2 captures the donor's owned
 byte/name entry list while paused, then transfers it to the existing bounded
-Rust save worker for archive packaging. Packaging reads no live VM settings,
-cards or graphics and retains the native library until the list is consumed.
-Cancellation frees that list once. The worker hashes and
+Rust save worker for archive packaging. PS2 card hashing follows the native
+stdio flush while paused; the worker then synchronizes retained read-only card
+and directory descriptors before packaging or publication. No card bytes are
+copied or replaced by that barrier. A sync failure frees the captured list once
+without publication. Packaging reads no live VM settings, cards or graphics and
+retains the native library until the list is consumed. Cancellation frees that
+list once. The worker hashes and
 atomically writes one captured state; no worker calls emulation or GL. Periodic
 writes do not block playback on storage sync. Background, explicit pause and
 closure wait for durability. Resume validates core/disc inputs, payload integrity
@@ -314,8 +320,8 @@ card. See [formats.md](formats.md) for recovery and reset behavior.
 ARM64 card/payload hashing uses the pinned SHA-256 implementation's runtime
 CPU-feature detection and accelerated backend, retaining its portable fallback
 and identical digests. This reduces host verification work without weakening
-checkpoint/card checks or changing saved identities. Capture and card sync
-remain synchronous; they are not made free by background archive packaging.
+checkpoint/card checks or changing saved identities. Capture and card hashing
+remain synchronous; worker card sync and packaging still have measured costs.
 
 ## Everyday use
 
