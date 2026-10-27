@@ -154,6 +154,16 @@ to the archive in memory. Other dependency bodies stay unchanged. No expanded
 vendor tree, registry refresh or native rebuild is needed. Target/application,
 native compilation and archive-utility revisions remain separate bindings.
 
+`source-update repair-overlap-metadata` is restricted to the frozen complete
+`47a703c` source archive and its recorded digest. Its patch file is present,
+but an unanchored Git lookup omitted `0011` from generated patch metadata.
+The corrected lookup uses the source repository and propagates Git failures.
+The repair streams a distinct `-metadata-v2` archive, changes only
+`SOURCE-CHECK.json`, and independently verifies every unchanged member and the
+complete source graph. The original archive, application/native binaries and
+symbols remain intact. Its target stays `47a703c`; the repair utility revision
+is recorded separately. No engine/application rebuild or expanded tree is needed.
+
 Under the installed finite host-workspace route, build/source utilities adopt
 the custodian's actual inherited capacity descriptor after inode/token and lock
 validation. They retain private-root, volume and reserve checks and the existing

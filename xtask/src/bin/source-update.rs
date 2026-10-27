@@ -1095,6 +1095,9 @@ fn main() -> Result<()> {
     let op = std::env::args()
         .nth(1)
         .ok_or("Usage: source-update audit | retire | update | finish | verify")?;
+    if op == "repair-overlap-metadata" {
+        return producer::repair_overlap_metadata();
+    }
     if op == "producer-update" {
         return producer::run(
             &std::env::args()

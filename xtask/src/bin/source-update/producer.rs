@@ -1,6 +1,5 @@
 //! Fixed-predecessor source delivery; the Vulkan route admits only pinned ash.
 use super::*;
-use std::process::Stdio;
 const FROM: &str = "123e831e4afb6c7cec2d8e05a030e3cd82a72bba";
 const FROM_SHA: &str = "b14f6e2a0ad5910058bc015b109896c4b631fe33bce71ec8381eddafb114b56f";
 const SELF_SOURCE: &[u8] = include_bytes!(concat!(
@@ -13,6 +12,17 @@ pub fn run(target: &str) -> Result<()> {
 }
 pub fn vulkan(target: &str) -> Result<()> {
     selected(target, true)
+}
+fn has_patch(target: &str, path: &str) -> Result<bool> {
+    // Output lives outside Git. Absence is distinct from a failed Git lookup.
+    let found = git(&["ls-tree", "--name-only", target, "--", path])?;
+    if found.is_empty() {
+        Ok(false)
+    } else if found == format!("{path}\n").as_bytes() {
+        Ok(true)
+    } else {
+        Err("Ambiguous native patch lookup".into())
+    }
 }
 fn selected(target: &str, vulkan: bool) -> Result<()> {
     let (from, from_sha, from_bytes) = if vulkan {
@@ -170,13 +180,7 @@ fn selected(target: &str, vulkan: bool) -> Result<()> {
             "0010-vulkan-frame-completion.patch"
         ]);
         let overlap = "patches/armsx2/0011-vulkan-producer-overlap.patch";
-        if Command::new("git")
-            .args(["cat-file", "-e", &format!("{target}:{overlap}")])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?
-            .success()
-        {
+        if has_patch(target, overlap)? {
             patches.insert(
                 "0011-vulkan-producer-overlap.patch".into(),
                 json!(digest(&git(&["show", &format!("{target}:{overlap}")])?)),
@@ -277,9 +281,170 @@ fn selected(target: &str, vulkan: bool) -> Result<()> {
     Ok(())
 }
 
+/// Repair only the demonstrated metadata omission in the frozen player bundle.
+/// Its tracked source and application revision remain exact; the repair utility
+/// revision is separate. Never replace the original archive or expand its tree.
+pub fn repair_overlap_metadata() -> Result<()> {
+    const TARGET: &str = "47a703c5185c7f4b3c8b0df31778b697ccf1afc3";
+    const INPUT_SHA: &str = "cb22d08122895d3a117b6b892a050b3eb7dc9804ee7444a33d85013501fb04a5";
+    const PATCH: &str = "0011-vulkan-producer-overlap.patch";
+    let _growth = storage::Growth::begin(&std::env::current_dir()?, storage::GIB / 2)?;
+    if !git(&["status", "--porcelain"])?.is_empty()
+        || git(&["show", "HEAD:xtask/src/bin/source-update.rs"])? != TOOL_SOURCE
+        || git(&["show", "HEAD:xtask/src/bin/source-update/producer.rs"])? != SELF_SOURCE
+    {
+        return Err("Commit the exact executed metadata utility before publication".into());
+    }
+    let root = name(TARGET);
+    let input = Path::new("build").join(format!("{root}.tar.gz"));
+    let meta = fs::symlink_metadata(&input)?;
+    if !meta.is_file() || meta.is_symlink() || meta.len() != 205228692 || hash(&input)? != INPUT_SHA
+    {
+        return Err("Frozen source input changed".into());
+    }
+    let (inventory, payload) = scan(&input, &root, &Payloads::new(), None)?;
+    validate(&inventory, &payload, TARGET)?;
+    let mut check: Value = serde_json::from_slice(&payload["SOURCE-CHECK.json"])?;
+    let previous = json!([
+        "0001-host-pause-and-card-flush.patch",
+        "0004-stream-buffer-failure.patch",
+        "0010-vulkan-frame-completion.patch"
+    ]);
+    if !check["nativePatches"][PATCH].is_null() || check["productNativePatches"] != previous {
+        return Err("Not the exact demonstrated patch-metadata omission".into());
+    }
+    let body = git(&["show", &format!("{TARGET}:patches/armsx2/{PATCH}")])?;
+    let patch_sha = digest(&body);
+    if patch_sha != "414bf589247a7ae3ca0d3260ed43442a0d61117fc6c4779d20a5fa74a8cc91a9"
+        || inventory[&format!("patches/armsx2/{PATCH}")]["sha256"] != patch_sha
+    {
+        return Err("Archived overlap source differs from actual native input".into());
+    }
+    check["nativePatches"][PATCH] = json!(patch_sha);
+    check["productNativePatches"]
+        .as_array_mut()
+        .ok_or("Product patches")?
+        .push(json!(PATCH));
+    let replacements = Payloads::from([(
+        "SOURCE-CHECK.json".into(),
+        serde_json::to_vec_pretty(&check)?,
+    )]);
+    let final_path = Path::new("build").join(format!("{root}-metadata-v2.tar.gz"));
+    let partial = final_path.with_extension("gz.incomplete");
+    if final_path.exists() || partial.exists() {
+        return Err("Preserve existing metadata repair output".into());
+    }
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&partial)?;
+    durable(
+        &partial.with_extension("receipt.json"),
+        &json!({"phase":"before-stream","targetRevision":TARGET,"predecessorSha256":INPUT_SHA,"onlyChangedMember":"SOURCE-CHECK.json"}),
+    )?;
+    let (written, _) = scan(
+        &input,
+        &root,
+        &replacements,
+        Some((Path::new(&root), &file)),
+    )?;
+    file.sync_all()?;
+    output_root()?;
+    storage::between_steps()?;
+    gzip_check(&partial)?;
+    let (actual, metadata) = scan(&partial, &root, &Payloads::new(), None)?;
+    if actual != written || actual.len() != inventory.len() {
+        return Err("Metadata repair readback differs".into());
+    }
+    validate(&actual, &metadata, TARGET)?;
+    for (path, old) in &inventory {
+        if path != "SOURCE-CHECK.json" && actual.get(path) != Some(old) {
+            return Err(format!("Unchanged source member differs: {path}").into());
+        }
+    }
+    let readback: Value = serde_json::from_slice(&metadata["SOURCE-CHECK.json"])?;
+    if readback != check || hash(&input)? != INPUT_SHA {
+        return Err("Patch metadata or frozen source changed".into());
+    }
+    let sha = hash(&partial)?;
+    let utility = String::from_utf8(git(&["rev-parse", "HEAD"])?)?;
+    if !git(&["status", "--porcelain"])?.is_empty() {
+        return Err("Utility changed during metadata repair".into());
+    }
+    output_root()?;
+    storage::between_steps()?;
+    fs::hard_link(&partial, &final_path)?;
+    File::open("build")?.sync_all()?;
+    let mut side = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(final_path.with_extension("gz.sha256"))?;
+    writeln!(
+        side,
+        "{sha}  {}",
+        final_path.file_name().unwrap().to_str().unwrap()
+    )?;
+    side.sync_all()?;
+    durable(
+        &final_path.with_extension("receipt.json"),
+        &json!({"phase":"verified-complete","targetRevision":TARGET,"utilityRevision":utility.trim(),"utilityBinarySha256":hash(&std::env::current_exe()?)?,"utilityProducerSourceSha256":digest(SELF_SOURCE),"predecessorSha256":INPUT_SHA,"archiveSha256":sha,"archiveBytes":file.metadata()?.len(),"members":actual.len(),"streamedReadback":true,"onlyChangedMember":"SOURCE-CHECK.json","nativePatches":readback["nativePatches"],"productNativePatches":readback["productNativePatches"]}),
+    )?;
+    fs::remove_file(partial)?;
+    File::open("build")?.sync_all()?;
+    println!(
+        "Complete metadata-corrected source {}: {sha}; target{TARGET}, utility{}",
+        final_path.display(),
+        utility.trim()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_patch_lookup_is_anchored_outside_repository() {
+        const PATH: &str = "patches/armsx2/0011-vulkan-producer-overlap.patch";
+        if std::env::var_os("PSX_SOURCE_PATCH_LOOKUP_CHILD").is_some() {
+            assert!(has_patch("47a703c5185c7f4b3c8b0df31778b697ccf1afc3", PATH).unwrap());
+            assert!(!has_patch("cf6f23e2d30867e01a158b6e09294113ae7e73d1", PATH).unwrap());
+            assert!(has_patch("invalid-revision", PATH).is_err());
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "psx-patch-lookup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&dir).unwrap();
+        assert!(!Command::new("git")
+            .args([
+                "cat-file",
+                "-e",
+                &format!("47a703c5185c7f4b3c8b0df31778b697ccf1afc3:{PATH}")
+            ])
+            .current_dir(&dir)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "producer::tests::native_patch_lookup_is_anchored_outside_repository"
+            ])
+            .env("PSX_SOURCE_PATCH_LOOKUP_CHILD", "1")
+            .current_dir(&dir)
+            .status()
+            .unwrap()
+            .success());
+        fs::remove_dir(dir).unwrap();
+    }
     #[test]
     fn streaming_project_additions_preserve_bodies_and_reject_collisions() {
         let dir = std::env::temp_dir().join(format!("psx-source-additions-{}", std::process::id()));
