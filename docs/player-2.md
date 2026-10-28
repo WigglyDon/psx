@@ -247,8 +247,26 @@ symbols and complete streaming source passed. An ordinary APK without the
 acceptance/observer path is also packaged from the same application source;
 its build worktree differs only in documentation. Its ordinary-entry/platform
 dialog checks remain distinct from the shared-player gameplay observations.
+The ordinary APK subsequently opened a missing durable ID into the expected
+recovery screen and returned with the baseline and normal data verified.
 Exact bindings and subsequent results stay on
 [PLAYER-2](https://github.com/WigglyDon/psx/issues/2).
+
+The same `5c57fd8` isolated-progress player subsequently retained paused PS1
+and PS2 scenes through all four actual display rotations. PS2 Start opened
+and closed its own game menu. PS1 resumed animation after its rotation block,
+and switching back restored the paused PS2 scene. All 16 game captures were
+reviewed after verified return. The original baseline installation timed out;
+cleanup-only recovery later verified the exact baseline, unchanged normal data,
+restored rotation preferences, app absence and physical display OFF. These are
+separate work and return observations, not a fresh save or listening result.
+
+The lab's current default launcher exposes no native pin-confirmation activity.
+Remaining launcher acceptance requires an admitted supporting launcher; the
+capability inquiry changes no Home/default/profile or personal-device authority.
+The optional Google security-check submission was explicitly declined once for
+psx during recovery. This qualifies the narrow test-host handling, not permanent
+prompt suppression or a product security-setting change.
 
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
