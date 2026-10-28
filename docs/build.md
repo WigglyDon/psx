@@ -306,3 +306,12 @@ The Activity shim also forwards `onNewIntent`. A generated, non-exported
 the intents, validates game IDs, requests native confirmation, updates local
 icons and owns every launch decision. Neither shim implements application
 logic. Missing confirmation is not reported as a successful pin.
+
+When sideloading a development APK, Google Play Protect may offer an optional
+submission for review, including for each new version. Declining that upload
+is separate from disabling app scanning. The player cannot guarantee that
+Android will suppress future prompts. During a supervised install, inspect the
+actual prompt and honor the owner's submission choice; keep command exit status
+separate from independently verified APK/data/return state. A timeout alone
+does not establish whether installation completed.
+[Google's Play Protect guidance](https://support.google.com/googleplay/answer/2812853).

@@ -18,13 +18,12 @@ saved progress stay on your device.
 
 ## Development status
 
-Actual hardware-rendered gameplay, clear sound, simultaneous controls and an
-ordinary memory-card save loaded after a fresh process have run on a stock
-Fold. Automatic session restore has also returned to gameplay after a fresh
-process. Reopening now reuses the existing player, and the owner has checked
-fold/rotation layouts. The latest build restored FF7 and booted Crash with
-the free firmware; startup latency, controller snapping and the latest
-background-audio refinement still need focused device checks.
+PS1 hardware-rendered gameplay, clear sound, simultaneous controls, ordinary
+card loading and automatic session restoration have run on a stock Fold.
+The owner has checked fold/rotation layouts. PS2 lab testing now includes
+Baldur's Gate gameplay, ordinary save/load, analog movement, paused restoration
+and switching with PS1. These are selected-device observations, with remaining
+audio, input and distribution limits recorded in [PLAYER-2](docs/player-2.md).
 
 This is active development, with a signed development APK build path.
 Google Play and Apple App Store releases are intended; store acceptance,

@@ -230,13 +230,25 @@ reconciliation subsequently verified the baseline, normal data and resource
 return. Earlier failed controllers and returns remain separate evidence.
 
 Native reports in that bounded same-scene interval were about 59.94 VPS / 100%.
-Audio underruns still increased near snapshots; those counters are distinct
-from listening quality, which was unavailable for that trial. Candidate
-`5c57fd8` adds a normal-speed audio reserve/replenishment policy and shortcut
-callback/intent corrections. Focused tests, both Android compilation paths,
-signature/alignment, matching symbols and complete streaming source passed;
-its device qualification is pending. Exact bindings and subsequent results
-stay on [PLAYER-2](https://github.com/WigglyDon/psx/issues/2).
+Audio underruns still increased near snapshots in that predecessor trial.
+Candidate `5c57fd8` adds a normal-speed audio reserve/replenishment policy and
+shortcut callback/intent corrections. In its subsequent lab trial, the last
+reports bracketing the requested 90-second snapshot interval had no additional
+underruns or dropped samples. The existing 234 startup/prior underruns remained;
+listening quality was unavailable. Controlled PS2 analog movement was visible.
+Both return switches and a fresh-process PS1 paused restore were visually
+verified, followed by resumed gameplay and missing-entry recovery. A distinct
+effect from the injected PS2 Cross press and simultaneous human touch were not
+established by this trial. Actual baseline/data/physical-display-OFF return was
+verified separately from retained installer command timeouts.
+
+Focused tests, both Android compilation paths, signature/alignment, matching
+symbols and complete streaming source passed. An ordinary APK without the
+acceptance/observer path is also packaged from the same application source;
+its build worktree differs only in documentation. Its ordinary-entry/platform
+dialog checks remain distinct from the shared-player gameplay observations.
+Exact bindings and subsequent results stay on
+[PLAYER-2](https://github.com/WigglyDon/psx/issues/2).
 
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
