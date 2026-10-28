@@ -219,12 +219,33 @@ from running-rate/sound/performance acceptance.
 
 ## Observations and remaining acceptance
 
+The retained Vulkan path has now loaded an ordinary Baldur's Gate card save
+into tavern gameplay after a fresh disc/process boot with no automatic
+checkpoint. The `99a659d` lab trial also restored its committed paused picture
+after a fresh process, switched to actual Crash gameplay with movement, and
+restored the paused PS2 scene on switching back. The remaining PS1 return and
+fresh-process block was not executed because the test controller's review
+deadline expired; it was not a demonstrated runtime failure. Cleanup-only
+reconciliation subsequently verified the baseline, normal data and resource
+return. Earlier failed controllers and returns remain separate evidence.
+
+Native reports in that bounded same-scene interval were about 59.94 VPS / 100%.
+Audio underruns still increased near snapshots; those counters are distinct
+from listening quality, which was unavailable for that trial. Candidate
+`5c57fd8` adds a normal-speed audio reserve/replenishment policy and shortcut
+callback/intent corrections. Focused tests, both Android compilation paths,
+signature/alignment, matching symbols and complete streaming source passed;
+its device qualification is pending. Exact bindings and subsequent results
+stay on [PLAYER-2](https://github.com/WigglyDon/psx/issues/2).
+
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
 Updates preserved existing PS1 collection/card/profile identities. FF7 native
 pin confirmation, cold/warm launcher return, repeated same-game delivery and
 missing-entry recovery ran without replacing its paused scene. Remaining
 shortcut and lifecycle cases stay on #2.
+
+### Earlier GLES integration observations
 
 PS2 reached Baldur's Gate's card menus, opening cinematic and interactive tavern
 dialogue. The owner heard music/dialogue breaking up at hitches. Separate PS2
@@ -238,8 +259,9 @@ Baldur's Gate: Dark Alliance remains the selected acceptance target. Clean boot
 reproduces its card format/access error. Traces show present/eject/specs/read/
 auth operations, but no write/erase at failed format. A temporary IOP-interpreter
 comparison reproduced the same error and was restored exactly. No protocol
-cause or card repair is established; severe hitches remain. Ordinary PS2
-save→fresh process→load is still required, independently of automatic resume.
+cause or card repair was established; severe hitches remained in that trial.
+It did not prove ordinary PS2 save→fresh process→load independently of
+automatic resume; the newer Vulkan observation above does.
 
 Off-device investigation subsequently reproduced a queued card-reply defect:
 the donor padded against the complete output FIFO, truncating some replies
@@ -250,7 +272,9 @@ this contributes to the selected game's format failure remains unverified;
 there is no ordinary save/load or fresh-boot formatting pass from that fixture.
 Card files, authentication and the snapshot format are unchanged.
 
-Still required: controlled simultaneous analog/digital/action gameplay with
+### Remaining qualification
+
+Remaining acceptance includes controlled simultaneous analog/digital/action gameplay with
 audible sound, physical L3/R3, remaining fold/status/lifecycle cases, missing-file
 relink and another-active-game/update-retention shortcuts, plus a repeatable
 speed/pacing/audio/memory/thermal interval. Preserve the working increments
