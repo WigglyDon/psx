@@ -315,10 +315,8 @@ pub extern "system" fn Java_com_machinerhythm_psx_ShortcutReceiver_confirmed(
             .call_method(&files, "getAbsolutePath", "()Ljava/lang/String;", &[])?
             .l()?;
         let path: String = env.get_string(&JString::from(path))?.into();
-        let target = Path::new(&path)
-            .join("shortcuts")
-            .join(format!("{}.confirmed", id.as_str()));
-        if let Err(error) = psx_player::saves::atomic_write(&target, b"pinned\n") {
+        if let Err(error) = psx_player::session::record_shortcut_confirmation(Path::new(&path), &id)
+        {
             log::error!("Shortcut confirmation could not be recorded: {error}");
         }
         post(Event::Notice("Game icon added to your Home Screen.".into()));

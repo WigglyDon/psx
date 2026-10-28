@@ -188,8 +188,7 @@ pub fn run(app: AndroidApp) -> Result<(), String> {
     let root = app
         .internal_data_path()
         .ok_or("App storage is unavailable.")?;
-    let root = psx_player::acceptance::storage_root(&root).map_err(|e| e.to_string())?;
-    let root = psx_player::graphics_observer::storage_root(&root).map_err(|e| e.to_string())?;
+    let root = psx_player::storage_root(&root).map_err(|e| e.to_string())?;
     fs::create_dir_all(root.join("system")).map_err(|e| e.to_string())?;
     fs::create_dir_all(root.join("saves")).map_err(|e| e.to_string())?;
     let platform = unsafe { Platform::new(&app)? };
@@ -2605,6 +2604,7 @@ impl Player {
             jit
         );
         self.queue.set_sample_rate(av.timing.sample_rate as usize);
+        self.queue.set_core_clock(core.owns_clock());
         self.core = Some(core);
         self.session = Some(session);
         // A failed restore must stay unavailable, including after ordinary

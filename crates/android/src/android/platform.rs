@@ -60,7 +60,7 @@ static LAUNCHES: Mutex<Option<LaunchQueue>> = Mutex::new(None);
 pub fn next_launch() -> Option<Launch> {
     LAUNCHES.lock().ok()?.as_mut()?.pop()
 }
-fn receive_launch(env: &mut JNIEnv, intent: &JObject) -> JResult<()> {
+fn receive_launch(env: &mut JNIEnv, activity: &JObject, intent: &JObject) -> JResult<()> {
     if intent.is_null() {
         return Ok(());
     }
@@ -80,16 +80,25 @@ fn receive_launch(env: &mut JNIEnv, intent: &JObject) -> JResult<()> {
     });
     if let Err(error) = result {
         post(Event::LaunchError(error.into()));
+    } else {
+        // onNewIntent does not update getIntent. Retain only an accepted game
+        // request; invalid/busy deliveries must not replace the prior intent.
+        env.call_method(
+            activity,
+            "setIntent",
+            "(Landroid/content/Intent;)V",
+            &[JValue::Object(intent)],
+        )?;
     }
     Ok(())
 }
 #[no_mangle]
 pub extern "system" fn Java_com_machinerhythm_psx_PsxActivity_gameIntent(
     mut env: JNIEnv,
-    _this: JObject,
+    activity: JObject,
     intent: JObject,
 ) {
-    if receive_launch(&mut env, &intent).is_err() {
+    if receive_launch(&mut env, &activity, &intent).is_err() {
         let _ = env.exception_clear();
         post(Event::Error("This game link could not be opened.".into()));
     }
@@ -201,7 +210,7 @@ impl Platform {
                 .call_method(&local, "getIntent", "()Landroid/content/Intent;", &[])
                 .and_then(|v| v.l())
                 .map_err(|e| e.to_string())?;
-            receive_launch(&mut env, &intent).map_err(|e| e.to_string())?;
+            receive_launch(&mut env, &local, &intent).map_err(|e| e.to_string())?;
             // Android owns this reference, not this local JObject wrapper.
             let _ = local.into_raw();
             global

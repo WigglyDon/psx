@@ -1,6 +1,10 @@
 use crate::settings::Speed;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
+// Half-percent units retain the existing resampling ratios and allow small
+// audio-side clock correction without floating point on the real-time thread.
+const FRAME_PHASE: usize = 200;
+
 /// One core-thread producer, one real-time consumer. Fixed storage; no locks,
 /// allocation, core calls, or file work on the audio thread.
 pub struct AudioQueue {
@@ -14,6 +18,8 @@ pub struct AudioQueue {
     target: AtomicUsize,
     sample_rate: AtomicUsize,
     consumer_limit: AtomicUsize,
+    core_clock: AtomicBool,
+    background: AtomicBool,
     paused: AtomicBool,
     discard_before: AtomicUsize,
     discard_pending: AtomicBool,
@@ -34,6 +40,8 @@ impl AudioQueue {
             target: AtomicUsize::new(1100),
             sample_rate: AtomicUsize::new(44100),
             consumer_limit: AtomicUsize::new(1100),
+            core_clock: AtomicBool::new(false),
+            background: AtomicBool::new(false),
             paused: AtomicBool::new(false),
             discard_before: AtomicUsize::new(0),
             discard_pending: AtomicBool::new(false),
@@ -66,9 +74,32 @@ impl AudioQueue {
             .store(speed.percent() as usize, Ordering::Relaxed);
     }
 
+    /// A threaded core owns its emulation clock. Keep normal-speed audio
+    /// buffered across bounded captures and refill it with small audio-side
+    /// drift correction; never adjust the core's requested time scale.
+    pub fn set_core_clock(&self, owns_clock: bool) {
+        self.core_clock.store(owns_clock, Ordering::Relaxed);
+    }
+
+    fn base_target(&self, requested: usize) -> usize {
+        if self.core_clock.load(Ordering::Relaxed) && requested == 100 {
+            let milliseconds = if self.background.load(Ordering::Relaxed) {
+                120
+            } else {
+                80
+            };
+            (self.sample_rate.load(Ordering::Relaxed) * milliseconds)
+                .div_ceil(1000)
+                .min(self.frames.len())
+        } else {
+            self.target.load(Ordering::Relaxed)
+        }
+    }
+
     /// Background scheduling needs more headroom than interactive play. The
     /// queue stays bounded, and return discards the extra latency immediately.
     pub fn set_background(&self, background: bool) {
+        self.background.store(background, Ordering::Relaxed);
         let target = match (self.sample_rate.load(Ordering::Relaxed), background) {
             (48000, false) => 1200,
             (48000, true) => 2400,
@@ -84,7 +115,7 @@ impl AudioQueue {
     }
     pub fn target_frames(&self) -> usize {
         let speed = self.speed.load(Ordering::Relaxed);
-        let target = self.target.load(Ordering::Relaxed);
+        let target = self.base_target(speed);
         if speed == Speed::UNLIMITED.percent() as usize {
             target
         } else {
@@ -153,21 +184,34 @@ impl AudioQueue {
             self.phase.store(0, Ordering::Relaxed);
             return;
         }
-        let target = self.target.load(Ordering::Relaxed);
+        let target = self.base_target(requested);
         let unlimited = requested == Speed::UNLIMITED.percent() as usize;
         // In uncapped mode source production varies with actual achieved speed.
         // Queue fill provides bounded feedback without clocks, locks or a second
         // producer. The audio ratio is bounded; it never caps core execution.
-        let speed = if unlimited {
-            (available * 100 / target).clamp(100, 3200)
-        } else {
-            requested
-        };
+        let mut speed = FRAME_PHASE / 100
+            * if unlimited {
+                (available * 100 / target).clamp(100, 3200)
+            } else {
+                requested
+            };
+        if self.core_clock.load(Ordering::Relaxed) && requested == 100 {
+            // An initial reserve alone drains on every capture. Replenish it
+            // between captures with at most0.5% pitch/rate correction, using a
+            // dead band to avoid reacting to ordinary guest-frame bursts.
+            if available * 10 < target * 9 {
+                speed -= 1;
+            } else if available * 10 > target * 11 {
+                speed += 1;
+            }
+        }
         let limit = if unlimited {
             self.frames.len()
         } else {
-            let target = (target * speed).div_ceil(100).max(1);
-            if speed < 100 {
+            // The retention limit follows the requested mode, not the small
+            // feedback correction; changing it per callback would trim audio.
+            let target = (target * requested).div_ceil(100).max(1);
+            if requested < 100 {
                 // Sources arrive in whole guest-frame bursts. At slow rates
                 // a 25 ms output target can be smaller than one such burst;
                 // trimming it would discard most of that frame's sound.
@@ -186,7 +230,7 @@ impl AudioQueue {
                 phase = 0;
             }
         }
-        let count = (output.len() / 2).min((available * 100).saturating_sub(phase) / speed);
+        let count = (output.len() / 2).min((available * FRAME_PHASE).saturating_sub(phase) / speed);
         let volume = self.volume.load(Ordering::Relaxed) as i32;
         for pair in output.chunks_exact_mut(2).take(count) {
             let mut left = 0;
@@ -194,12 +238,12 @@ impl AudioQueue {
             let mut remaining = speed;
             while remaining > 0 {
                 let packed = self.frames[read % self.frames.len()].load(Ordering::Relaxed);
-                let weight = remaining.min(100 - phase);
+                let weight = remaining.min(FRAME_PHASE - phase);
                 left += packed as i16 as i32 * weight as i32;
                 right += (packed >> 16) as i16 as i32 * weight as i32;
                 remaining -= weight;
                 phase += weight;
-                if phase == 100 {
+                if phase == FRAME_PHASE {
                     read = read.wrapping_add(1);
                     phase = 0;
                 }
@@ -228,6 +272,72 @@ impl AudioQueue {
 mod tests {
     use super::*;
 
+    #[test]
+    fn core_clock_audio_refills_between_observed_checkpoint_gaps() {
+        fn trial(core_clock: bool) -> u64 {
+            let queue = AudioQueue::new(16384);
+            queue.set_sample_rate(48000);
+            queue.set_core_clock(core_clock);
+            let samples: Vec<i16> = (0..192).flat_map(|_| [1000, -1000]).collect();
+            let mut output = [0; 384];
+            queue.pop(&mut output); // Adopt the consumer mode before observation.
+            let initial: Vec<i16> = (0..1472).flat_map(|_| [1000, -1000]).collect();
+            queue.push(&initial);
+            let before = queue.underruns.load(Ordering::Relaxed);
+            for _ in 0..3000 {
+                //12s of the independently clocked producer.
+                queue.push(&samples);
+                queue.pop(&mut output);
+            }
+            for _ in 0..3 {
+                // Actual99 trace:1472queued frames and about52ms capture+hash.
+                // A larger initial reserve alone cannot survive repeated gaps;
+                // the real queue must replenish it before the next checkpoint.
+                for _ in 0..13 {
+                    queue.pop(&mut output);
+                    if core_clock {
+                        assert!(output.chunks_exact(2).all(|s| s == [1000, -1000]));
+                    }
+                }
+                for _ in 0..7500 {
+                    //30s until the next snapshot.
+                    queue.push(&samples);
+                    queue.pop(&mut output);
+                    if core_clock {
+                        assert!(output.chunks_exact(2).all(|s| s == [1000, -1000]));
+                    }
+                }
+            }
+            assert_eq!(queue.dropped.load(Ordering::Relaxed), 0);
+            queue.underruns.load(Ordering::Relaxed) - before
+        }
+        assert!(
+            trial(false) > 0,
+            "The retained uncorrected queue must reproduce starvation"
+        );
+        assert_eq!(trial(true), 0);
+    }
+    #[test]
+    fn core_clock_reserve_leaves_ps1_and_other_time_scales_unchanged() {
+        let queue = AudioQueue::new(16384);
+        assert_eq!(queue.target_frames(), 1100);
+        queue.set_sample_rate(48000);
+        queue.set_core_clock(true);
+        assert_eq!(queue.target_frames(), 3840);
+        queue.set_background(true);
+        assert_eq!(queue.target_frames(), 5760);
+        queue.set_speed(Speed::DOUBLE);
+        assert_eq!(queue.target_frames(), 4800);
+        queue.set_background(false);
+        assert_eq!(queue.target_frames(), 2400);
+        queue.set_speed(Speed::UNLIMITED);
+        assert_eq!(queue.target_frames(), 1200);
+        queue.set_speed(Speed::NORMAL);
+        queue.set_core_clock(false);
+        assert_eq!(queue.target_frames(), 1200);
+        queue.set_sample_rate(44100);
+        assert_eq!(queue.target_frames(), 1100);
+    }
     #[test]
     fn foreground_pause_is_silent_without_underruns_or_replaying_old_sound() {
         let queue = AudioQueue::new(32);

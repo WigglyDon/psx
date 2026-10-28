@@ -43,6 +43,18 @@ impl Launch {
     }
 }
 
+/// Record only a platform-confirmed icon. A callback's ordinary files path
+/// follows the same root policy as the player, including isolated test builds.
+pub fn record_shortcut_confirmation(normal: &Path, id: &GameId) -> io::Result<()> {
+    let root = crate::storage_root(normal)?;
+    crate::saves::atomic_write(
+        &root
+            .join("shortcuts")
+            .join(format!("{}.confirmed", id.as_str())),
+        b"pinned\n",
+    )
+}
+
 /// Ordered foreground requests. Coalesce repeated delivery, without losing a
 /// later A in an A/B/A switch. Saturation is an explicit busy result.
 #[derive(Default)]
@@ -183,6 +195,62 @@ mod tests {
             let _ = self.0.kill();
             let _ = self.0.wait();
         }
+    }
+    #[cfg(not(feature = "graphics-observer"))]
+    #[test]
+    fn shortcut_confirmation_uses_player_storage_and_never_falls_back() {
+        let parent = std::env::temp_dir().join(format!(
+            "psx-shortcut-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let normal = parent.join("files");
+        fs::create_dir_all(&normal).unwrap();
+        fs::write(normal.join("owner-save"), b"normal progress").unwrap();
+        let id = GameId::parse("abc123").unwrap();
+        #[cfg(feature = "player-acceptance")]
+        {
+            assert!(record_shortcut_confirmation(&normal, &id).is_err());
+            assert!(!normal.join("shortcuts").exists());
+            let scratch = parent.join(crate::acceptance::DIRECTORY);
+            fs::create_dir(&scratch).unwrap();
+            fs::write(scratch.join("prepared-v1"), crate::acceptance::MARKER).unwrap();
+        }
+        let before = fs::metadata(&normal).unwrap();
+        record_shortcut_confirmation(&normal, &id).unwrap();
+        let root = crate::storage_root(&normal).unwrap();
+        assert_eq!(
+            fs::read(root.join("shortcuts/abc123.confirmed")).unwrap(),
+            b"pinned\n"
+        );
+        assert_eq!(
+            fs::read(normal.join("owner-save")).unwrap(),
+            b"normal progress"
+        );
+        #[cfg(feature = "player-acceptance")]
+        {
+            assert_ne!(root, normal);
+            assert!(!normal.join("shortcuts").exists());
+            let after = fs::metadata(&normal).unwrap();
+            assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                assert_eq!(
+                    (before.dev(), before.ino(), before.mtime_nsec()),
+                    (after.dev(), after.ino(), after.mtime_nsec())
+                );
+            }
+        }
+        #[cfg(not(feature = "player-acceptance"))]
+        {
+            let _ = before;
+            assert_eq!(root, normal);
+        }
+        fs::remove_dir_all(parent).unwrap();
     }
     #[test]
     #[ignore = "subprocess fixture invoked by writer_lock_is_released_after_worker_death"]

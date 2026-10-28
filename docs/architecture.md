@@ -541,11 +541,21 @@ uses the ordinary runtime pause path, rather than the native limiter's zero
 (which means unlimited). Actual achieved speed and Fold audio/UI quality remain
 separate device observations, not guarantees from a target setting.
 
-The FIFO has 16,384 source-frame slots. Foreground play targets about 25 ms
-of output; opt-in minimized playback targets 50 ms to tolerate background
-scheduling gaps. The consumer trims the extra backlog when returning, without
+The FIFO has 16,384 source-frame slots. Caller-clocked PS1 foreground play
+targets about 25 ms of output; opt-in minimized playback targets 50 ms to
+tolerate background scheduling gaps. The consumer trims the extra backlog when returning, without
 reopening audio. Fill targets scale with the selected multiplier. This is a
 bounded host policy; its background audio quality still needs device validation.
+
+At normal time, independently clocked PS2 targets an 80 ms foreground reserve
+(120 ms in the background). Measured checkpoint capture/hash gaps exceeded its
+previous available audio. A reserve alone would drain on successive captures;
+the consumer replenishes it between captures using at most 0.5% audio-side
+pitch/rate correction outside a 10% fill dead band. This neither adjusts the
+native clock nor suppresses underrun accounting. The callback stays allocation
+and lock free. PS1 and other requested time scales retain their preceding ratios
+and fill targets. Actual listening quality and total output latency require
+device qualification; the reserve is additional to platform audio latency.
 
 Run in background is off by default. Minimizing pauses emulation, cancels input,
 closes audio and checkpoints, without changing explicit pause intent. Opting in
@@ -780,6 +790,12 @@ request is distinct from a confirmed pin; a callback-only receiver records the
 latter. Existing pins receive title/local-art updates from the collection.
 Removing a launcher icon does not mutate the collection or saved progress.
 These are implemented contracts; device acceptance is tracked in PLAYER-2.
+Activity startup and confirmation callbacks share one Rust storage-root policy.
+An acceptance callback requires the prepared sibling and never falls back to
+normal files; ordinary confirmation paths and bytes remain unchanged. Rust also
+retains each accepted warm launch with `Activity.setIntent`, so later
+[`getIntent`](https://developer.android.com/reference/android/app/Activity#getIntent())
+reads do not retain the earlier game. Invalid or busy requests keep the prior intent.
 
 ### Player presentation and touch-controller geometry
 

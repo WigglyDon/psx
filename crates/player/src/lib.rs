@@ -29,6 +29,13 @@ pub mod session;
 pub mod settings;
 pub mod ui;
 
+/// Activities and platform callbacks must select the same build-owned data
+/// root. Ordinary releases keep the supplied root without probing test storage.
+pub fn storage_root(normal: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let root = acceptance::storage_root(normal)?;
+    graphics_observer::storage_root(&root)
+}
+
 /// User intent survives interruptions. Platform focus alone never unpauses a game.
 #[derive(Debug, Default)]
 pub struct Activity {
