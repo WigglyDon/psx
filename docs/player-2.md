@@ -302,6 +302,26 @@ listening or PS1 gameplay switching ran: the registered PS1 files were absent,
 and the bounded selected-title lookup found no replacement in standard game
 and download directories. The personal Fold remained untouched.
 
+The preserved `3749ccf` candidate subsequently received a hands-on owner check:
+after raising the deliberately quiet test profile's app volume, the owner
+reported functional sound/controls, identified Cross as attack and Triangle as
+jump, and played with the touch controls. The job's actual pause gate remained
+running despite the human pause acknowledgment, so that job stopped and returned;
+the observations do not turn its failed receipt into a pass. A separate completed
+campaign with newly supplied PS1 media then demonstrated PS2→PS1→PS2, a second
+PS1 return, moving PS1 output, paused fresh-process PS1 restoration and return to
+PS2. All selected scenes were reviewed and exact normal-data/APK return verified.
+Earlier `5c57fd8` switching/rotation observations remain historical evidence.
+Native shortcut confirmation on this reconstructed build still needs an admitted
+supporting launcher; no launcher installation or default-role change follows.
+
+The reported short-landscape picture limitation was reproduced in the shared
+layout solver: auxiliary keys widened the rails, limiting a 2280×1080 picture to
+1312×984. Reflowing those keys permits 1440×1080 without shrinking primary thumb
+targets. The focused geometry/input checks pass; this subsequent Rust-only layout
+change needs a separately bound Android candidate and hardware check. It does not
+inherit the preserved candidate's acceptance.
+
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
 Updates preserved existing PS1 collection/card/profile identities. FF7 native

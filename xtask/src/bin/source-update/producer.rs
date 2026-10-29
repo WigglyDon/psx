@@ -8,16 +8,37 @@ const SELF_SOURCE: &[u8] = include_bytes!(concat!(
 ));
 
 pub fn run(target: &str) -> Result<()> {
-    selected(target, false, false)
+    selected(target, Predecessor::Legacy)
 }
 pub fn vulkan(target: &str) -> Result<()> {
-    selected(target, true, false)
+    selected(target, Predecessor::Vulkan)
 }
 /// Reconstruct the frozen post-cleanup player's complete source from the
 /// retained ordinary bundle. This is source delivery, not another engine build.
 pub fn retained(target: &str) -> Result<()> {
     retained_target(target)?;
-    selected(target, true, true)
+    selected(target, Predecessor::Retained)
+}
+/// First-party changes reuse the complete qualified player archive, including
+/// its already-vendored dependency graph and unchanged native source inputs.
+pub fn player(target: &str) -> Result<()> {
+    selected(target, Predecessor::Player)
+}
+enum Predecessor {
+    Legacy,
+    Vulkan,
+    Retained,
+    Player,
+}
+fn player_input(path: &str) -> Result<()> {
+    if path.starts_with("vendor/")
+        || path.starts_with("patches/")
+        || path.starts_with(".cargo/")
+        || ["Cargo.lock", "Cargo.toml", "upstream.lock.json"].contains(&path)
+    {
+        return Err("Player-only source update cannot change native or dependency inputs".into());
+    }
+    Ok(())
 }
 fn retained_target(target: &str) -> Result<()> {
     if target != "3749ccfe06d10c39ac596b27c76f50a48be99e8f" {
@@ -40,6 +61,26 @@ mod retained_tests {
             assert!(retained_target(other).is_err());
         }
     }
+    #[test]
+    fn player_update_preserves_native_and_dependency_inputs() {
+        for path in [
+            "crates/player/src/input.rs",
+            "docs/player-2.md",
+            "xtask/src/bin/source-update.rs",
+        ] {
+            player_input(path).unwrap();
+        }
+        for path in [
+            "vendor/armsx2/pcsx2/GS.cpp",
+            "patches/armsx2/0011-vulkan-producer-overlap.patch",
+            "Cargo.lock",
+            "Cargo.toml",
+            "upstream.lock.json",
+            ".cargo/config.toml",
+        ] {
+            assert!(player_input(path).is_err(), "{path}");
+        }
+    }
 }
 fn has_patch(target: &str, path: &str) -> Result<bool> {
     // Output lives outside Git. Absence is distinct from a failed Git lookup.
@@ -52,8 +93,17 @@ fn has_patch(target: &str, path: &str) -> Result<bool> {
         Err("Ambiguous native patch lookup".into())
     }
 }
-fn selected(target: &str, vulkan: bool, retained: bool) -> Result<()> {
-    let (from, from_sha, from_bytes) = if retained {
+fn selected(target: &str, predecessor: Predecessor) -> Result<()> {
+    let player = matches!(predecessor, Predecessor::Player);
+    let retained = matches!(predecessor, Predecessor::Retained);
+    let vulkan = !matches!(predecessor, Predecessor::Legacy);
+    let (from, from_sha, from_bytes) = if player {
+        (
+            "3749ccfe06d10c39ac596b27c76f50a48be99e8f",
+            "d756f2eeceec02e324c926ba07645fbb573cf27d99270d6cb5f2eef1d5406178",
+            205252255,
+        )
+    } else if retained {
         (
             "a9472692082ecaaac3319d610621e9b82a9b3872",
             "8d7c8e06765b8c930629d2abf259a8653f098ad2ea448bf635da17f9edc45f84",
@@ -109,7 +159,13 @@ fn selected(target: &str, vulkan: bool, retained: bool) -> Result<()> {
         from,
         target,
     ])?)?;
-    if vulkan {
+    if player {
+        if git(&["show", &format!("{from}:Cargo.lock")])?
+            != git(&["show", &format!("{target}:Cargo.lock")])?
+        {
+            return Err("Player dependency graph differs from complete predecessor".into());
+        }
+    } else if vulkan {
         let check = if retained {
             super::vulkan_ash::retained_lock_change
         } else {
@@ -131,6 +187,9 @@ fn selected(target: &str, vulkan: bool, retained: bool) -> Result<()> {
     for line in changes.lines() {
         let (status, path) = line.split_once('\t').ok_or("Invalid Git delta")?;
         safe(path)?;
+        if player {
+            player_input(path)?;
+        }
         // Legacy updates keep dependencies unchanged. The Vulkan route checks
         // its sole lockfile exception independently before accepting this delta.
         if !matches!(status, "A" | "M")
@@ -179,7 +238,7 @@ fn selected(target: &str, vulkan: bool, retained: bool) -> Result<()> {
             additions.insert(path.to_owned(), (mode, body));
         }
     }
-    if vulkan {
+    if vulkan && !player {
         let crate_file = std::env::var_os("PSX_SOURCE_ASH_CRATE")
             .map(PathBuf::from)
             .ok_or("Pinned ash crate input required")?;

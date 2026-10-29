@@ -818,6 +818,58 @@ impl Layout {
         );
     }
 
+    /// On a short, wide surface, system/stick-click keys beside the sticks can
+    /// widen both rails unnecessarily. Try a bottom row without shrinking any
+    /// thumb target; retain it only when the actual clear-picture solver wins.
+    fn fit_landscape_controls(&mut self, w: f32, h: f32, picture: Rect) {
+        if w <= h * 1.35 || self.sticks.len() != 2 {
+            return;
+        }
+        let face = self.dpad.w;
+        let stick = self.sticks[0].w;
+        let row_y = h - 4. - 48.;
+        let stick_y = row_y - 8. - stick;
+        let face_y = stick_y - 8. - face;
+        let shoulder_y = face_y - 8. - 48.;
+        if shoulder_y < TOOLBAR_HEIGHT || face < 122. || stick < 104. {
+            return;
+        }
+        let previous: Vec<_> = (0..self.element_count()).map(|i| self.element(i)).collect();
+        let game = self.game;
+        let actions = self.action_bounds();
+        let (dx, dy) = (w - 16. - face - actions.x, face_y - actions.y);
+        let shoulder = (face - 8.) / 2.;
+        self.dpad = Rect::new(16., face_y, face, face);
+        self.sticks[0] = Rect::new(16., stick_y, stick, stick);
+        self.sticks[1] = Rect::new(w - 16. - stick, stick_y, stick, stick);
+        for control in &mut self.controls {
+            control.bounds = match control.label {
+                "TRI" | "O" | "X" | "SQ" => Rect::new(
+                    control.bounds.x + dx,
+                    control.bounds.y + dy,
+                    control.bounds.w,
+                    control.bounds.h,
+                ),
+                "L1" => Rect::new(16., shoulder_y, shoulder, 48.),
+                "L2" => Rect::new(24. + shoulder, shoulder_y, shoulder, 48.),
+                "R1" => Rect::new(w - 16. - shoulder, shoulder_y, shoulder, 48.),
+                "R2" => Rect::new(w - 24. - 2. * shoulder, shoulder_y, shoulder, 48.),
+                "L3" => Rect::new(16., row_y, 48., 48.),
+                "SELECT" => Rect::new(72., row_y, 48., 48.),
+                "R3" => Rect::new(w - 64., row_y, 48., 48.),
+                "START" => Rect::new(w - 120., row_y, 48., 48.),
+                _ => control.bounds,
+            };
+        }
+        self.place_game_in(picture, false, 1., [0.5; 2]);
+        if self.game.w <= game.w + 0.01 {
+            for (i, rect) in previous.into_iter().enumerate() {
+                self.set_element(i, rect);
+            }
+            self.game = game;
+        }
+    }
+
     /// A camera is a local obstruction, not an unusable full-height strip.
     /// Keep the face-button diamond intact when shifting it clear of a hole.
     pub fn avoid_cutouts(&mut self, w: f32, h: f32, cutouts: &[Rect]) {
@@ -1107,6 +1159,15 @@ impl Preset {
             self.game_scale,
             self.game_offset,
         );
+        if self.analog
+            && self.elements.is_empty()
+            && !self.allow_overlap
+            && self.game_scale == 1.
+            && self.game_offset == [0.5; 2]
+            && cutouts.is_empty()
+        {
+            layout.fit_landscape_controls(w, h, picture);
+        }
         layout
     }
     pub fn capture(&mut self, layout: &Layout, w: f32, h: f32) {
@@ -2402,6 +2463,120 @@ mod tests {
             assert_eq!(touches.mask(), 1);
             touches.release(1);
             assert_eq!(touches.mask(), 0);
+        }
+    }
+
+    #[test]
+    fn short_landscape_auxiliary_keys_leave_a_full_height_picture() {
+        let density = 2.75;
+        let (w, h) = (2280. / density, 1014. / density);
+        let picture = Rect::new(0., 0., w, 1080. / density);
+        let mut before = Layout::ps2(w, h);
+        before.place_game_in(picture, false, 1., [0.5; 2]);
+        assert!((before.game.h * density - 984.).abs() < 0.02);
+        let layout = PlayerViewport {
+            controls: [w, h],
+            picture,
+            reusable_top: 0.,
+            covered_top: 0.,
+        }
+        .layout(
+            &Preset {
+                analog: true,
+                ..Preset::default()
+            },
+            &[],
+        );
+        assert!((layout.game.h * density - 1080.).abs() < 0.02);
+        assert!((layout.game.w * density - 1440.).abs() < 0.02);
+        assert!(layout.game.y.abs() < 0.01);
+        assert!((layout.game.x + layout.game.w / 2. - w / 2.).abs() < 0.01);
+        assert_eq!(
+            (layout.dpad.w, layout.dpad.h),
+            (before.dpad.w, before.dpad.h)
+        );
+        for (a, b) in layout.sticks.iter().zip(&before.sticks) {
+            assert_eq!((a.w, a.h), (b.w, b.h));
+            assert!(a.y < b.y);
+        }
+        for control in layout.controls.iter().filter(|c| c.is_face()) {
+            let old = before
+                .controls
+                .iter()
+                .find(|c| c.mask == control.mask)
+                .unwrap();
+            assert_eq!(
+                (control.bounds.w, control.bounds.h),
+                (old.bounds.w, old.bounds.h)
+            );
+        }
+        for i in 0..layout.element_count() {
+            let r = layout.element(i);
+            assert!(r.x >= 0. && r.y >= 0. && r.x + r.w <= w + 0.01 && r.y + r.h <= h + 0.01);
+            assert!(!r.overlaps(layout.game), "{}", layout.element_name(i));
+            for j in i + 1..layout.element_count() {
+                if !(layout.action_elements().any(|k| k == i)
+                    && layout.action_elements().any(|k| k == j))
+                {
+                    assert!(
+                        !r.overlaps(layout.element(j)),
+                        "{} / {}",
+                        layout.element_name(i),
+                        layout.element_name(j)
+                    );
+                }
+            }
+        }
+        for (left, right) in [
+            ("L1", "R1"),
+            ("L2", "R2"),
+            ("L3", "R3"),
+            ("SELECT", "START"),
+        ] {
+            let key = |label| {
+                layout
+                    .controls
+                    .iter()
+                    .find(|c| c.label == label)
+                    .unwrap()
+                    .bounds
+            };
+            let (a, b) = (key(left), key(right));
+            assert!((a.x + a.w + b.x - w).abs() < 0.01 && a.y == b.y);
+            assert!(a.w >= 48. && a.h >= 48.);
+        }
+    }
+
+    #[test]
+    fn landscape_reflow_preserves_manual_controls_and_picture_preferences() {
+        let (w, h) = (2280. / 2.75, 1014. / 2.75);
+        let picture = Rect::new(0., 0., w, 1080. / 2.75);
+        for scale in [0.5, 0.75, 1.] {
+            let offset = [0.2, 0.8];
+            let mut expected = Layout::ps2(w, h);
+            expected.place_game_in(picture, false, scale, offset);
+            let preset = Preset {
+                analog: true,
+                game_scale: scale,
+                game_offset: offset,
+                ..Preset::default()
+            };
+            let actual = preset.layout_in(w, h, &[], picture);
+            assert!(actual.game.same_bounds(expected.game));
+            for i in 0..actual.element_count() {
+                assert!(actual.element(i).same_bounds(expected.element(i)));
+            }
+        }
+        let mut original = Layout::ps2(w, h);
+        original.dpad.x += 3.;
+        let mut preset = Preset {
+            analog: true,
+            ..Preset::default()
+        };
+        preset.capture(&original, w, h);
+        let actual = preset.layout_in(w, h, &[], picture);
+        for i in actual.controller_elements() {
+            assert!(actual.element(i).same_bounds(original.element(i)));
         }
     }
 

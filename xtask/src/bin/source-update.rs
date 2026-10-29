@@ -1119,6 +1119,13 @@ fn main() -> Result<()> {
                 .ok_or("Missing exact frozen target revision")?,
         );
     }
+    if op == "player-update" {
+        return producer::player(
+            &std::env::args()
+                .nth(2)
+                .ok_or("Missing exact player target revision")?,
+        );
+    }
     let (inv, payload) = baseline()?;
     match op.as_str() {
         "audit" => stage(false, &inv, &payload),

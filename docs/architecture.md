@@ -817,6 +817,13 @@ custom geometry takes precedence. Future physical-controller support should
 withdraw the touch overlay from this composition, retaining the same player
 presentation. Physical-controller acquisition/routing is not yet implemented.
 
+On short landscape displays without cutouts, generated dual-stick controls can
+put system/stick-click keys in a bottom row instead of widening the stick rails.
+This keeps primary target sizes, symmetry and separated inputs while allowing a
+taller complete picture. The shared clear-picture solver must demonstrate an
+increase before selecting the arrangement. Saved manual geometry and explicit
+picture scale/position retain precedence.
+
 A host rectangle reaching a display edge is distinct from the visible pixels
 inside a source frame. Do not infer that all black regions are frontend
 letterboxing or crop dark content automatically. The latest FF7 checkpoint's

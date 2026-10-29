@@ -98,6 +98,13 @@ device data and establish an available rollback before another installation.
 
 ## Source bundles
 
+For subsequent first-party player changes, `source-update player-update` takes
+an exact committed target and streams from the verified complete `3749ccf`
+archive. It reuses its dependency source bodies, refuses lockfile/native-source
+changes and verifies complete readback against Git and the predecessor. This
+route needs no expanded dependency checkout or crate addition. Target and tool
+revisions remain explicit; existing complete/partial outputs are preserved.
+
 Completed `build/psx-source-<revision>.tar.gz` archives and their SHA-256
 sidecars are canonical corresponding-source artifacts. Reuse an existing
 verified bundle for the same revision. Successful source creation retires its
