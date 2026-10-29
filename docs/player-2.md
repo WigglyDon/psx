@@ -312,8 +312,8 @@ campaign with newly supplied PS1 media then demonstrated PS2→PS1→PS2, a seco
 PS1 return, moving PS1 output, paused fresh-process PS1 restoration and return to
 PS2. All selected scenes were reviewed and exact normal-data/APK return verified.
 Earlier `5c57fd8` switching/rotation observations remain historical evidence.
-Native shortcut confirmation on this reconstructed build still needs an admitted
-supporting launcher; no launcher installation or default-role change follows.
+Native shortcut confirmation subsequently ran on the separately bound `b71679c`
+candidate in an owner-admitted temporary compatible-launcher session, as below.
 
 The reported short-landscape picture limitation was reproduced in the shared
 layout solver: auxiliary keys widened the rails, limiting a 2280×1080 picture to
@@ -336,6 +336,20 @@ restored rotation preferences, archived its isolated progress, retired its owned
 scratch and children, and returned the device with the physical display OFF.
 No new listening, ordinary save/load, shortcut or sustained-performance result
 follows from this layout/prompt check.
+
+The separate `b71679c` shortcut campaign obtained two native confirmations and
+callbacks, then launched through the actual Home Screen icons: PS2 cold/warm,
+repeated same-game delivery and PS2→PS1→PS2. Six game captures were opened and
+reviewed. Same-game delivery retained its process, and repeated taps preserved
+the exact paused-checkpoint bytes. The warm capture includes a transient system
+debugging banner over part of the picture; the paused scene remains visible.
+The controller stopped on its installer-label guard before the same-artifact
+reinstall and missing-entry suffix. Preserve the executed cases separately from
+that failed controller result. Both owned icons were removed and verified absent;
+the original Home/role, rotation preferences, APK, normal-data hash/directory
+identity, final process absence and physical display OFF were restored and verified.
+Only the unfinished suffix is prepared to continue after resource recovery and
+fresh admission. It reuses the same binaries and needs no PS1 media recopy.
 
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
