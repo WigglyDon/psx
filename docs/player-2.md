@@ -261,7 +261,7 @@ cleanup-only recovery later verified the exact baseline, unchanged normal data,
 restored rotation preferences, app absence and physical display OFF. These are
 separate work and return observations, not a fresh save or listening result.
 
-The lab's current default launcher exposes no native pin-confirmation activity.
+The earlier lab launcher query exposed no native pin-confirmation activity.
 Remaining launcher acceptance requires an admitted supporting launcher; the
 capability inquiry changes no Home/default/profile or personal-device authority.
 The optional Google security-check submission was explicitly declined once for
@@ -318,9 +318,24 @@ supporting launcher; no launcher installation or default-role change follows.
 The reported short-landscape picture limitation was reproduced in the shared
 layout solver: auxiliary keys widened the rails, limiting a 2280×1080 picture to
 1312×984. Reflowing those keys permits 1440×1080 without shrinking primary thumb
-targets. The focused geometry/input checks pass; this subsequent Rust-only layout
-change needs a separately bound Android candidate and hardware check. It does not
-inherit the preserved candidate's acceptance.
+targets. The separately bound `b71679c` acceptance APK subsequently completed
+the focused hardware check: both landscape rotations produced a centered,
+top-aligned 1440×1080 picture on the 2280×1080 display. Both portrait rotations
+retained a full-width 1080×810 picture. All seven selected captures were opened
+and reviewed, including live output, explicit pause and paused restoration after
+a fresh process. The native engines were reused unchanged; these observations
+do not rebind the accepted reconstructed APK or its earlier results.
+
+That campaign also encountered the optional psx Google security-check submission
+question during rollback. The private installer selected only “Don't send”; fresh
+subsequent focus observations verified that the dialog left, with another bounded
+check near return. This exercises the late-prompt handling, not permanent prompt
+suppression. It changed no global security preference or upload consent.
+The campaign verified the original APK, normal-data hash and directory identity,
+restored rotation preferences, archived its isolated progress, retired its owned
+scratch and children, and returned the device with the physical display OFF.
+No new listening, ordinary save/load, shortcut or sustained-performance result
+follows from this layout/prompt check.
 
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
