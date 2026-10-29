@@ -1112,6 +1112,13 @@ fn main() -> Result<()> {
                 .ok_or("Missing exact target revision")?,
         );
     }
+    if op == "retained-update" {
+        return producer::retained(
+            &std::env::args()
+                .nth(2)
+                .ok_or("Missing exact frozen target revision")?,
+        );
+    }
     let (inv, payload) = baseline()?;
     match op.as_str() {
         "audit" => stage(false, &inv, &payload),

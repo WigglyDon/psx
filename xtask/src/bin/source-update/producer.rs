@@ -8,10 +8,38 @@ const SELF_SOURCE: &[u8] = include_bytes!(concat!(
 ));
 
 pub fn run(target: &str) -> Result<()> {
-    selected(target, false)
+    selected(target, false, false)
 }
 pub fn vulkan(target: &str) -> Result<()> {
-    selected(target, true)
+    selected(target, true, false)
+}
+/// Reconstruct the frozen post-cleanup player's complete source from the
+/// retained ordinary bundle. This is source delivery, not another engine build.
+pub fn retained(target: &str) -> Result<()> {
+    retained_target(target)?;
+    selected(target, true, true)
+}
+fn retained_target(target: &str) -> Result<()> {
+    if target != "3749ccfe06d10c39ac596b27c76f50a48be99e8f" {
+        return Err("Retained source recovery requires the frozen player revision".into());
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod retained_tests {
+    use super::*;
+    #[test]
+    fn retained_recovery_is_bound_to_the_frozen_player_not_utility_head() {
+        retained_target("3749ccfe06d10c39ac596b27c76f50a48be99e8f").unwrap();
+        for other in [
+            "HEAD",
+            "3749ccf",
+            FROM,
+            "0000000000000000000000000000000000000000",
+        ] {
+            assert!(retained_target(other).is_err());
+        }
+    }
 }
 fn has_patch(target: &str, path: &str) -> Result<bool> {
     // Output lives outside Git. Absence is distinct from a failed Git lookup.
@@ -24,8 +52,14 @@ fn has_patch(target: &str, path: &str) -> Result<bool> {
         Err("Ambiguous native patch lookup".into())
     }
 }
-fn selected(target: &str, vulkan: bool) -> Result<()> {
-    let (from, from_sha, from_bytes) = if vulkan {
+fn selected(target: &str, vulkan: bool, retained: bool) -> Result<()> {
+    let (from, from_sha, from_bytes) = if retained {
+        (
+            "a9472692082ecaaac3319d610621e9b82a9b3872",
+            "8d7c8e06765b8c930629d2abf259a8653f098ad2ea448bf635da17f9edc45f84",
+            205398940,
+        )
+    } else if vulkan {
         (
             "d11d03e6d02c6c4293b972af9aadb8f639bd1184",
             "2790fbef78e3bdb82e3a34ef0ae2887ae9f3e2c0642e4fd36b131ff4439b4cb4",
@@ -83,7 +117,9 @@ fn selected(target: &str, vulkan: bool) -> Result<()> {
     }
     let mut replacements = Payloads::new();
     let mut additions = BTreeMap::new();
-    if changes.lines().count() > 64 {
+    // The exact frozen recovery spans the retained source's intervening
+    // engineering history. Other routes keep their original increment bound.
+    if changes.lines().count() > if retained { 96 } else { 64 } {
         return Err("Project delta exceeds this bounded increment".into());
     }
     let mut changed_bytes = 0usize;
@@ -269,7 +305,7 @@ fn selected(target: &str, vulkan: bool) -> Result<()> {
     s.sync_all()?;
     durable(
         &final_path.with_extension("receipt.json"),
-        &json!({"phase":"verified-complete","targetRevision":target,"utilityRevision":utility.trim(),"utilitySourceSha256":digest(TOOL_SOURCE),"utilityProducerSourceSha256":digest(SELF_SOURCE),"utilityBinarySha256":hash(&std::env::current_exe()?)?,"predecessorRevision":from,"predecessorSha256":from_sha,"archiveSha256":sha,"archiveBytes":f.metadata()?.len(),"members":actual.len(),"streamedReadback":true,"nativePatches":check["nativePatches"]}),
+        &json!({"phase":"verified-complete","targetRevision":target,"utilityRevision":utility.trim(),"utilitySourceSha256":digest(TOOL_SOURCE),"utilityProducerSourceSha256":digest(SELF_SOURCE),"utilityBinarySha256":hash(&std::env::current_exe()?)?,"predecessorRevision":from,"predecessorSha256":from_sha,"archiveSha256":sha,"archiveBytes":f.metadata()?.len(),"members":actual.len(),"streamedReadback":true,"nativePatches":check["nativePatches"],"productNativePatches":check["productNativePatches"],"retainedSourceRecovery":retained}),
     )?;
     fs::remove_file(partial)?;
     File::open("build")?.sync_all()?;

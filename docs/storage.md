@@ -158,6 +158,17 @@ The publication receipt records that utility revision separately. This narrow
 route does not change the normal source builder or qualify the shared host for
 other workloads. See [build.md](build.md) for its invocation and validation gate.
 
+After cache retirement, `source-update retained-update
+3749ccfe06d10c39ac596b27c76f50a48be99e8f` delivers that frozen player's source
+from the retained complete `a9472692082e` bundle. It checks the exact predecessor
+bytes/digest and complete inventory, permits only the immutable target's bounded
+regular-file additions/modifications, and retains the existing pinned-ash-only
+Cargo graph check. Native pins and all other dependency bodies stay unchanged.
+It uses `PSX_SOURCE_ASH_CRATE` for the authenticated cached crate, streams the
+archive and independently reads it back without recreating Git caches or an
+expanded dependency tree. The receipt distinguishes the frozen target from the
+later source-tool revision; it does not relabel or rebuild APKs or symbols.
+
 The producer-repair successor uses `source-update producer-update <full-commit>`
 against that exact complete `123e831` archive, not the older four-file delta.
 It permits at most64 regular project-file additions/modifications, bounded to
