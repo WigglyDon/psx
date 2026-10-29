@@ -268,6 +268,20 @@ The optional Google security-check submission was explicitly declined once for
 psx during recovery. This qualifies the narrow test-host handling, not permanent
 prompt suppression or a product security-setting change.
 
+After storage/cache retirement, the independently reconstructed `3749ccf`
+package and native input were qualified again on 2026-10-29. The full-player
+lab run showed tavern rendering, analog movement, Start opening the game menu,
+paused background/foreground and fresh-process picture restoration, and missing-ID
+recovery returning to the same paused game. Native reports bracketing a requested
+90-second interval were approximately 59.94–59.96 VPS / 100%; audio underruns
+increased by two, with no dropped samples reported. This is a bounded scene
+observation, without fresh listening, ordinary save/load or PS1 switching in that
+run. The exact baseline/data/directory identity, final process absence and
+physical display OFF were verified. Earlier fixture-transfer failures and a
+subsequently recovered USB-disappearance return remain separate evidence.
+The new APKs, symbols and complete streamed corresponding source have fresh
+bindings on #2; deleted external artifacts remain historical, not reusable input.
+
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
 Updates preserved existing PS1 collection/card/profile identities. FF7 native
