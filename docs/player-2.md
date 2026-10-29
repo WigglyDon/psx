@@ -282,6 +282,26 @@ subsequently recovered USB-disappearance return remain separate evidence.
 The new APKs, symbols and complete streamed corresponding source have fresh
 bindings on #2; deleted external artifacts remain historical, not reusable input.
 
+The same reconstructed player then saved a new Baldur's Gate card slot. After
+stopping the process and booting the disc without its automatic checkpoint, the
+game listed the newer slot and loaded it into the tavern. The save-success,
+new-slot and loaded-scene images were reviewed. The runner remains failed:
+its finite live-review deadline expired before the loaded-scene acknowledgment;
+that protocol result is separate from the observed save/load behavior. Return
+verified the original APK, unchanged normal data/directory identity, absent app
+process and physical display OFF.
+
+A subsequent completed campaign used those actual newer cards and their
+byte-exact paused checkpoint. It restored the paused scene, resumed native
+output, recovered from an existing entry with missing content, and restored
+the paused picture again in a fresh process. The same return checks passed.
+Off-device, the actual player loader separately rejected the older retained
+checkpoint against the newer cards without changing the card bytes. That is
+source-path evidence, not an additional hardware stale-state trial. No fresh
+listening or PS1 gameplay switching ran: the registered PS1 files were absent,
+and the bounded selected-title lookup found no replacement in standard game
+and download directories. The personal Fold remained untouched.
+
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
 Updates preserved existing PS1 collection/card/profile identities. FF7 native
