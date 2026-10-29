@@ -8,6 +8,16 @@ strips the output and checks unchanged exports and frozen inputs. Changed inputs
 refuse this route; it never falls back to an engine rebuild. The ordinary public
 source build applies the complete recorded product patch stack.
 
+Incremental commands require the actual predecessor objects, recipes and symbols.
+If those outputs are unavailable, use the
+[unavailable-output procedure](storage.md#unavailable-or-retired-output).
+Do not lower a guard or silently turn a warm build into a cold one. After a
+replacement cache and reconstruction budget are admitted, the ordinary pinned
+source route (`cargo xtask ps2`, then APK/source packaging) is the reconstruction
+path. Preserve the existing signer and surviving PS1/rollback inputs; bind and
+qualify new artifacts independently of historical hashes. Source inspection and
+standalone path checks can continue before that growing phase is admitted.
+
 `vulkan-build --resume-overlap` is limited to its recorded precompile failure.
 It keeps the original source/proof/logs, checks the complete existing source
 inventory and aliases, recomposes only the changed file for comparison and
@@ -271,9 +281,11 @@ floating tags. `PSX_BUILD_JOBS` defaults to 2. Core sources stage under
 `build/armsx2-source`; the original submodule remains unchanged.
 
 The recipe disables Qt, standalone SDL UI, tests, unpinned patch downloads and
-unrelated display backends. It uses GLES, native resolution, static/PIC
-libraries, Android API 28 and the recorded 4 KiB host-page path. The PS2 host
-checks actual GLES capability and refuses other page sizes with saved data
+unrelated display backends. The ordinary source applies the product Vulkan
+handoff patches; Rust selects that producer internally and presents its completed
+images through GLES. It uses native resolution, static/PIC libraries, Android
+API 28 and the recorded 4 KiB host-page path. The PS2 host
+checks actual graphics capability and refuses other page sizes with saved data
 intact. The existing PS1 interpreter fallback remains separate; ELF alignment
 alone does not qualify the PS2 JIT for a 16 KiB host.
 

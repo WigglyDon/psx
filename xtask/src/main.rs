@@ -38,6 +38,12 @@ fn run() -> Result<()> {
     env::set_current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())?;
     let operation = env::args().nth(1);
     let root = env::current_dir()?.canonicalize()?;
+    if matches!(
+        operation.as_deref(),
+        Some("apk" | "ps2" | "notices" | "minimal-host" | "gs-replay-apk" | "gs-runner-apk")
+    ) {
+        workspace::check_cache_paths(&root)?;
+    }
     if env::var_os("PSX_BUILD_WORKSPACE").is_some()
         && !matches!(
             operation.as_deref(),

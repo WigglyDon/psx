@@ -68,6 +68,34 @@ the existing pinned PS1 native artifact instead of rebuilding it. Source archive
 use their separate streaming admission. These settings are host build inputs,
 not application options or storage/device admission authority.
 
+### Unavailable or retired output
+
+A prior build receipt does not establish that its volume, caches or artifacts
+still exist. Before reuse, check the actual cache links, native binaries,
+unstripped symbols, corresponding-source archive and rollback inputs. A retired
+workspace invalidates its old recipes and leases. Do not recreate its mountpoint,
+revive a consumed job or reinterpret a failed lookup as an internal-cache grant.
+
+Build preflight refuses unavailable `target` or `build/armsx2-android` links
+before starting a writing subprocess. Preserve the links until their owner
+explicitly assigns replacement output. Select and qualify that location against
+current capacity, allocation margin, memory and other writers; retain the same
+reserve. A fresh cache needs a reconstruction budget rather than a warm-build
+estimate. Never repopulate every historical candidate or closed diagnostic.
+
+The path guard has a standalone check requiring no Cargo cache or native build:
+
+```sh
+rustc --edition=2021 --test xtask/src/build_paths.rs -o /tmp/psx-build-path-tests
+/tmp/psx-build-path-tests
+```
+
+Historical test observations stay historical when their raw artifacts are no
+longer available. Report the loss and the surviving evidence precisely. A new
+binary needs new source/symbol/signature bindings and appropriate qualification;
+it cannot inherit the identity of a deleted artifact. Preserve actual current
+device data and establish an available rollback before another installation.
+
 ## Source bundles
 
 Completed `build/psx-source-<revision>.tar.gz` archives and their SHA-256

@@ -4,6 +4,13 @@ use std::{
     fs::{File, OpenOptions},
     os::unix::fs::MetadataExt,
 };
+#[path = "build_paths.rs"]
+mod build_paths;
+
+pub fn check_cache_paths(source: &Path) -> Result<()> {
+    build_paths::check(source)?;
+    Ok(())
+}
 
 /// Reuse the installed host custodian's actual open-file description. Opening
 /// the path again would try to acquire our own custodian's lock and deadlock.
@@ -64,7 +71,7 @@ pub struct Admission {
 /// bytes alone. The lease remains owned by Admission for the whole operation.
 pub fn check_present() -> Result<()> {
     if env::var_os("PSX_BUILD_WORKSPACE").is_none() {
-        return Ok(());
+        return check_cache_paths(&env::current_dir()?);
     }
     let root = required("PSX_BUILD_WORKSPACE")?;
     let uuid = env::var("PSX_BUILD_VOLUME_UUID")?;

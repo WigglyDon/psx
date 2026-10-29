@@ -80,6 +80,7 @@ fn main() -> Result<()> {
         .unwrap()
         .canonicalize()?;
     env::set_current_dir(&root)?;
+    workspace::check_cache_paths(&root)?;
     let admission = workspace::Admission::acquire(&root)?;
     let _project = storage::Lock::acquire(&root)?;
     let _growth = storage::Growth::begin(&admission.root, 2 * storage::GIB)?;
