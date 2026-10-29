@@ -110,7 +110,12 @@ fn selected(target: &str, vulkan: bool, retained: bool) -> Result<()> {
         target,
     ])?)?;
     if vulkan {
-        super::vulkan_ash::lock_change(
+        let check = if retained {
+            super::vulkan_ash::retained_lock_change
+        } else {
+            super::vulkan_ash::lock_change
+        };
+        check(
             &git(&["show", &format!("{from}:Cargo.lock")])?,
             &git(&["show", &format!("{target}:Cargo.lock")])?,
         )?;

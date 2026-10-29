@@ -19,6 +19,33 @@ pub fn lock_change(before: &[u8], after: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+/// The retained ordinary bundle predates three edges to already-vendored
+/// packages. No additional registry package/source is admitted by these edges.
+pub fn retained_lock_change(before: &[u8], after: &[u8]) -> Result<()> {
+    let mut after = std::str::from_utf8(after)?.to_owned();
+    for (package, edge) in [
+        ("khronos-egl", "libloading"),
+        ("psx-player", "glow"),
+        ("psx-player", "khronos-egl"),
+    ] {
+        let header = format!("[[package]]\nname = \"{package}\"\n");
+        if after.matches(&header).count() != 1 {
+            return Err("Retained package edge is ambiguous".into());
+        }
+        let start = after.find(&header).ok_or("Retained package missing")?;
+        let end = after[start + header.len()..]
+            .find("[[package]]")
+            .map_or(after.len(), |n| start + header.len() + n);
+        let edge = format!(" \"{edge}\",\n");
+        let section = &after[start..end];
+        if section.matches(&edge).count() != 1 {
+            return Err("Retained dependency edge differs".into());
+        }
+        let replacement = section.replacen(&edge, "", 1);
+        after.replace_range(start..end, &replacement);
+    }
+    lock_change(before, after.as_bytes())
+}
 pub fn additions(crate_file: &Path) -> Result<BTreeMap<String, (u32, Vec<u8>)>> {
     if hash(crate_file)? != SHA {
         return Err("Pinned ash crate checksum differs".into());
@@ -98,6 +125,22 @@ pub fn additions(crate_file: &Path) -> Result<BTreeMap<String, (u32, Vec<u8>)>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_edges_admit_no_other_lock_changes() {
+        let before = b"version = 4\n\n[[package]]\nname = \"khronos-egl\"\ndependencies = [\n \"libc\",\n]\n\n[[package]]\nname = \"psx-player\"\ndependencies = [\n \"libc\",\n]\n";
+        let after = format!("{RECORD}{}", std::str::from_utf8(before).unwrap()
+            .replacen(" \"libc\",", " \"libc\",\n \"libloading\",", 1)
+            .replacen("name = \"psx-player\"\ndependencies = [", "name = \"psx-player\"\ndependencies = [\n \"ash\",\n \"glow\",\n \"khronos-egl\",", 1));
+        retained_lock_change(before, after.as_bytes()).unwrap();
+        for bad in [
+            after.replace("libc", "unknown"),
+            after.replace("glow", "unknown"),
+            after.replace(VERSION, "other"),
+        ] {
+            assert!(retained_lock_change(before, bad.as_bytes()).is_err());
+        }
+        assert!(lock_change(before, after.as_bytes()).is_err());
+    }
     #[test]
     fn only_the_pinned_lock_change_is_accepted() {
         let before =

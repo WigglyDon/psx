@@ -163,7 +163,9 @@ After cache retirement, `source-update retained-update
 from the retained complete `a9472692082e` bundle. It checks the exact predecessor
 bytes/digest and complete inventory, permits only the immutable target's bounded
 regular-file additions/modifications, and retains the existing pinned-ash-only
-Cargo graph check. Native pins and all other dependency bodies stay unchanged.
+registry-source check. It also verifies the three new edges to already-vendored
+`glow`, `khronos-egl` and `libloading` packages. Native pins and all other
+dependency bodies stay unchanged.
 It uses `PSX_SOURCE_ASH_CRATE` for the authenticated cached crate, streams the
 archive and independently reads it back without recreating Git caches or an
 expanded dependency tree. The receipt distinguishes the frozen target from the
