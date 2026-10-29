@@ -495,12 +495,11 @@ fn apk() -> Result<()> {
         );
     }
     if let Some(stage) = env::var_os("PSX_APK_STAGE") {
-        if env::var_os("PSX_BUILD_WORKSPACE").is_none() || Path::new(&stage).exists() {
-            return Err(
-                "Use an absent admitted APK stage; preserve failed/existing candidates".into(),
-            );
-        }
-        fs::create_dir(stage)?;
+        workspace::check_new_stage(Path::new(&stage))?;
+        // Admission checked the parent against the qualified root. Exclusive
+        // creation also refuses a stage appearing after that check.
+        fs::create_dir(&stage)?;
+        fs::set_permissions(stage, fs::Permissions::from_mode(0o700))?;
     }
     verify_core()?;
     let vulkan = ps2::verified_vulkan_artifact()?;

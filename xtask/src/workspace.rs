@@ -12,6 +12,21 @@ pub fn check_cache_paths(source: &Path) -> Result<()> {
     Ok(())
 }
 
+fn check_stage(root: &Path) -> Result<()> {
+    if let Some(stage) = env::var_os("PSX_APK_STAGE") {
+        build_paths::stage_path(Path::new(&stage), root)?;
+    }
+    Ok(())
+}
+
+pub fn check_new_stage(stage: &Path) -> Result<()> {
+    let root = env::var_os("PSX_BUILD_WORKSPACE")
+        .map(PathBuf::from)
+        .unwrap_or(env::current_dir()?);
+    build_paths::new_stage(stage, &root)?;
+    Ok(())
+}
+
 /// Reuse the installed host custodian's actual open-file description. Opening
 /// the path again would try to acquire our own custodian's lock and deadlock.
 /// Validate inode and lock ownership before accepting the inherited descriptor;
@@ -103,6 +118,7 @@ impl Admission {
             "PSX_BUILD_CAPACITY_LEASE",
         ];
         if keys.iter().all(|key| env::var_os(key).is_none()) {
+            check_stage(source)?;
             return Ok(Self {
                 root: source.to_owned(),
                 _lease: None,
@@ -192,15 +208,7 @@ impl Admission {
         if !temporary.starts_with(&root) {
             return Err("TMPDIR is outside the admitted build workspace".into());
         }
-        if let Some(stage) = env::var_os("PSX_APK_STAGE") {
-            let stage = PathBuf::from(stage);
-            if stage.parent() != Some(root.join("build").as_path())
-                || stage.file_name().is_none()
-                || stage.is_symlink()
-            {
-                return Err("APK stage must be a direct admitted build child".into());
-            }
-        }
+        check_stage(&root)?;
         Ok(Self {
             root,
             _lease: Some(file),

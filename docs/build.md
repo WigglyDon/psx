@@ -67,7 +67,14 @@ cargo test --workspace --locked
 cargo xtask apk
 ```
 
-The result is `build/psx-development.apk`. The default development build
+The result is `build/psx-development.apk`. For fresh staging, set
+`PSX_APK_STAGE=build/apk-next` after qualifying local output.
+The named stage must be an absent direct child of the qualified `build`
+directory; existing files, directories and links are preserved. This works
+with internal output and separately admitted external output alike, so recovery
+does not require reusing an old stage or restoring retired storage.
+
+The default development build
 includes the all-files scan permission. `PSX_SCOPED_STORAGE=1 cargo xtask apk`
 omits that declaration and compiles without the storage-scan feature, keeping
 document import. The build-generated manifest is ignored. This scoped variant
