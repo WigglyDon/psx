@@ -262,8 +262,10 @@ restored rotation preferences, app absence and physical display OFF. These are
 separate work and return observations, not a fresh save or listening result.
 
 The earlier lab launcher query exposed no native pin-confirmation activity.
-Remaining launcher acceptance requires an admitted supporting launcher; the
-capability inquiry changes no Home/default/profile or personal-device authority.
+That capability gate was later satisfied by the owner-admitted temporary
+supporting-launcher campaigns below; it did not establish support in the
+original Home. The capability inquiry itself changed no Home/default/profile
+or personal-device authority.
 The optional Google security-check submission was explicitly declined once for
 psx during recovery. This qualifies the narrow test-host handling, not permanent
 prompt suppression or a product security-setting change.
@@ -348,8 +350,22 @@ reinstall and missing-entry suffix. Preserve the executed cases separately from
 that failed controller result. Both owned icons were removed and verified absent;
 the original Home/role, rotation preferences, APK, normal-data hash/directory
 identity, final process absence and physical display OFF were restored and verified.
-Only the unfinished suffix is prepared to continue after resource recovery and
-fresh admission. It reuses the same binaries and needs no PS1 media recopy.
+The unfinished suffix subsequently completed through that same queued request
+after the preceding owner's verified recovery. The existing PS2 Home icon
+survived an in-place reinstall of the same signed artifact and restored the
+known paused scene. Removing only its disposable library entry made that icon
+show Game unavailable, without starting another game. Restoring the fixture
+entry let the same icon restore the identical paused picture. Complete readback
+of the final scratch archive matched both PS2 cards, both consoles' checkpoints,
+the PS1 card and the firmware binding against the prepared files byte for byte.
+This is same-artifact retention and launcher-origin missing-entry recovery;
+it does not qualify arbitrary version migrations or manual reimport/relink.
+The three result images were opened and reviewed. The original APK, fresh
+normal-data hash/directory identity, Personal Home/role and rotation preferences
+were verified after rollback. The owned icon was absent from the shortcut
+service and inspected workspace pages; owned scratch was archived and retired,
+the app was absent twice, and the custodian verified return with physical
+display OFF and its children retired. No app/native rebuild or PS1 recopy ran.
 
 The accepted PS1 experience includes real gameplay, clear sound, simultaneous
 touch, ordinary fresh-process card loading and automatic scene restoration.
@@ -385,16 +401,30 @@ this contributes to the selected game's format failure remains unverified;
 there is no ordinary save/load or fresh-boot formatting pass from that fixture.
 Card files, authentication and the snapshot format are unchanged.
 
-### Remaining qualification
+### Current acceptance boundary
 
-Remaining acceptance includes controlled simultaneous analog/digital/action gameplay with
-audible sound, physical L3/R3, remaining fold/status/lifecycle cases, missing-file
-relink and another-active-game/update-retention shortcuts, plus a repeatable
-speed/pacing/audio/memory/thermal interval. Preserve the working increments
-and report a concrete blocker if qualification fails. Keep #2 open for Master
-acceptance; host fixtures and package success are separate from device results.
-Carry #1's remaining checks from [verification.md](verification.md) without
-repeating unrelated qualification.
+Recommend the tested Android slice for Master review: selected-title gameplay,
+ordinary saving, paused restoration, PS1/PS2 switching and native game-icon
+launch now have actual lab results. This is not unconditional PLAYER-2 closure
+or a release recommendation. The exact APK/source bindings remain on #2;
+later documentation commits do not rebind them.
+
+| Criterion | Evidence and remaining limit |
+| --- | --- |
+| Reproducible package and source | Frozen `3749ccf` and Rust-only `b71679c` have verified signatures, matching symbols and complete streamed source; both reuse the same PS2 native binary. No rebuild is needed. |
+| Gameplay, sound and controls | `3749ccf` has moving Baldur's Gate gameplay, analog response, Start-menu input and owner-reported functional sound/actions. Controlled simultaneous touch, hands-on L3/R3 and every binding remain narrower unrun checks. |
+| Ordinary saving and resume | `3749ccf` saved and cold-loaded the newer ordinary card slot and restored its matching paused checkpoint. The actual loader refused an old checkpoint against newer cards off-device; that refusal is source-path evidence, not a hardware stale-state trial. |
+| Switching and lifecycle | `3749ccf` exercised both console switch directions and fresh-process PS1/PS2 restoration. `b71679c` added both landscape/portrait observations and real-icon switching. Broader interruption/status/fold cases are not newly qualified. |
+| Game icons and retention | `b71679c` has real confirmation, cold/warm/repeated delivery, same-game retention, cross-console icon launch, same-artifact in-place reinstall and missing-entry recovery. Manual missing-file relink and arbitrary future-version migration are not inferred. The admitted stock launcher supports pins; Personal Home was restored, not qualified for them. |
+| PS1 continuity | Historical accepted PS1 IDs/cards/profiles and gameplay remain preserved. Fresh lab switching exercised actual PS1 play and paused restoration. Final shortcut-suffix readback preserved its card/checkpoint exactly; no new broad profile-migration matrix ran. |
+| Performance | Retained `3749ccf` reports bracketing a requested 90-second tavern interval were about 59.94–59.96 VPS /100%, with two additional audio underruns and zero drops. Sampled native frame times do not establish continuous presentation pacing, memory or thermal endurance. |
+| Personal device and release | No new Fold test is authorized or performed. Stock-iOS execution/rights, 16 KiB runtime, accessibility and store eligibility remain separate release gates. |
+
+Keep #2 open for Master's acceptance of this bounded result and its explicit
+remaining criteria. Preserve the accepted tests and failed-controller receipts;
+do not repeat either merely to produce an all-green historical matrix. Carry
+#1's remaining checks from [verification.md](verification.md) without repeating
+unrelated qualification.
 
 ## Firmware and distribution
 

@@ -2,6 +2,11 @@
 
 ## Active PLAYER-2 execution
 
+Current build-specific acceptance and remaining limits are consolidated in
+[PLAYER-2](player-2.md#current-acceptance-boundary), including the later ordinary
+save/load, PS1/PS2 switching and native shortcut results. The earlier trials
+below retain their original build identities and limits.
+
 [Master6427077508](https://github.com/WigglyDon/psx/issues/2#issuecomment-6427077508)
 accepts and closes the negative GS replay branch and assigns the full playable
 PS2 loop. The current candidate uses the retained Vulkan renderer with a bounded
