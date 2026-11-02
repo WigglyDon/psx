@@ -61,6 +61,13 @@ actual interface contracts rather than importing another emulator's schedule.
 
 ## Work
 
+Don assigned this existing PSX agent the product Master role. Own product
+priorities, implementation, integration and evidence-based acceptance for
+PLAYER-2 and PSP-1; do not wait for another generic Master dispatch. Keep
+reported, source-tested and device-tested results distinct. This role does not
+expand fleet custody, personal-device windows, privacy or release authority.
+Preserve the exact tested artifact bindings when later documentation changes.
+
 The active [execution amendment](https://github.com/WigglyDon/psx/issues/2#issuecomment-6427077508)
 assigns the complete playable Android PS2 loop: moving output, input, audio,
 ordinary saves, resume and switching with PS1 preserved. Continue implementing
