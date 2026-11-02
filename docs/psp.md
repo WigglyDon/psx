@@ -55,6 +55,12 @@ Start/Select. Play and live editing use the same geometry. Unsupported second
 shoulders/stick clicks are absent; saved PS1/PS2 profiles retain their capabilities.
 Phone bindings and per-game overrides use the existing shared policy.
 
+The pinned Android adapter requests a GLES2-compatible hardware interface.
+Rust accepts that PSP request on the player's existing GLES3 context and supplies
+its normal framebuffer/procedure callbacks. Rejecting it makes the donor fall
+back to software before the host refuses startup. Desktop GL and higher GLES
+requests remain refused, and PS1 keeps its existing version negotiation.
+
 ISO detection reads UMD/game metadata. PBP detection preserves PS1 EBOOT priority
 even when it contains a PSP bootstrap. Structurally valid unresolved CHD/CSO
 content requires a one-time console choice; an extension is not proof of system

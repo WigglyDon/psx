@@ -268,9 +268,13 @@ unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
             10 => *(data as *const u32) == 1, // XRGB8888 (boot may use software)
             14 => {
                 let hw = &mut *(data as *mut HwRender);
-                // Host creates GLES 3.0. Reject higher requests explicitly so
-                // SwanStation negotiates down using its existing version loop.
-                if hw.context_type != 4 && !(hw.context_type == 5 && hw.major == 3 && hw.minor == 0)
+                // GLES 3 also supplies the GLES 2 API requested by PPSSPP's
+                // USING_GLES2 LibretroGLContext. Keep SwanStation's existing
+                // version negotiation and reject desktop/higher GLES requests.
+                let psp_gles2 = s.psp && hw.context_type == 2;
+                if !psp_gles2
+                    && hw.context_type != 4
+                    && !(hw.context_type == 5 && hw.major == 3 && hw.minor == 0)
                 {
                     return false;
                 }
@@ -791,5 +795,83 @@ impl Drop for Core {
             }
         }
         let _ = &self.library;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    unsafe extern "C" fn lookup(_: *const c_char) -> Option<unsafe extern "C" fn()> {
+        None
+    }
+
+    #[test]
+    fn psp_gles2_negotiation_uses_the_existing_gles3_host_callbacks() {
+        let mut state = Callbacks {
+            disk: DiskControl::default(),
+            initial_disk: None,
+            system: CString::new("system").unwrap(),
+            save: CString::new("save").unwrap(),
+            options: BTreeMap::new(),
+            hw: None,
+            proc_address: Some(lookup),
+            framebuffer: 23,
+            av: AvInfo::default(),
+            buttons: 0,
+            axes: [0; 4],
+            audio: Arc::new(AudioQueue::new(16)),
+            fast_forward: false,
+            hardware_frames: 0,
+            software_frames: 0,
+            frame_width: 0,
+            frame_height: 0,
+            last_message: None,
+            shutdown: false,
+            jit: false,
+            log: None,
+            psp: true,
+        };
+        struct RestoreActive(*mut Callbacks);
+        impl Drop for RestoreActive {
+            fn drop(&mut self) {
+                ACTIVE.with(|a| a.set(self.0));
+            }
+        }
+        let _restore = RestoreActive(ACTIVE.with(|a| a.replace(&mut state)));
+        let request = |context_type, major, minor| HwRender {
+            context_type,
+            major,
+            minor,
+            reset: None,
+            framebuffer: None,
+            get_proc_address: None,
+            depth: true,
+            stencil: false,
+            bottom_left: true,
+            cache_context: false,
+            destroy: None,
+            debug_context: false,
+        };
+        let negotiate =
+            |hw: &mut HwRender| unsafe { environment(14, (hw as *mut HwRender).cast()) };
+        // The pinned USING_GLES2 constructor supplies type 2 and version 0/0.
+        let mut hw = request(2, 0, 0);
+        assert!(negotiate(&mut hw));
+        assert_eq!(state.hw.unwrap().context_type, 2);
+        assert_eq!(unsafe { hw.framebuffer.unwrap()() }, 23);
+        assert!(unsafe { hw.get_proc_address.unwrap()(c"glGetString".as_ptr()) }.is_none());
+        for (kind, major, minor) in [(1, 0, 0), (3, 3, 1), (5, 3, 1), (6, 0, 0)] {
+            assert!(!negotiate(&mut request(kind, major, minor)));
+            assert_eq!(state.hw.unwrap().context_type, 2);
+        }
+        state.proc_address = None;
+        assert!(!negotiate(&mut request(2, 0, 0)));
+        state.proc_address = Some(lookup);
+        state.psp = false;
+        assert!(!negotiate(&mut request(2, 0, 0)));
+        assert!(negotiate(&mut request(4, 0, 0)));
+        assert!(negotiate(&mut request(5, 3, 0)));
+        assert!(!negotiate(&mut request(5, 3, 1)));
     }
 }
