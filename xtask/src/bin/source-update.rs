@@ -69,6 +69,7 @@ unsafe extern "C" {
     fn archive_entry_set_mode(e: *mut c_void, mode: u32);
     fn archive_entry_set_hardlink(e: *mut c_void, p: *const c_char);
     fn archive_entry_set_symlink(e: *mut c_void, p: *const c_char);
+    fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
     fn archive_write_new() -> *mut c_void;
     fn archive_write_set_format_pax_restricted(a: *mut c_void) -> c_int;
     fn archive_write_add_filter_gzip(a: *mut c_void) -> c_int;
@@ -102,8 +103,25 @@ fn ok(a: *mut c_void, n: c_int) -> Result<()> {
     Ok(())
 }
 struct Reader(*mut c_void);
+fn archive_locale() -> Result<()> {
+    // This Linux utility has no native worker threads. Libarchive translates
+    // pathnames using the process C locale, which otherwise starts as ASCII
+    // even when LANG advertises UTF-8. Set it once before any archive object.
+    static READY: std::sync::OnceLock<std::result::Result<(), String>> = std::sync::OnceLock::new();
+    READY
+        .get_or_init(|| {
+            if unsafe { setlocale(0, c"C.UTF-8".as_ptr()) }.is_null() {
+                Err("The complete source utility requires the C.UTF-8 locale".into())
+            } else {
+                Ok(())
+            }
+        })
+        .clone()
+        .map_err(Into::into)
+}
 impl Reader {
     fn open(path: &Path) -> Result<Self> {
+        archive_locale()?;
         let r = Self(unsafe { archive_read_new() });
         if r.0.is_null() {
             return Err("Archive allocation failed".into());
@@ -162,6 +180,7 @@ impl Drop for Entry {
 struct Writer(*mut c_void);
 impl Writer {
     fn open(file: &File) -> Result<Self> {
+        archive_locale()?;
         let w = Self(unsafe { archive_write_new() });
         if w.0.is_null() {
             return Err("Archive allocation failed".into());

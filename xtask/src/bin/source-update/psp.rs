@@ -235,13 +235,23 @@ fn dependency_change(from: &[u8], to: &[u8]) -> Result<()> {
 }
 
 pub(super) fn run(target: &str) -> Result<()> {
-    if target.len() != 40
-        || !target.bytes().all(|c| c.is_ascii_hexdigit())
-        || git(&["rev-parse", target])? != format!("{target}\n").as_bytes()
-        || !git(&["status", "--porcelain"])?.is_empty()
-    {
+    target_revision(target)?;
+    if !git(&["status", "--porcelain"])?.is_empty() {
         return Err("Require a clean committed PSP target".into());
     }
+    run_committed(target)
+}
+fn target_revision(target: &str) -> Result<()> {
+    if target.len() != 40
+        || !target.bytes().all(|c| c.is_ascii_hexdigit())
+        || git(&["rev-parse", "--verify", &format!("{target}^{{commit}}")])?
+            != format!("{target}\n").as_bytes()
+    {
+        return Err("Require an exact existing PSP commit".into());
+    }
+    Ok(())
+}
+fn run_committed(target: &str) -> Result<()> {
     for (path, source) in [
         ("xtask/src/bin/source-update.rs", TOOL_SOURCE),
         ("xtask/src/bin/source-update/psp.rs", SELF_SOURCE),
@@ -424,6 +434,12 @@ pub(super) fn run(target: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_hex_string_must_resolve_to_an_actual_commit() {
+        target_revision(FROM).unwrap();
+        assert!(target_revision("0000000000000000000000000000000000000000").is_err());
+        assert!(target_revision("HEAD").is_err());
+    }
     #[test]
     fn source_route_admits_only_the_existing_log_edge() {
         let old="name = \"psx-player\"\ndependencies = [\n \"libc\",\n]\n\n[[package]]\nname = \"other\"\n";

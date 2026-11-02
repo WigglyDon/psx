@@ -580,6 +580,10 @@ mod tests {
             ("new".into(), (0o040755, vec![])),
             ("new/link".into(), (0o120777, b"test.rs".to_vec())),
             (
+                "new/█.asm".into(),
+                (0o100644, b"Unicode source body".to_vec()),
+            ),
+            (
                 "new/test.rs".into(),
                 (0o100644, b"immutable Git body".to_vec()),
             ),
@@ -604,6 +608,10 @@ mod tests {
         assert_eq!(readback["a"]["sha256"], digest(b"preserved"));
         assert_eq!(readback["b"]["sha256"], digest(b"new body"));
         assert_eq!(readback["new/link"]["symlink"], "test.rs");
+        assert_eq!(
+            readback["new/█.asm"]["sha256"],
+            digest(b"Unicode source body")
+        );
         assert_eq!(
             readback["new/test.rs"]["sha256"],
             digest(b"immutable Git body")
