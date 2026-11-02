@@ -64,6 +64,7 @@ export ANDROID_BUILD_TOOLS=37.0.0
 export ANDROID_PLATFORM=android-37.0
 cargo fetch --locked
 cargo test --workspace --locked
+cargo xtask psp
 cargo xtask apk
 ```
 
@@ -73,6 +74,14 @@ The named stage must be an absent direct child of the qualified `build`
 directory; existing files, directories and links are preserved. This works
 with internal output and separately admitted external output alike, so recovery
 does not require reusing an old stage or restoring retired storage.
+
+`cargo xtask psp` builds the pinned PPSSPP libretro target and its composed owner
+adapter, retaining native symbols and an exact source/artifact binding. APK
+packaging verifies and reuses that output; it does not silently rebuild it.
+The normal PPSSPP GLES route uses native resolution, HLE and one analog stick.
+See [PSP-1](psp.md) for the progress contract and current qualification limits.
+`source-update psp-update <full-commit>` delivers complete corresponding source
+through the bounded streaming route in [storage.md](storage.md).
 
 The default development build
 includes the all-files scan permission. `PSX_SCOPED_STORAGE=1 cargo xtask apk`

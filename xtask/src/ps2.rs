@@ -727,7 +727,7 @@ fn write_manifest(root: &Path, revision: &str) -> Result<()> {
     fs::write(root.join(".psx-source-manifest"), manifest)?;
     Ok(())
 }
-fn verify_manifest(root: &Path, revision: &str) -> Result<()> {
+pub(super) fn verify_manifest(root: &Path, revision: &str) -> Result<()> {
     let manifest = fs::read_to_string(root.join(".psx-source-manifest"))?;
     let mut lines = manifest.lines();
     if lines.next() != Some(revision) {

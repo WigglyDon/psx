@@ -58,11 +58,12 @@ impl PlayerViewport {
         let [w, h] = self.controls;
         let mut layout = preset.layout_in(w, h, cutouts, self.picture);
         layout.anchor_toolbar(w, h, self.reusable_top, 0., cutouts);
-        layout.place_game_in(
+        layout.place_game_in_aspect(
             self.picture,
             preset.allow_overlap,
             preset.game_scale,
             preset.game_offset,
+            if preset.psp { 480. / 272. } else { 4. / 3. },
         );
         if self.covered_top > 0. {
             // Transient OS decoration moves chrome over the stable picture,
@@ -458,6 +459,64 @@ impl Layout {
         }
         layout
     }
+    fn psp(w: f32, h: f32) -> Self {
+        let requested = [w, h];
+        let (w, h) = (w.max(360.), h.max(360.));
+        let mut layout = Self::arranged(w, h, false);
+        layout
+            .controls
+            .retain(|c| c.mask & ((1 << 12) | (1 << 13)) == 0);
+        let side = ((h - 4. - TOOLBAR_HEIGHT - 56. - 12.) / 2.)
+            .min(w / 2. - 24.)
+            .clamp(122., 184.);
+        let digital_y = h - 4. - 2. * side - 12.;
+        let stick_y = h - 4. - side;
+        layout.dpad = Rect::new(16., digital_y, side, side);
+        layout.sticks = vec![Rect::new(16., stick_y, side, side)];
+        let cap = (side - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
+        let step = (side - cap) / 2.;
+        let fx = w - 16. - side / 2.;
+        let fy = digital_y + side / 2.;
+        for control in &mut layout.controls {
+            control.bounds = match control.label {
+                "TRI" => Rect::new(fx - cap / 2., fy - step - cap / 2., cap, cap),
+                "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
+                "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
+                "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
+                "L1" => Rect::new(16., digital_y - 56., side, 48.),
+                "R1" => Rect::new(w - 16. - side, digital_y - 56., side, 48.),
+                "SELECT" => Rect::new(
+                    w - 16. - side,
+                    stick_y + side / 2. - 24.,
+                    (side - 8.) / 2.,
+                    48.,
+                ),
+                "START" => Rect::new(
+                    w - 16. - (side - 8.) / 2.,
+                    stick_y + side / 2. - 24.,
+                    (side - 8.) / 2.,
+                    48.,
+                ),
+                _ => unreachable!(),
+            };
+        }
+        if requested != [w, h] {
+            for i in 0..layout.element_count() {
+                let r = layout.element(i);
+                layout.set_element(
+                    i,
+                    Rect::new(
+                        r.x * requested[0] / w,
+                        r.y * requested[1] / h,
+                        r.w * requested[0] / w,
+                        r.h * requested[1] / h,
+                    ),
+                );
+            }
+        }
+        layout.anchor_toolbar(requested[0], requested[1], 0., 0., &[]);
+        layout
+    }
     /// Budget mirrored controls after a full-width picture. Sticks remain the
     /// primary thumb areas; additional inputs use the remaining controller
     /// space without reserving a row above the picture.
@@ -797,6 +856,16 @@ impl Layout {
     /// Maximize the complete picture around separate controls/chrome. Camera
     /// pixels are usable by explicit product policy; touch targets avoid holes.
     pub fn place_game_in(&mut self, bounds: Rect, overlap: bool, scale: f32, offset: [f32; 2]) {
+        self.place_game_in_aspect(bounds, overlap, scale, offset, 4. / 3.);
+    }
+    fn place_game_in_aspect(
+        &mut self,
+        bounds: Rect,
+        overlap: bool,
+        scale: f32,
+        offset: [f32; 2],
+        aspect: f32,
+    ) {
         // Picture uses the complete display, including camera pixels. Input
         // still avoids the actual holes through avoid_cutouts/anchor_toolbar.
         let mut obstacles = Vec::new();
@@ -808,7 +877,11 @@ impl Layout {
             .filter(|r| r.overlaps(bounds))
             .map(|r| Rect::new(r.x - bounds.x, r.y - bounds.y, r.w, r.h))
             .collect();
-        let area = clear_picture(bounds.w, bounds.h, &obstacles);
+        let area = if aspect == 4. / 3. {
+            clear_picture(bounds.w, bounds.h, &obstacles)
+        } else {
+            clear_picture_aspect(bounds.w, bounds.h, &obstacles, aspect)
+        };
         let scale = scale.clamp(0.25, 1.);
         self.game = Rect::new(
             bounds.x + area.x + area.w * (1. - scale) * offset[0].clamp(0., 1.),
@@ -1004,23 +1077,26 @@ impl Layout {
 /// Grow about the display center, stopping beside or above each obstruction.
 /// Only used on layout changes, never during emulation frames.
 fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
+    clear_picture_aspect(w, h, obstacles, 4. / 3.)
+}
+fn clear_picture_aspect(w: f32, h: f32, obstacles: &[Rect], aspect: f32) -> Rect {
     let center = w / 2.;
     let mut centered = Rect::default();
     for y in std::iter::once(0.)
         .chain(obstacles.iter().map(|r| r.y + r.h))
         .filter(|y| *y >= 0. && *y <= h)
     {
-        let mut width = w.min((h - y) * 4. / 3.).max(0.);
+        let mut width = w.min((h - y) * aspect).max(0.);
         for r in obstacles {
             if r.y + r.h <= y + 0.01 {
                 continue;
             }
             let beside = (center - r.x - r.w).max(r.x - center).max(0.) * 2.;
-            let above = (r.y - y).max(0.) * 4. / 3.;
+            let above = (r.y - y).max(0.) * aspect;
             width = width.min(beside.max(above));
         }
         if width > centered.w || (width == centered.w && y < centered.y) {
-            centered = Rect::new((w - width) / 2., y, width, width * 3. / 4.);
+            centered = Rect::new((w - width) / 2., y, width, width / aspect);
         }
     }
     if centered.w > 0. {
@@ -1037,16 +1113,16 @@ fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
             .chain(obstacles.iter().map(|r| r.y + r.h))
             .filter(|y| *y >= 0. && *y <= h)
         {
-            let mut width = (w - x).min((h - y) * 4. / 3.).max(0.);
+            let mut width = (w - x).min((h - y) * aspect).max(0.);
             for r in obstacles {
                 if r.x + r.w <= x + 0.01 || r.y + r.h <= y + 0.01 {
                     continue;
                 }
-                let limit = (r.x - x).max((r.y - y) * 4. / 3.).max(0.);
+                let limit = (r.x - x).max((r.y - y) * aspect).max(0.);
                 width = width.min(limit);
             }
             if width > best.w || (width == best.w && y < best.y) {
-                best = Rect::new(x, y, width, width * 3. / 4.);
+                best = Rect::new(x, y, width, width / aspect);
             }
         }
     }
@@ -1055,6 +1131,8 @@ fn clear_picture(w: f32, h: f32, obstacles: &[Rect]) -> Rect {
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Preset {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub psp: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub analog: bool,
     pub allow_overlap: bool,
@@ -1069,6 +1147,7 @@ pub struct Preset {
 impl Default for Preset {
     fn default() -> Self {
         Self {
+            psp: false,
             analog: false,
             allow_overlap: false,
             follow_thumb: true,
@@ -1087,12 +1166,13 @@ impl Preset {
         let layout = self.layout_with_cutouts(w, h, cutouts);
         let defaults = Self {
             analog: self.analog,
+            psp: self.psp,
             ..Self::default()
         }
         .layout_with_cutouts(w, h, cutouts);
         !self.allow_overlap
             && self.follow_thumb
-            && (!self.analog || self.stick_click_gesture)
+            && (!self.analog || self.psp || self.stick_click_gesture)
             && layout.game.same_bounds(defaults.game)
             && (0..layout.element_count())
                 .all(|i| layout.element(i).same_bounds(defaults.element(i)))
@@ -1109,17 +1189,19 @@ impl Preset {
         // Android may briefly expose a 1-pixel pbuffer before the window is
         // adopted. Saved controls must remain safe during that transition.
         let (w, h) = (w.max(1.), h.max(1.));
-        let mut layout = if self.analog {
+        let mut layout = if self.psp {
+            Layout::psp(w, h)
+        } else if self.analog {
             Layout::ps2(w, h)
         } else {
             Layout::default_in(w, h, cutouts, picture)
         };
-        if self.elements.is_empty() && !self.allow_overlap {
+        if !self.psp && self.elements.is_empty() && !self.allow_overlap {
             if let Some(candidate) = Layout::controller_band(w, h, self.analog, picture) {
                 layout = candidate;
             }
         }
-        if self.analog && self.elements.is_empty() && !self.allow_overlap {
+        if !self.psp && self.analog && self.elements.is_empty() && !self.allow_overlap {
             if let Some(candidate) = Layout::ps2_camera_rails(w, h, picture, cutouts) {
                 layout.avoid_cutouts(w, h, cutouts);
                 layout.place_game_in(picture, false, 1., [0.5; 2]);
@@ -1153,13 +1235,15 @@ impl Preset {
         }
         layout.avoid_cutouts(w, h, cutouts);
         layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., cutouts);
-        layout.place_game_in(
+        layout.place_game_in_aspect(
             picture,
             self.allow_overlap,
             self.game_scale,
             self.game_offset,
+            if self.psp { 480. / 272. } else { 4. / 3. },
         );
-        if self.analog
+        if !self.psp
+            && self.analog
             && self.elements.is_empty()
             && !self.allow_overlap
             && self.game_scale == 1.
@@ -1187,11 +1271,41 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+#[cfg(test)]
+mod psp_tests {
+    use super::*;
+    #[test]
+    fn psp_keeps_native_picture_one_stick_and_supported_inputs_in_play_and_editor() {
+        for (w, h) in [(393., 820.), (829., 369.), (852., 779.), (779., 852.)] {
+            let preset = ControllerSettings::default().with_psp().preset(w, h);
+            let viewport = PlayerViewport {
+                controls: [w, h],
+                picture: Rect::new(0., 0., w, h),
+                reusable_top: 0.,
+                covered_top: 0.,
+            };
+            let layout = viewport.layout(&preset, &[]);
+            assert_eq!(layout.sticks.len(), 1);
+            assert!(!layout.controls.iter().any(|c| c.mask & 0xf000 != 0));
+            assert!((layout.game.w / layout.game.h - 480. / 272.).abs() < 0.001);
+            assert!(layout.game.w > 0. && layout.game.h > 0.);
+            for i in layout.controller_elements() {
+                assert!(!layout.element(i).overlaps(layout.game));
+            }
+            let editor = crate::ui::Editor::new(preset.clone(), w, h);
+            assert!(editor.layout.game.same_bounds(layout.game));
+            assert!(!preset.stick_click_gesture);
+        }
+    }
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ControllerSettings {
     presets: BTreeMap<String, Preset>,
     #[serde(skip)]
     analog: bool,
+    #[serde(skip)]
+    psp: bool,
 }
 impl ControllerSettings {
     pub fn profile(w: f32, h: f32) -> &'static str {
@@ -1216,11 +1330,17 @@ impl ControllerSettings {
             .cloned()
             .unwrap_or_else(|| Preset {
                 analog: self.analog,
+                psp: self.psp,
+                stick_click_gesture: !self.psp,
                 ..Preset::default()
             })
     }
     pub fn set(&mut self, w: f32, h: f32, mut preset: Preset) {
         preset.analog = self.analog;
+        preset.psp = self.psp;
+        if self.psp {
+            preset.stick_click_gesture = false;
+        }
         self.presets.insert(Self::profile(w, h).into(), preset);
     }
     pub fn load_ps2(root: &Path) -> io::Result<Self> {
@@ -1234,8 +1354,23 @@ impl ControllerSettings {
     /// Capabilities belong to the opened game, including after deserialization.
     pub fn with_analog(mut self, analog: bool) -> Self {
         self.analog = analog;
+        self.psp = false;
         for preset in self.presets.values_mut() {
             preset.analog = analog;
+            preset.psp = false;
+        }
+        self
+    }
+    pub fn psp(&self) -> bool {
+        self.psp
+    }
+    pub fn with_psp(mut self) -> Self {
+        self.analog = true;
+        self.psp = true;
+        for preset in self.presets.values_mut() {
+            preset.analog = true;
+            preset.psp = true;
+            preset.stick_click_gesture = false;
         }
         self
     }

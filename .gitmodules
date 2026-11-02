@@ -4,3 +4,6 @@
 [submodule "vendor/armsx2"]
 	path = vendor/armsx2
 	url = https://github.com/ARMSX2/ARMSX2.git
+[submodule "vendor/ppsspp"]
+	path = vendor/ppsspp
+	url = https://github.com/hrydgard/ppsspp.git

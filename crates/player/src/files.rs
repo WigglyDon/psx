@@ -14,6 +14,7 @@ pub enum System {
     #[default]
     Ps1,
     Ps2,
+    Psp,
     Ps3,
     Unknown,
 }
@@ -25,6 +26,7 @@ impl System {
         match self {
             Self::Ps1 => "PlayStation",
             Self::Ps2 => "PlayStation 2",
+            Self::Psp => "PSP",
             Self::Ps3 => "PlayStation 3",
             Self::Unknown => "Choose console",
         }
@@ -161,7 +163,7 @@ pub fn finish_import(
         .filter(|name| {
             matches!(
                 extension(name).as_str(),
-                "cue" | "chd" | "pbp" | "exe" | "iso"
+                "cue" | "chd" | "pbp" | "exe" | "iso" | "cso"
             )
         })
         .collect();

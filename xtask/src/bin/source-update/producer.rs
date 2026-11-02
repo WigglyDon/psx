@@ -578,6 +578,7 @@ mod tests {
         let changes = BTreeMap::from([("b".into(), b"new body".to_vec())]);
         let additions = BTreeMap::from([
             ("new".into(), (0o040755, vec![])),
+            ("new/link".into(), (0o120777, b"test.rs".to_vec())),
             (
                 "new/test.rs".into(),
                 (0o100644, b"immutable Git body".to_vec()),
@@ -602,11 +603,13 @@ mod tests {
         assert_eq!(written, readback);
         assert_eq!(readback["a"]["sha256"], digest(b"preserved"));
         assert_eq!(readback["b"]["sha256"], digest(b"new body"));
+        assert_eq!(readback["new/link"]["symlink"], "test.rs");
         assert_eq!(
             readback["new/test.rs"]["sha256"],
             digest(b"immutable Git body")
         );
         for bad in [
+            BTreeMap::from([("escape".into(), (0o120777, b"../outside".to_vec()))]),
             BTreeMap::from([("a".into(), (0o100644, vec![]))]),
             BTreeMap::from([("missing/test.rs".into(), (0o100644, vec![]))]),
             BTreeMap::from([("unsafe".into(), (0o106644, vec![]))]),

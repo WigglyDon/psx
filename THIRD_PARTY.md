@@ -1,5 +1,24 @@
 # Third-party source
 
+## PPSSPP
+
+- Upstream: https://github.com/hrydgard/ppsspp
+- Pin: `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8`, retained at `vendor/ppsspp`
+  with its recorded recursive dependency commits and original notices.
+- Upstream declares GPL 2.0 or later; original per-file and dependency terms
+  remain applicable. Root `LICENSE.TXT` also retains the PSPSDK BSD notice.
+  Its exact SHA-256 is `ff265754cbb2e0d3b674f90a79ef5bbaa1f7f1075aec9f5e241524520e5049fa`.
+- The composed libretro owner adapter is recorded in `patches/ppsspp/compose.rs`,
+  `host-api.inc` and `host.cmake`. It retains the donor's GPL terms. Rust owns
+  application/save/launch policy; the C ABI forwards necessary existing native
+  operations. No donor UI or user-facing backend catalog is introduced.
+- APK notices retain upstream/dependency texts, embedded notices and matching
+  bundled support assets. No games or proprietary firmware are bundled.
+
+GPL-covered donor work remains GPL-covered in the combined product. PSP source,
+package and device qualification do not settle eventual marketplace eligibility;
+the existing [distribution gates](docs/distribution.md) remain applicable.
+
 ## SwanStation
 
 - Upstream: https://github.com/libretro/swanstation

@@ -154,7 +154,7 @@ pub fn scan(roots: Vec<PathBuf>, cancel: &AtomicBool) -> Scan {
                 stack.push((path, depth + 1));
             } else if kind.is_file() {
                 match files::extension(&path.to_string_lossy()).as_str() {
-                    "cue" | "iso" | "bin" | "chd" | "pbp" | "exe" => {
+                    "cue" | "iso" | "bin" | "chd" | "pbp" | "exe" | "cso" => {
                         candidates.insert(path);
                     }
                     "zip" | "7z" => result.archives += 1,

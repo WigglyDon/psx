@@ -21,6 +21,8 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[path = "source-update/producer.rs"]
 mod producer;
+#[path = "source-update/psp.rs"]
+mod psp;
 #[allow(dead_code)]
 #[path = "../storage.rs"]
 mod storage;
@@ -66,6 +68,7 @@ unsafe extern "C" {
     fn archive_entry_set_size(e: *mut c_void, n: i64);
     fn archive_entry_set_mode(e: *mut c_void, mode: u32);
     fn archive_entry_set_hardlink(e: *mut c_void, p: *const c_char);
+    fn archive_entry_set_symlink(e: *mut c_void, p: *const c_char);
     fn archive_write_new() -> *mut c_void;
     fn archive_write_set_format_pax_restricted(a: *mut c_void) -> c_int;
     fn archive_write_add_filter_gzip(a: *mut c_void) -> c_int;
@@ -250,6 +253,7 @@ fn capture(n: &str) -> bool {
         n,
         "SOURCE-CHECK.json" | "SOURCE-REVISION.txt" | ".cargo/config.toml"
     ) || n.ends_with("/.psx-source-manifest")
+        || n.ends_with("/.psx-dependencies")
         || n.ends_with("/.cargo-checksum.json")
 }
 // One pass hashes every body. No extraction, last-wins handling, or raw TAR copying.
@@ -261,8 +265,8 @@ fn scan(
 ) -> Result<(Inventory, Payloads)> {
     scan_added(path, root, replacements, &BTreeMap::new(), output)
 }
-// Additions are immutable Git-bound project files/directories, never source
-// dependency trees. The original fixed four-file operation supplies none.
+// Additions are separately verified immutable inputs. Ordinary player updates
+// admit regular project files only; PSP delivery also binds pinned Git trees.
 fn scan_added(
     path: &Path,
     root: &str,
@@ -378,11 +382,23 @@ fn scan_added(
         if safe(name)? != *name
             || !present.insert(name.clone())
             || inventory.contains_key(name)
-            || ![0o100644, 0o100755, 0o040755].contains(mode)
+            || ![0o100644, 0o100755, 0o040755, 0o120777].contains(mode)
             || (*mode == 0o040755 && !body.is_empty())
         {
             return Err("Invalid/duplicate project addition".into());
         }
+        let link = if *mode == 0o120777 {
+            let link = std::str::from_utf8(body)?;
+            safe_link(&format!("{new_root}/{name}"), link, false, new_root)?;
+            Some(link)
+        } else {
+            None
+        };
+        let data = if link.is_some() {
+            &[][..]
+        } else {
+            body.as_slice()
+        };
         let parent = Path::new(name)
             .parent()
             .ok_or("Addition parent")?
@@ -403,12 +419,16 @@ fn scan_added(
             unsafe {
                 archive_entry_set_pathname(e.0, full.as_ptr());
                 archive_entry_set_mode(e.0, *mode);
-                archive_entry_set_size(e.0, body.len() as i64);
+                archive_entry_set_size(e.0, data.len() as i64);
+                if let Some(link) = link {
+                    let link = CString::new(link)?;
+                    archive_entry_set_symlink(e.0, link.as_ptr());
+                }
             }
             w.header(&e)?;
-            w.write(body)?;
+            w.write(data)?;
         }
-        inventory.insert(name.clone(),json!({"mode":mode,"size":body.len(),"sha256":digest(body),"symlink":null,"hardlink":null}));
+        inventory.insert(name.clone(),json!({"mode":mode,"size":data.len(),"sha256":digest(data),"symlink":link,"hardlink":null}));
         if capture(name) {
             payload.insert(name.clone(), body.clone());
         }
@@ -636,6 +656,12 @@ fn validate(inv: &Inventory, payload: &Payloads, revision: &str) -> Result<()> {
             format!("vendor/armsx2-dependencies/source/{}", f[0]),
             f[2].into(),
         );
+    }
+    if inv.contains_key("vendor/ppsspp/.psx-dependencies") {
+        psp::validate_export(inv, payload, revision)?;
+        for (path, rev) in psp::graph(revision)? {
+            pinned.insert(path, rev);
+        }
     }
     for (prefix, rev) in &pinned {
         let key = format!("{prefix}/.psx-source-manifest");
@@ -1124,6 +1150,13 @@ fn main() -> Result<()> {
             &std::env::args()
                 .nth(2)
                 .ok_or("Missing exact player target revision")?,
+        );
+    }
+    if op == "psp-update" {
+        return psp::run(
+            &std::env::args()
+                .nth(2)
+                .ok_or("Missing exact PSP target revision")?,
         );
     }
     let (inv, payload) = baseline()?;

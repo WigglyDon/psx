@@ -85,6 +85,62 @@ unsafe extern "C" fn proc_address(name: *const c_char) -> Option<unsafe extern "
 }
 
 impl Graphics {
+    /// Read the paused GL engine's current game target for a durable picture.
+    /// Texture row order is retained, so re-upload uses the same blit origin.
+    pub unsafe fn capture_game(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<psx_player::ps2::Pixels, RenderError> {
+        if width == 0 || height == 0 || width > 1024 || height > 1024 {
+            return Err(RenderError::Gl(glow::INVALID_VALUE));
+        }
+        let gl = &self.objects.gl;
+        let old_fbo = gl.get_parameter_i32(glow::READ_FRAMEBUFFER_BINDING) as u32;
+        let old_pack = gl.get_parameter_i32(glow::PIXEL_PACK_BUFFER_BINDING) as u32;
+        let keys = [
+            glow::PACK_ALIGNMENT,
+            glow::PACK_ROW_LENGTH,
+            glow::PACK_SKIP_PIXELS,
+            glow::PACK_SKIP_ROWS,
+        ];
+        let previous = keys.map(|k| gl.get_parameter_i32(k));
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(self.objects.fbo));
+        gl.bind_buffer(glow::PIXEL_PACK_BUFFER, None);
+        for (key, value) in keys.into_iter().zip([1, 0, 0, 0]) {
+            gl.pixel_store_i32(key, value);
+        }
+        let mut rgba = vec![0; width as usize * height as usize * 4];
+        gl.read_pixels(
+            0,
+            0,
+            width as i32,
+            height as i32,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut rgba)),
+        );
+        for (key, value) in keys.into_iter().zip(previous) {
+            gl.pixel_store_i32(key, value);
+        }
+        gl.bind_buffer(
+            glow::PIXEL_PACK_BUFFER,
+            std::num::NonZeroU32::new(old_pack).map(glow::NativeBuffer),
+        );
+        gl.bind_framebuffer(
+            glow::READ_FRAMEBUFFER,
+            std::num::NonZeroU32::new(old_fbo).map(glow::NativeFramebuffer),
+        );
+        let error = gl.get_error();
+        if error != glow::NO_ERROR {
+            return Err(RenderError::Gl(error));
+        }
+        Ok(psx_player::ps2::Pixels {
+            width,
+            height,
+            rgba: std::sync::Arc::new(rgba),
+        })
+    }
     /// Upload completed host-owned Vulkan pixels into the same game target
     /// used by the GL core. No native image/context crosses the UI boundary.
     pub unsafe fn upload_game(&self, frame: &psx_player::ps2::Pixels) -> Result<(), RenderError> {

@@ -22,6 +22,18 @@ use std::{
 pub type Result<T> = std::result::Result<T, String>;
 pub type Environment = unsafe extern "C" fn(u32, *mut c_void) -> bool;
 pub type ProcAddress = unsafe extern "C" fn(*const c_char) -> Option<unsafe extern "C" fn()>;
+type LogFunction = unsafe extern "C" fn(u32, *const c_char, ...);
+unsafe extern "C" fn psp_log(level: u32, text: *const c_char) {
+    if !text.is_null() {
+        let level = match level {
+            0 => log::Level::Debug,
+            1 => log::Level::Info,
+            2 => log::Level::Warn,
+            _ => log::Level::Error,
+        };
+        log::log!(target:"psx::psp", level, "{}", CStr::from_ptr(text).to_string_lossy());
+    }
+}
 
 static CORE_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub(crate) struct CoreLease;
@@ -124,6 +136,7 @@ pub struct Callbacks {
     pub framebuffer: usize,
     pub av: AvInfo,
     pub buttons: u16,
+    pub axes: [i16; 4],
     pub audio: Arc<AudioQueue>,
     pub fast_forward: bool,
     pub hardware_frames: u64,
@@ -133,6 +146,8 @@ pub struct Callbacks {
     pub last_message: Option<String>,
     pub shutdown: bool,
     pub jit: bool,
+    log: Option<LogFunction>,
+    psp: bool,
 }
 
 thread_local! { static ACTIVE:Cell<*mut Callbacks> = const {Cell::new(std::ptr::null_mut())}; }
@@ -178,8 +193,11 @@ unsafe extern "C" fn audio_sample(left: i16, right: i16) {
     });
 }
 unsafe extern "C" fn input_poll() {}
-unsafe extern "C" fn input_state(port: u32, device: u32, _index: u32, id: u32) -> i16 {
+unsafe extern "C" fn input_state(port: u32, device: u32, index: u32, id: u32) -> i16 {
     with_callbacks(0, |s| {
+        if port == 0 && device == 5 && index < 2 && id < 2 {
+            return s.axes[(index * 2 + id) as usize];
+        }
         if port != 0 || device != 1 {
             return 0;
         }
@@ -209,6 +227,14 @@ unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
             return false;
         }
         match command {
+            27 => {
+                if let Some(log) = s.log {
+                    *(data as *mut LogFunction) = log;
+                    true
+                } else {
+                    false
+                }
+            }
             13 => {
                 s.disk = *(data as *const DiskControl);
                 true
@@ -302,11 +328,13 @@ unsafe extern "C" fn environment(command: u32, data: *mut c_void) -> bool {
                 true
             } // English, legacy options/messages
             56 => {
-                *(data as *mut u32) = 5;
+                *(data as *mut u32) = if s.psp { 4 } else { 5 };
                 true
             } // prefer GLES
             61 => {
-                *(data as *mut u32) = 1;
+                // PSP's upstream adapter falls back to its bounded legacy
+                // option declarations; do not advertise an unhandled v1 table.
+                *(data as *mut u32) = if s.psp { 0 } else { 1 };
                 true
             }
             74 => {
@@ -353,9 +381,11 @@ pub struct Core {
     serialize_size: unsafe extern "C" fn() -> usize,
     serialize: unsafe extern "C" fn(*mut c_void, usize) -> bool,
     unserialize: unsafe extern "C" fn(*const c_void, usize) -> bool,
-    library: Library,
+    library: Arc<Library>,
+    native_signals: Option<crate::native_signals::NativeSignals>,
     loaded: bool,
     context_active: bool,
+    max_state: usize,
     // Prevent transfer to another thread and destruction without its GL context.
     _owner: PhantomData<Rc<()>>,
     _lease: CoreLease,
@@ -379,6 +409,23 @@ impl Core {
     /// its GLES context current on this thread for every call and destruction,
     /// and provide a valid framebuffer and procedure lookup for that context.
     pub unsafe fn load(library_path: &Path, game: &Path, config: HostConfig<'_>) -> Result<Self> {
+        Self::load_kind(library_path, game, config, false)
+    }
+    /// # Safety
+    /// Same owner/context requirements as load, with the pinned PSP adapter.
+    pub(crate) unsafe fn load_psp(
+        library_path: &Path,
+        game: &Path,
+        config: HostConfig<'_>,
+    ) -> Result<Self> {
+        Self::load_kind(library_path, game, config, true)
+    }
+    unsafe fn load_kind(
+        library_path: &Path,
+        game: &Path,
+        config: HostConfig<'_>,
+        psp: bool,
+    ) -> Result<Self> {
         let HostConfig {
             system,
             save,
@@ -392,10 +439,14 @@ impl Core {
             return Err("A game is already running.".into());
         }
         let lease = CoreLease::acquire()?;
-        crate::firmware::prepare(system)
-            .map_err(|e| format!("The free startup firmware could not be prepared: {e}"))?;
-        let library = Library::new(library_path)
-            .map_err(|e| format!("The bundled PS1 core could not be loaded: {e}"))?;
+        if !psp {
+            crate::firmware::prepare(system)
+                .map_err(|e| format!("The free startup firmware could not be prepared: {e}"))?;
+        }
+        let library = Arc::new(
+            Library::new(library_path)
+                .map_err(|e| format!("The bundled game engine could not be loaded: {e}"))?,
+        );
         let mut options = BTreeMap::new();
         for (key, value) in [
             ("GPU_Renderer", "OpenGL"),
@@ -421,6 +472,29 @@ impl Core {
                 CString::new(value).unwrap(),
             );
         }
+        let mut psp_log = None;
+        if psp {
+            options.clear();
+            for (key, value) in [
+                ("ppsspp_backend", "opengl"),
+                ("ppsspp_internal_resolution", "480x272"),
+                ("ppsspp_cpu_core", if jit { "JIT" } else { "IR JIT" }),
+                ("ppsspp_frameskip", "0"),
+                ("ppsspp_auto_frameskip", "disabled"),
+                ("ppsspp_enable_wlan", "disabled"),
+            ] {
+                options.insert(key.as_bytes().to_vec(), CString::new(value).unwrap());
+            }
+            psp_log = Some(
+                *library
+                    .get::<LogFunction>(b"psx_psp_log\0")
+                    .map_err(|e| e.to_string())?,
+            );
+            type SetLog = unsafe extern "C" fn(unsafe extern "C" fn(u32, *const c_char));
+            library
+                .get::<SetLog>(b"psx_psp_set_log\0")
+                .map_err(|e| e.to_string())?(self::psp_log);
+        }
         let state = Box::new(Callbacks {
             disk: DiskControl::default(),
             initial_disk: None,
@@ -433,6 +507,7 @@ impl Core {
             framebuffer,
             av: AvInfo::default(),
             buttons: 0,
+            axes: [0; 4],
             audio,
             fast_forward: false,
             hardware_frames: 0,
@@ -442,6 +517,8 @@ impl Core {
             last_message: None,
             shutdown: false,
             jit,
+            log: psp_log,
+            psp,
         });
         macro_rules! symbol {
             ($name:literal,$ty:ty) => {
@@ -472,6 +549,14 @@ impl Core {
             unsafe extern "C" fn(unsafe extern "C" fn(u32, u32, u32, u32) -> i16)
         );
         let init = symbol!("retro_init", unsafe extern "C" fn());
+        let native_signals = if psp {
+            Some(
+                crate::native_signals::NativeSignals::capture(init as *const () as *const c_void)
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
         let api = symbol!("retro_api_version", unsafe extern "C" fn() -> u32);
         if api() != 1 {
             return Err("The bundled core has an unsupported interface version.".into());
@@ -508,8 +593,14 @@ impl Core {
             ),
             state,
             library,
+            native_signals,
             loaded: false,
             context_active: false,
+            max_state: if psp {
+                128 * 1024 * 1024
+            } else {
+                crate::resume::MAX_STATE_SIZE
+            },
             _owner: PhantomData,
             _lease: lease,
         };
@@ -521,6 +612,13 @@ impl Core {
         set_poll(input_poll);
         set_input(input_state);
         init();
+        if psp {
+            // retro_load_game launches the loader through PSP_InitStart.
+            // Establish HLE policy before that thread can inspect the disc.
+            let auto_firmware: unsafe extern "C" fn(i32) =
+                core.extension(b"psx_psp_auto_firmware\0")?;
+            auto_firmware(0);
+        }
         let game_path =
             CString::new(game.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
         if let Some(initial) = core.state.initial_disk {
@@ -537,7 +635,11 @@ impl Core {
             meta: std::ptr::null(),
         };
         if !load_game(&info) {
-            return Err(core.state.last_message.take().unwrap_or_else(||"The game could not start. Check the disc tracks and select compatible PS1 firmware.".into()));
+            return Err(core.state.last_message.take().unwrap_or_else(|| if psp {
+                "The PSP game could not start. Check that its game file is complete and supported.".into()
+            } else {
+                "The game could not start. Check the disc tracks and select compatible PS1 firmware.".into()
+            }));
         }
         core.loaded = true;
         set_controller(0, 1); // digital PS1 pad for the first playable
@@ -560,6 +662,14 @@ impl Core {
     pub fn state(&self) -> &Callbacks {
         &self.state
     }
+    /// # Safety
+    /// T must match the recorded native export's exact C ABI and lifetime.
+    pub(crate) unsafe fn extension<T: Copy>(&self, name: &[u8]) -> Result<T> {
+        self.library
+            .get::<T>(name)
+            .map(|s| *s)
+            .map_err(|e| e.to_string())
+    }
     pub fn state_mut(&mut self) -> &mut Callbacks {
         &mut self.state
     }
@@ -572,7 +682,7 @@ impl Core {
     /// its complete machine and disc-tray state through this public ABI.
     pub fn checkpoint(&mut self) -> Result<Vec<u8>> {
         let size = unsafe { (self.serialize_size)() };
-        if size == 0 || size > crate::resume::MAX_STATE_SIZE {
+        if size == 0 || size > self.max_state {
             return Err("The core cannot create a bounded resume checkpoint.".into());
         }
         let mut bytes = vec![0; size];
@@ -583,7 +693,7 @@ impl Core {
     }
     pub fn restore_checkpoint(&mut self, bytes: &[u8]) -> Result<()> {
         if bytes.is_empty()
-            || bytes.len() > crate::resume::MAX_STATE_SIZE
+            || bytes.len() > self.max_state
             || !unsafe { (self.unserialize)(bytes.as_ptr().cast(), bytes.len()) }
         {
             return Err(
@@ -672,6 +782,14 @@ impl Drop for Core {
             (self.deinit)();
         }
         ACTIVE.with(|a| a.set(std::ptr::null_mut()));
+        if let Some(signals) = &self.native_signals {
+            if let Err(error) = signals.restore() {
+                log::error!(
+                    "Retaining stopped engine mapping after signal restore failed: {error}"
+                );
+                std::mem::forget(self.library.clone());
+            }
+        }
         let _ = &self.library;
     }
 }

@@ -82,6 +82,9 @@ impl Button {
     pub fn requires_sticks(self) -> bool {
         matches!(self, Self::L3 | Self::R3)
     }
+    pub fn supports_psp(self) -> bool {
+        !matches!(self, Self::L2 | Self::R2 | Self::L3 | Self::R3)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -91,6 +94,13 @@ pub struct Bindings {
     volume_down: Option<Button>,
 }
 impl Bindings {
+    pub fn for_psp(mut self) -> Self {
+        let supported =
+            |b: &Button| !matches!(b, Button::L2 | Button::R2 | Button::L3 | Button::R3);
+        self.volume_up = self.volume_up.filter(supported);
+        self.volume_down = self.volume_down.filter(supported);
+        self
+    }
     pub fn for_sticks(mut self, analog: bool) -> Self {
         if !analog {
             self.volume_up = self.volume_up.filter(|b| !b.requires_sticks());

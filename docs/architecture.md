@@ -1,5 +1,12 @@
 # Architecture
 
+[PSP-1](psp.md) adds PPSSPP through the same Rust game/session operation. Its
+one-stick controller and 480×272 picture are console capabilities, while
+durable IDs, writer ownership, shortcuts and optional per-game profiles stay
+shared. PSP Memory Stick files bind automatic checkpoints independently for
+each entry. The owner adapter settles native I/O and preserves pause through
+serialization; see that document for the exact contract and qualification limits.
+
 The active extension is [PLAYER-2](player-2.md): preserve the working PS1
 experience while qualifying a PS2 engine and shared direct-game launch.
 PS2 implementation and qualification are in progress; the existing PS1

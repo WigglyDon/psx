@@ -32,6 +32,24 @@
     "patchesResourceSha256": "b8ab00d2d68376cc15b792d5776a150c678a2c0ea8fd896ed20492aecc6643db",
     "androidHostPageSize": 4096
   },
+  "psp": {
+    "name": "PPSSPP",
+    "repository": "https://github.com/hrydgard/ppsspp.git",
+    "revision": "fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8",
+    "path": "vendor/ppsspp",
+    "interface": "libretro C ABI with a composed owner pause/ready/I-O and variadic-log bridge",
+    "composition": "patches/ppsspp/compose.rs",
+    "bridge": "patches/ppsspp/host-api.inc",
+    "buildGlue": "patches/ppsspp/host.cmake",
+    "upstreamLicense": "GPL-2.0-or-later and original per-file/dependency terms",
+    "licensePath": "LICENSE.TXT",
+    "licenseGitBlob": "1c3210d9d1eaf47cc33a1e0c451f4704a765852d",
+    "licenseSha256": "ff265754cbb2e0d3b674f90a79ef5bbaa1f7f1075aec9f5e241524520e5049fa",
+    "licenseSizeBytes": 19740,
+    "selectionStatus": "Android integration candidate; PSP gameplay/save/resume and distribution unqualified",
+    "build": "cargo xtask psp",
+    "firmwareRequired": false
+  },
   "firmware": {
     "name": "PCSX-Redux OpenBIOS",
     "repository": "https://github.com/pcsx-redux/nugget.git",

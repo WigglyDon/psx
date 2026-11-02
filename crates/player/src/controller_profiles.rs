@@ -1,5 +1,6 @@
 //! App defaults and explicit per-game controller overrides, independent of saves.
 use crate::{
+    files::System,
     input::ControllerSettings,
     phone_buttons::{Bindings, Button, PhoneKey, Settings as LegacyBindings},
     saves::atomic_write,
@@ -76,6 +77,31 @@ impl Settings {
     pub fn bindings(&self, id: Option<&GameId>, analog: bool) -> Bindings {
         self.selected_bindings(id).for_sticks(analog)
     }
+    pub fn bindings_for(&self, id: Option<&GameId>, system: System) -> Bindings {
+        if system == System::Psp {
+            self.selected_bindings(id).for_psp()
+        } else {
+            self.bindings(id, system == System::Ps2)
+        }
+    }
+    pub fn controls_for(
+        &self,
+        root: &Path,
+        id: Option<&GameId>,
+        system: System,
+    ) -> io::Result<ControllerSettings> {
+        if system != System::Psp {
+            return self.controls(root, id, system == System::Ps2);
+        }
+        if let Some(layouts) = id
+            .and_then(|id| self.games.get(id.as_str()))
+            .filter(|g| g.enabled)
+            .and_then(|g| g.layouts.as_ref())
+        {
+            return Ok(layouts.clone().with_psp());
+        }
+        Ok(ControllerSettings::load(&root.join("psp-controls"))?.with_psp())
+    }
     fn selected_bindings(&self, id: Option<&GameId>) -> Bindings {
         id.and_then(|id| self.games.get(id.as_str()))
             .filter(|g| g.enabled)
@@ -143,7 +169,9 @@ impl Settings {
             next.games.get_mut(id.as_str()).unwrap().layouts = Some(controls.clone());
             self.publish(root, next)
         } else {
-            controls.save(&if controls.analog() {
+            controls.save(&if controls.psp() {
+                root.join("psp-controls")
+            } else if controls.analog() {
                 root.join("ps2-controls")
             } else {
                 root.to_owned()
@@ -185,6 +213,39 @@ mod tests {
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+    #[test]
+    fn psp_defaults_and_custom_layouts_do_not_replace_other_console_profiles() {
+        let temp = Temp::new();
+        let root = &temp.0;
+        let mut settings = Settings::default();
+        let ps2 = settings.controls_for(root, None, System::Ps2).unwrap();
+        settings.save_controls(root, None, &ps2).unwrap();
+        let original = fs::read(root.join("ps2-controls/controls.json")).unwrap();
+        let id = GameId::parse("a1").unwrap();
+        let mut psp = settings.controls_for(root, Some(&id), System::Psp).unwrap();
+        let mut preset = psp.preset(393., 820.);
+        preset.game_scale = 0.8;
+        psp.set(393., 820., preset);
+        settings.set_custom(root, &id, true, &psp).unwrap();
+        settings.save_controls(root, Some(&id), &psp).unwrap();
+        let loaded = Settings::load(root).unwrap();
+        let selected = loaded.controls_for(root, Some(&id), System::Psp).unwrap();
+        assert!(selected.psp());
+        assert_eq!(selected.preset(393., 820.).game_scale, 0.8);
+        assert_eq!(
+            loaded
+                .controls_for(root, None, System::Psp)
+                .unwrap()
+                .preset(393., 820.)
+                .game_scale,
+            1.
+        );
+        assert_eq!(
+            fs::read(root.join("ps2-controls/controls.json")).unwrap(),
+            original
+        );
+        assert!(!loaded.controls_for(root, None, System::Ps2).unwrap().psp());
+    }
     struct Temp(PathBuf);
     impl Temp {
         fn new() -> Self {

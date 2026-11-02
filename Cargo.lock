@@ -522,6 +522,7 @@ dependencies = [
  "khronos-egl",
  "libc",
  "libloading",
+ "log",
  "serde",
  "serde_json",
  "sha2",

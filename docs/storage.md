@@ -192,6 +192,16 @@ incomplete output and its receipt are retained. No dependency tree is expanded.
 
 ## Protected work and other artifacts
 
+`source-update psp-update <full-commit>` extends the verified complete `b71679c`
+archive with the pinned PPSSPP tree and its recursive Git dependencies. It reads
+immutable blobs through `git cat-file --batch`, retains original modes and safe
+links, generates complete Gitless manifests, and streams an independently
+verified archive without another expanded tree. The only Cargo graph change
+admitted is the player's edge to the already-vendored `log` crate. Existing
+native pins/dependency bodies stay fixed. Bounded project changes, source and
+tool revisions, archive hash and complete readback remain explicit; partial
+outputs and failure receipts are retained.
+
 The Vulkan player source route is `source-update vulkan-update <full-commit>`.
 It streams from the frozen complete `d11d03e6d02c` archive, with the same bounded
 project delta and independent complete readback. Its sole registry exception is

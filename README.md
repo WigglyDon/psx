@@ -6,6 +6,9 @@ A native PlayStation player, with working PS1 playback and PS2 integration
 under development. Choose your games, make yourself comfortable,
 and play. Built by Machine Rhythm, starting with Android foldables.
 
+[PSP integration](docs/psp.md) is in progress, including the same durable
+per-game sessions. PSP gameplay is not yet qualified.
+
 - A local game-card library with explicit storage scanning and multi-disc support.
 - A large, unstretched picture, separate from the controls by default.
 - A following D-pad, simultaneous touch input and press haptics.

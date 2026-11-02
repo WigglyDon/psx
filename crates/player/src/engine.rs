@@ -1,7 +1,7 @@
-//! The two real engine bindings. Runtime count is host policy, not game identity.
+//! Engine bindings. Runtime count is host policy, not game identity.
 use crate::{
     files::System,
-    ps2,
+    ps2, psp, psp_saves,
     retro::{self, HostConfig},
     saves::MemoryCard,
     settings::Speed,
@@ -13,15 +13,18 @@ type Result<T> = std::result::Result<T, String>;
 pub enum Core {
     Ps1(retro::Core),
     Ps2(Box<ps2::Core>, PathBuf),
+    Psp(Box<psp::Core>),
 }
 /// Frozen state awaiting packaging, independent of a live engine assignment.
 pub enum Checkpoint {
     Ps1(Vec<u8>),
     Ps2(ps2::Checkpoint),
+    Psp(Vec<u8>),
 }
 pub(crate) enum CapturedCards {
     Ram(Vec<u8>),
     Files(ps2::PendingCardIdentity),
+    Psp(psp_saves::Pending),
 }
 impl CapturedCards {
     fn synchronize(self) -> Result<Vec<u8>> {
@@ -30,6 +33,9 @@ impl CapturedCards {
             Self::Files(pending) => pending
                 .synchronize()
                 .map_err(|e| format!("The captured memory cards could not be synchronized: {e}")),
+            Self::Psp(pending) => pending
+                .synchronize()
+                .map_err(|e| format!("PSP saved progress could not be synchronized: {e}")),
         }
     }
 }
@@ -68,6 +74,7 @@ impl Checkpoint {
         match self {
             Self::Ps1(bytes) => Ok(bytes),
             Self::Ps2(captured) => captured.into_bytes(),
+            Self::Psp(bytes) => Ok(bytes),
         }
     }
 }
@@ -91,6 +98,7 @@ impl Core {
         }
         match self {
             Self::Ps1(_) => Ok(speed),
+            Self::Psp(_) => Ok(speed),
             Self::Ps2(core, _) => core.set_speed(speed),
         }
     }
@@ -111,12 +119,16 @@ impl Core {
                 ps2::Core::load(library, game, config, gles)
                     .map(|core| Self::Ps2(Box::new(core), root))
             }
+            System::Psp => {
+                psp::Core::load(library, game, config).map(|core| Self::Psp(Box::new(core)))
+            }
             _ => Err("Choose a supported console for this game.".into()),
         }
     }
     pub fn state(&self) -> ps2::Output {
         match self {
             Self::Ps2(core, _) => core.output(),
+            Self::Psp(core) => core.output(),
             Self::Ps1(core) => {
                 let s = core.state();
                 ps2::Output {
@@ -142,35 +154,49 @@ impl Core {
                 core.state_mut().fast_forward = fast;
             }
             Self::Ps2(core, _) => core.input(buttons, axes, fast),
+            Self::Psp(core) => core.input(buttons, axes, fast),
         }
     }
     pub fn pause(&mut self, paused: bool) -> Result<()> {
         match self {
             Self::Ps1(_) => Ok(()),
             Self::Ps2(core, _) => core.pause(paused),
+            Self::Psp(core) => core.pause(paused),
         }
     }
     pub fn ready(&self) -> bool {
         match self {
             Self::Ps1(_) => true,
             Self::Ps2(core, _) => core.ready(),
+            Self::Psp(core) => core.ready(),
         }
     }
     pub fn run(&mut self) {
         match self {
             Self::Ps1(core) => core.run(),
             Self::Ps2(core, _) => core.run(),
+            Self::Psp(core) => core.run(),
         }
     }
     pub fn producer_failure(&self) -> Option<crate::producer_failure::Failure> {
         match self {
             Self::Ps1(_) => None,
+            Self::Psp(_) => None,
             Self::Ps2(core, _) => core.producer_failure(),
         }
     }
     pub fn checkpoint(&mut self, card: Option<&mut MemoryCard>) -> Result<Snapshot> {
         let before = Instant::now();
         match self {
+            Self::Psp(core) => {
+                let captured = core.capture()?;
+                Ok(Snapshot {
+                    state: Checkpoint::Psp(captured.state),
+                    card: CapturedCards::Psp(captured.files),
+                    captured_in: captured.captured_in,
+                    cards_in: captured.cards_in,
+                })
+            }
             Self::Ps1(core) => {
                 core.flush_card(card.ok_or("PS1 card is unavailable.")?)?;
                 let state = Checkpoint::Ps1(core.checkpoint()?);
@@ -207,20 +233,22 @@ impl Core {
         match self {
             Self::Ps1(core) => core.restore_checkpoint(bytes),
             Self::Ps2(core, _) => core.restore(bytes),
+            Self::Psp(core) => core.restore(bytes),
         }
     }
-    pub fn restore_picture(&self, picture: ps2::Pixels) -> Result<()> {
+    pub fn restore_picture(&mut self, picture: ps2::Pixels) -> Result<()> {
         match self {
             Self::Ps2(core, _) => core.restore_picture(picture),
+            Self::Psp(core) => core.restore_picture(picture),
             Self::Ps1(_) => Err("This saved picture belongs to another engine.".into()),
         }
     }
     pub fn restore_card(&mut self, card: &MemoryCard) -> Result<()> {
         match self {
             Self::Ps1(core) => core.restore_card(card),
-            Self::Ps2(_, _) => {
-                Err("PS2 cards are owned files and cannot be replaced during emulation.".into())
-            }
+            Self::Ps2(_, _) | Self::Psp(_) => Err(
+                "This engine owns saved files; they cannot be replaced during emulation.".into(),
+            ),
         }
     }
     pub fn flush_card(&mut self, card: Option<&mut MemoryCard>) -> Result<()> {
@@ -230,11 +258,13 @@ impl Core {
                 Ok(())
             }
             Self::Ps2(core, _) => core.flush(),
+            Self::Psp(core) => core.flush(),
         }
     }
     pub fn card_identity(&mut self) -> Result<Vec<u8>> {
         match self {
             Self::Ps1(core) => Ok(core.card_ram()?.to_vec()),
+            Self::Psp(core) => core.card_identity(),
             Self::Ps2(core, root) => {
                 core.flush()?;
                 ps2::card_identity(root).map_err(|e| e.to_string())
@@ -244,19 +274,22 @@ impl Core {
     pub fn disc_status(&self) -> Option<(u32, u32)> {
         match self {
             Self::Ps1(core) => core.disc_status(),
-            Self::Ps2(_, _) => None,
+            Self::Ps2(_, _) | Self::Psp(_) => None,
         }
     }
     pub fn change_disc(&mut self, index: u32) -> Result<()> {
         match self {
             Self::Ps1(core) => core.change_disc(index),
-            Self::Ps2(_, _) => {
-                Err("PS2 disc replacement is not available for this session.".into())
+            Self::Ps2(_, _) | Self::Psp(_) => {
+                Err("Disc replacement is not available for this session.".into())
             }
         }
     }
     pub fn destroy_context(&mut self) {
         if let Self::Ps1(core) = self {
+            core.destroy_context();
+        }
+        if let Self::Psp(core) = self {
             core.destroy_context();
         }
     }

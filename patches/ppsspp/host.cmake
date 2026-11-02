@@ -1,0 +1,13 @@
+# Narrow source-composition glue; application decisions stay in Rust.
+function(psx_ppsspp_adapter)
+  if(NOT TARGET ppsspp_libretro OR NOT EXISTS "${PSX_PSP_ADAPTER}")
+    message(FATAL_ERROR "Missing composed PSX PSP adapter")
+  endif()
+  get_target_property(sources ppsspp_libretro SOURCES)
+  list(REMOVE_ITEM sources libretro.cpp)
+  set_property(TARGET ppsspp_libretro PROPERTY SOURCES "${sources};${PSX_PSP_ADAPTER}")
+  target_include_directories(ppsspp_libretro PRIVATE "${CMAKE_SOURCE_DIR}/libretro")
+endfunction()
+if(PROJECT_NAME STREQUAL "PPSSPP")
+  cmake_language(DEFER CALL psx_ppsspp_adapter)
+endif()

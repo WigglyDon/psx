@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 mod android_packet;
 mod minimal;
 mod ps2;
+mod psp;
 mod storage;
 mod workspace;
 use std::{
@@ -40,7 +41,9 @@ fn run() -> Result<()> {
     let root = env::current_dir()?.canonicalize()?;
     if matches!(
         operation.as_deref(),
-        Some("apk" | "ps2" | "notices" | "minimal-host" | "gs-replay-apk" | "gs-runner-apk")
+        Some(
+            "apk" | "ps2" | "psp" | "notices" | "minimal-host" | "gs-replay-apk" | "gs-runner-apk"
+        )
     ) {
         workspace::check_cache_paths(&root)?;
     }
@@ -63,7 +66,7 @@ fn run() -> Result<()> {
     let workspace = workspace::Admission::acquire(&root)?;
     let _lock = match operation.as_deref() {
         Some(
-            "apk" | "verify" | "notices" | "source" | "firmware" | "ps2" | "minimal-host"
+            "apk" | "verify" | "notices" | "source" | "firmware" | "ps2" | "psp" | "minimal-host"
             | "gs-replay-apk" | "gs-runner-apk",
         ) => Some(storage::Lock::acquire(&root)?),
         _ => None,
@@ -84,6 +87,7 @@ fn run() -> Result<()> {
             },
         )?),
         Some("firmware") => Some(storage::Growth::begin(&root, storage::GIB)?),
+        Some("psp") => Some(storage::Growth::begin(&workspace.root, 12 * storage::GIB)?),
         Some("notices") => Some(storage::Growth::begin(&workspace.root, 64 * 1024 * 1024)?),
         _ => None,
     };
@@ -97,6 +101,7 @@ fn run() -> Result<()> {
         Some("source") => source_bundle(),
         Some("firmware") => firmware(),
         Some("ps2") => ps2::build(),
+        Some("psp") => psp::build(),
         Some("storage") => storage::run(&root, &env::args().skip(2).collect::<Vec<_>>()),
         _ => {
             eprintln!("Usage: cargo xtask apk | verify | notices | source | firmware | ps2 | storage [check <planned-GiB> | audit | prune]\nSet ANDROID_SDK_ROOT, ANDROID_NDK_HOME, ANDROID_BUILD_TOOLS (default 37.0.0), ANDROID_PLATFORM (default android-37.0). Compile SDK may exceed target API 36. Requires Java with javac module, cmake, ninja, zip, unzip, Rust Android target. Source bundles also use tar, gzip and cargo vendor. Firmware reproduction uses Podman and the pinned Linux amd64 compiler image.");
@@ -503,6 +508,7 @@ fn apk() -> Result<()> {
     }
     verify_core()?;
     let vulkan = ps2::verified_vulkan_artifact()?;
+    let psp_native = psp::verified_native()?;
     if vulkan.is_none() {
         ps2::build()?;
     }
@@ -707,6 +713,7 @@ public final class PlaybackService extends android.app.Service {
     ))?;
     notices()?;
     ps2::resources()?;
+    psp::resources()?;
     let acceptance_manifest = PathBuf::from(artifact(
         "build/apk/assets/development-player-acceptance.json",
     ));
@@ -807,6 +814,10 @@ public final class PlaybackService extends android.app.Service {
         artifact("build/apk/package/lib/arm64-v8a/libarmsx2.so"),
     )?;
     fs::copy(
+        psp_native,
+        artifact("build/apk/package/lib/arm64-v8a/libppsspp.so"),
+    )?;
+    fs::copy(
         artifact("build/apk/dex/classes.dex"),
         artifact("build/apk/package/classes.dex"),
     )?;
@@ -817,6 +828,7 @@ public final class PlaybackService extends android.app.Service {
             &artifact("build/apk/package/lib/arm64-v8a/libpsx.so"),
             &artifact("build/apk/package/lib/arm64-v8a/libswanstation.so"),
             &artifact("build/apk/package/lib/arm64-v8a/libarmsx2.so"),
+            &artifact("build/apk/package/lib/arm64-v8a/libppsspp.so"),
         ],
     ))?;
     let destination = env::current_dir()?.join(artifact("build/apk/unsigned.apk"));
@@ -831,6 +843,7 @@ public final class PlaybackService extends android.app.Service {
                 "lib/arm64-v8a/libpsx.so".into(),
                 "lib/arm64-v8a/libswanstation.so".into(),
                 "lib/arm64-v8a/libarmsx2.so".into(),
+                "lib/arm64-v8a/libppsspp.so".into(),
             ],
         )
         .current_dir(artifact("build/apk/package")),
@@ -921,7 +934,12 @@ fn verify_apk() -> Result<()> {
         ],
     ))?;
     let readelf = ndk.join("toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf");
-    for name in ["libpsx.so", "libswanstation.so", "libarmsx2.so"] {
+    for name in [
+        "libpsx.so",
+        "libswanstation.so",
+        "libarmsx2.so",
+        "libppsspp.so",
+    ] {
         let path = artifact(&format!("build/apk/package/lib/arm64-v8a/{name}"));
         let headers = output(&mut command(&readelf, ["-h", "-lW", "-d", &path]))?;
         if !headers.contains("AArch64") {
@@ -1042,6 +1060,7 @@ fn verify_apk() -> Result<()> {
         println!("{name}: AArch64; all ELF LOAD alignments >=16KB");
     }
     ps2::verify_resources(&PathBuf::from(artifact("build/psx-development.apk")))?;
+    psp::verify_package(&PathBuf::from(artifact("build/psx-development.apk")))?;
     let entries = output(&mut command(
         "unzip",
         ["-Z1", &artifact("build/psx-development.apk")],
@@ -1060,6 +1079,12 @@ fn verify_apk() -> Result<()> {
         "lib/arm64-v8a/libpsx.so",
         "lib/arm64-v8a/libswanstation.so",
         "lib/arm64-v8a/libarmsx2.so",
+        "lib/arm64-v8a/libppsspp.so",
+        "assets/notices/ppsspp/LICENSE.TXT",
+        "assets/psp/resources/ppge_atlas.zim",
+        "assets/psp/resources/compat.ini",
+        "assets/psp/resources.tsv",
+        "assets/psp/native-binding.json",
         "assets/notices/armsx2/COPYING.GPLv3",
         "assets/notices/host/LICENSE",
         "assets/notices/swanstation/LICENSE",
@@ -1204,6 +1229,7 @@ fn notices() -> Result<()> {
         &destination.join("swanstation"),
     )?;
     copy_notices(Path::new("vendor/armsx2"), &destination.join("armsx2"))?;
+    copy_notices(Path::new("vendor/ppsspp"), &destination.join("ppsspp"))?;
     let dependency_root = ps2::dependency_root();
     for line in fs::read_to_string("vendor/armsx2-dependencies/revisions.tsv")?.lines() {
         let name = line.split('\t').next().ok_or("Invalid dependency lock")?;

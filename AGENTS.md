@@ -8,6 +8,15 @@ small documents that own it.
 
 ## Product
 
+The owner's subsequent PSP assignment is [PSP-1 #5](https://github.com/WigglyDon/psx/issues/5).
+Add pinned PPSSPP to the existing Rust player with the same independent durable
+game sessions, ordinary saving, automatic resume, shortcuts and controller
+customization. Per-game resume is a hard acceptance gate. Preserve the qualified
+PS1/PS2 artifacts and data; keep #2's accepted observations and remaining limits
+separate. The PSP assignment permits its necessary native build and narrow ABI
+glue, with all new substantive application/host logic in Rust. Continue until
+complete or genuinely dependent on owner input; use current fleet admission.
+
 Extend the working native PS1 player with PS2 and direct-game launch under
 PLAYER-2 (GitHub issue #2 and its active Master dispatch). The first target is Android
 ARM64 on a stock foldable; eventual Google Play and Apple App Store release

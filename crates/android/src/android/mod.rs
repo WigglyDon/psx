@@ -1515,9 +1515,10 @@ impl Player {
                 self.controller_profiles
                     .assign(&self.root, id.as_ref(), key, button)
                     .map_err(|e| format!("Phone buttons could not be saved: {e}"))?;
-                self.phone_bindings = self
-                    .controller_profiles
-                    .bindings(id.as_ref(), self.controller_settings.analog());
+                self.phone_bindings = self.controller_profiles.bindings_for(
+                    id.as_ref(),
+                    self.game.as_ref().map_or(System::Ps1, |g| g.system),
+                );
                 self.navigate(app, Screen::PhoneButtons);
             }
             Action::ResetPhoneKeys => {
@@ -1743,12 +1744,12 @@ impl Player {
     }
     fn reload_controls(&mut self, app: &AndroidApp) -> Result<(), String> {
         let id = self.controller_id()?;
-        let analog = self.controller_settings.analog();
+        let system = self.game.as_ref().map_or(System::Ps1, |g| g.system);
         self.controller_settings = self
             .controller_profiles
-            .controls(&self.root, id.as_ref(), analog)
+            .controls_for(&self.root, id.as_ref(), system)
             .map_err(|e| e.to_string())?;
-        self.phone_bindings = self.controller_profiles.bindings(id.as_ref(), analog);
+        self.phone_bindings = self.controller_profiles.bindings_for(id.as_ref(), system);
         self.cancel_input();
         self.resize(app)
     }
@@ -1782,7 +1783,10 @@ impl Player {
 
     fn sync_background(&mut self, app: &AndroidApp) {
         let want = self.playback.run_in_background
-            && self.game.as_ref().is_some_and(|g| g.system == System::Ps1)
+            && self
+                .game
+                .as_ref()
+                .is_some_and(|g| matches!(g.system, System::Ps1 | System::Psp))
             && self.core.is_some()
             && !self.activity.user_paused
             && !self.activity.time_paused
@@ -1892,11 +1896,15 @@ impl Player {
                     "Controller settings".into(),
                     "Layout, size and optional overlap".into(),
                 );
-                if self.game.as_ref().is_none_or(|g| g.system == System::Ps1) {
+                if self
+                    .game
+                    .as_ref()
+                    .is_none_or(|g| matches!(g.system, System::Ps1 | System::Psp))
+                {
                     add(
                         Action::ToggleBackground,
                         "Run in background".into(),
-                        "PS1 · keep playing when minimized · off pauses automatically".into(),
+                        "Keep playing when minimized · off pauses automatically".into(),
                     );
                 }
                 add(
@@ -2150,7 +2158,7 @@ impl Player {
                         "The picture stays clear of every control".into()
                     },
                 );
-                if preset.analog {
+                if preset.analog && !preset.psp {
                     add(
                         Action::ToggleStickClick,
                         "Double-tap stick click".into(),
@@ -2228,7 +2236,9 @@ impl Player {
                     "Leave this key unassigned".into(),
                 );
                 for button in Button::ALL {
-                    if !button.requires_sticks() || self.controller_settings.analog() {
+                    if (!button.requires_sticks() || self.controller_settings.analog())
+                        && (!self.controller_settings.psp() || button.supports_psp())
+                    {
                         add(
                             Action::SetPhoneKey(key, Some(button)),
                             button.label().into(),
@@ -2321,7 +2331,7 @@ impl Player {
                 }
             }
             Screen::Console(index) => {
-                for system in [System::Ps1, System::Ps2] {
+                for system in [System::Ps1, System::Ps2, System::Psp] {
                     add(
                         Action::ChooseSystem(index, system),
                         system.label().into(),
@@ -2494,11 +2504,35 @@ impl Player {
                 )?;
             }
         }
+        if game.system == System::Psp {
+            let name = std::ffi::CString::new("psp/resources.tsv").unwrap();
+            let mut index = app
+                .asset_manager()
+                .open(&name)
+                .ok_or("Bundled PSP resources are unavailable.")?;
+            let index = std::str::from_utf8(index.buffer().map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+            for line in index.lines() {
+                let (name, digest) = line.split_once('\t').ok_or("Invalid PSP resource index")?;
+                let path = std::ffi::CString::new(format!("psp/resources/{name}"))
+                    .map_err(|e| e.to_string())?;
+                let mut asset = app
+                    .asset_manager()
+                    .open(&path)
+                    .ok_or("A PSP support file is missing.")?;
+                psx_player::psp::install_resource(
+                    &self.root,
+                    name,
+                    digest,
+                    asset.buffer().map_err(|e| e.to_string())?,
+                )?;
+            }
+        }
         self.start(game)?;
         self.resize(app)
     }
     fn start(&mut self, game: Game) -> Result<(), String> {
-        if !matches!(game.system, System::Ps1 | System::Ps2) {
+        if !matches!(game.system, System::Ps1 | System::Ps2 | System::Psp) {
             return Err("This console is not supported yet.".into());
         }
         let id = GameId::parse(&game.id)?;
@@ -2535,12 +2569,20 @@ impl Player {
         } else {
             None
         };
-        let launch_path = game.launch_path(&self.root).map_err(|e| e.to_string())?;
-        let library = Path::new(if game.system == System::Ps2 {
-            "libarmsx2.so"
+        let psp_root = if game.system == System::Psp {
+            Some(psx_player::psp::prepare(&self.root, &id)?)
         } else {
-            "libswanstation.so"
+            None
+        };
+        let launch_path = game.launch_path(&self.root).map_err(|e| e.to_string())?;
+        let library = Path::new(match game.system {
+            System::Ps2 => "libarmsx2.so",
+            System::Psp => "libppsspp.so",
+            _ => "libswanstation.so",
         });
+        let save_root = psp_root
+            .as_ref()
+            .map_or_else(|| self.root.join("saves"), |p| p.join("memstick"));
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         let jit = page_size == 4096;
         // Existing cached interpreter avoids 4KB JIT guard/mprotect assumptions
@@ -2552,7 +2594,7 @@ impl Player {
                 &launch_path,
                 HostConfig {
                     system: ps2_system.as_deref().unwrap_or(&self.root.join("system")),
-                    save: &self.root.join("saves"),
+                    save: &save_root,
                     audio: self.queue.clone(),
                     framebuffer: self.graphics.framebuffer(),
                     proc_address: self.graphics.proc_address(),
@@ -2581,8 +2623,7 @@ impl Player {
                 }
                 if Instant::now() >= deadline {
                     return Err(
-                        "The PS2 firmware or renderer did not finish starting. Your card is kept."
-                            .into(),
+                        "The game engine did not finish starting. Saved progress is kept.".into(),
                     );
                 }
                 std::thread::sleep(Duration::from_millis(1));
@@ -2612,11 +2653,12 @@ impl Player {
         self.session.as_mut().unwrap().state = SessionState::Unavailable;
         self.card = card;
         self.game = Some(game.clone());
-        let analog = game.system == System::Ps2;
-        self.phone_bindings = self.controller_profiles.bindings(Some(&id), analog);
+        self.phone_bindings = self
+            .controller_profiles
+            .bindings_for(Some(&id), game.system);
         self.controller_settings = self
             .controller_profiles
-            .controls(&self.root, Some(&id), analog)
+            .controls_for(&self.root, Some(&id), game.system)
             .map_err(|e| e.to_string())?;
         self.library.put(game.clone());
         self.library.save(&self.root).map_err(|e| e.to_string())?;
@@ -2849,6 +2891,9 @@ impl Player {
             return self.flush();
         }
         if let (Some(core), Some(game)) = (&mut self.core, &self.game) {
+            if game.system == System::Psp && core.state().hardware_frames == 0 {
+                return Ok(());
+            }
             let snapshot = core.checkpoint(self.card.as_mut())?;
             log::info!(
                 "Session snapshot captured in {:.2} ms; card identity captured in {:.2} ms",
@@ -2858,7 +2903,18 @@ impl Player {
             let game = game.clone();
             let root = self.root.clone();
             let paused = self.activity.user_paused;
-            let picture = core.state().pixels;
+            let picture = if game.system == System::Psp {
+                let state = core.state();
+                let picture = unsafe {
+                    self.graphics
+                        .capture_game(state.frame_width, state.frame_height)
+                }
+                .map_err(|e| e.to_string())?;
+                core.restore_picture(picture.clone())?;
+                Some(picture)
+            } else {
+                core.state().pixels
+            };
             let (tx, rx) = mpsc::sync_channel(1);
             self.checkpoint_work = Some(rx);
             std::thread::spawn(move || {
@@ -2998,11 +3054,17 @@ impl Player {
         self.session.take();
         self.card = None;
         self.game = None;
-        let analog = self.controller_settings.analog();
-        self.phone_bindings = self.controller_profiles.bindings(None, analog);
+        let system = if self.controller_settings.psp() {
+            System::Psp
+        } else if self.controller_settings.analog() {
+            System::Ps2
+        } else {
+            System::Ps1
+        };
+        self.phone_bindings = self.controller_profiles.bindings_for(None, system);
         self.controller_settings = self
             .controller_profiles
-            .controls(&self.root, None, analog)
+            .controls_for(&self.root, None, system)
             .map_err(|e| e.to_string())?;
         self.queue.clear_stopped();
         if had_game && clear_active {

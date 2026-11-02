@@ -799,6 +799,7 @@ impl Editor {
     }
     fn defaults(&self) -> Layout {
         self.layout_for(&Preset {
+            psp: self.preset.psp,
             analog: self.preset.analog,
             ..Preset::default()
         })

@@ -17,7 +17,9 @@ const PICTURE_MAGIC: &[u8; 8] = b"PSXRES02";
 const MAX_PICTURE_SIZE: usize = 1024 * 1024 * 4;
 const CORE: &str = "e436e9b85374def58d211df7f78880f0f4a917b4";
 fn core(root: &Path, game: &Game) -> io::Result<String> {
-    if game.system == System::Ps2 {
+    if game.system == System::Psp {
+        Ok(crate::psp::revision())
+    } else if game.system == System::Ps2 {
         let firmware = crate::ps2::firmware_identity(&root.join("ps2").join(&game.id))
             .map_err(io::Error::other)?;
         Ok(format!("{}+firmware:{firmware}", crate::ps2::revision()))
@@ -26,7 +28,9 @@ fn core(root: &Path, game: &Game) -> io::Result<String> {
     }
 }
 fn max_size(system: System) -> usize {
-    if system == System::Ps2 {
+    if system == System::Psp {
+        crate::psp::MAX_STATE_SIZE
+    } else if system == System::Ps2 {
         crate::ps2::MAX_STATE_SIZE
     } else {
         MAX_STATE_SIZE
