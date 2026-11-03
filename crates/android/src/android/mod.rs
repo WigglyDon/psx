@@ -2669,7 +2669,8 @@ impl Player {
         let checkpoint = resume::load(&self.root, &game, &identity).map_err(|e| e.to_string())?;
         if let Some(checkpoint) = checkpoint {
             let core = self.core.as_mut().unwrap();
-            core.restore_checkpoint(&checkpoint.bytes)?;
+            let native = checkpoint.native_bytes_for(&game).map_err(|e| e.to_string())?;
+            core.restore_checkpoint(&native)?;
             // The durable card is authoritative even if the donor embeds one.
             if let Some(card) = &self.card {
                 core.restore_card(card)?;

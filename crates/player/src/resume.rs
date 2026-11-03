@@ -66,6 +66,18 @@ pub struct Checkpoint {
     pub bytes: Vec<u8>,
     pub picture: Option<crate::ps2::Pixels>,
 }
+impl Checkpoint {
+    /// Call after `load` has validated the saved entry, discs, core, cards and
+    /// machine digest. Retarget only PS1 envelope media names in memory; the
+    /// immutable old checkpoint remains a recovery artifact until recaptured.
+    pub fn native_bytes_for(&self, game: &Game) -> io::Result<std::borrow::Cow<'_, [u8]>> {
+        if game.system == System::Ps1 {
+            crate::ps1_state::relocate(&self.bytes, &self.metadata.game, game)
+        } else {
+            Ok(std::borrow::Cow::Borrowed(&self.bytes))
+        }
+    }
+}
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

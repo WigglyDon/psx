@@ -8,9 +8,10 @@ PS1/PS2 artifacts and results; neither they nor package checks qualify PSP.
 Candidate `f1b94b0` rendered Final Fantasy II's menus and opening battle, and
 the owner confirmed audible working sound. A fresh process acknowledged native
 restoration and showed the same upright paused battle picture/intent, with the
-committed machine/picture fingerprints unchanged. Unpaused continuation, ordinary
-Memory Stick save/cold load and cross-console continuity remain open. The issue
-retains exact build bindings, failed trials and verified return observations.
+committed machine/picture fingerprints unchanged. Candidate `6f048e3` continued
+that restored session through the opening battle into the next story scene.
+Ordinary Memory Stick save/cold load and cross-console continuity remain open.
+The issue retains exact build bindings, failed trials and verified return observations.
 
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
 `vendor/ppsspp` submodule with its recursively pinned dependencies. Its native
@@ -65,6 +66,9 @@ PSP uses the shared analog placement, camera rails, bottom-band budgeting and
 landscape packing, retaining only its supported inputs. Its native picture aspect
 participates in those same space calculations. Existing custom element identities
 and rectangles remain authoritative; changing defaults does not reset them.
+Games do not select separate built-in presentation systems. Only an explicitly
+enabled per-game controller profile overrides the shared defaults; each console's
+native aspect and available inputs determine its fitted picture and capabilities.
 
 The pinned Android adapter requests a GLES2-compatible hardware interface.
 Rust accepts that PSP request on the player's existing GLES3 context and supplies

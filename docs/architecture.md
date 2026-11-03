@@ -824,6 +824,15 @@ custom geometry takes precedence. Future physical-controller support should
 withdraw the touch overlay from this composition, retaining the same player
 presentation. Physical-controller acquisition/routing is not yet implemented.
 
+PS1 native checkpoints retain a media filename separately from our stable game
+ID. After the shared loader validates the exact core, disc IDs, machine digest
+and current card, the host may retarget that envelope name to the same disc's
+verified current path. The pinned version57 uncompressed envelope and optional
+disc trailer are parsed with bounds; guest bytes, tray intent, disc ordering and
+the original checkpoint file remain unchanged. Unknown container members are
+never guessed. This permits a renamed primary file to reach the donor's existing
+media override without weakening its loaded-content restriction or rebuilding it.
+
 On short landscape displays without cutouts, generated dual-stick controls can
 put system/stick-click keys in a bottom row instead of widening the stick rails.
 This keeps primary target sizes, symmetry and separated inputs while allowing a

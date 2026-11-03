@@ -20,6 +20,7 @@ pub mod minimal_host;
 mod native_signals;
 pub mod phone_buttons;
 pub mod producer_failure;
+mod ps1_state;
 pub mod ps2;
 pub mod psp_saves;
 pub mod psp;
