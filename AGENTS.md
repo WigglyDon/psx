@@ -77,7 +77,8 @@ experiments retain their interpretation gates, not a hold on new product work.
 Choose the retained renderer internally from demonstrated evidence and cost.
 Prepare substantial finite campaigns before custody. Stop a faulty run
 immediately, fulfill actual recovery/return/admission requirements, and continue
-useful off-device work. The personal Fold remains excluded.
+useful off-device work. Personal Fold operations require a separately approved
+fresh owner window; an installed build or an earlier returned window is no grant.
 
 Advance the complete PLAYER-2 dispatch autonomously without waiting for #1's
 formal closure. Preserve the accepted PS1 build, signing/application identity,
@@ -100,8 +101,10 @@ Document supported formats and failures honestly. Keep navigation, file
 errors, touch targets and interruption behavior usable from the first build.
 
 The owner's current shared layout default is picture-first for every console:
-fit the entire native-aspect image in the full drawable, then place controls in
-the spare side/bottom space. Do not stretch/crop or reserve control rails that
+fit the entire native-aspect image immediately below the stable compact
+18-point application toolbar, without an extra gap, then place controls in
+the spare side/bottom space. Transient OS bars do not resize the picture.
+Do not stretch/crop or reserve control rails that
 silently shrink the picture. If usable controls cannot fit, offer explicit
 overlap or a smaller keep-clear picture. Preserve manual profiles and intentional
 picture size/offset choices; defaults need no per-game opt-in.

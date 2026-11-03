@@ -53,6 +53,20 @@ prevented the lock/display check; the owner explicitly accepted release as-is.
 No new ordinary-save, listening, all-orientation or sustained-speed qualification
 is inferred. The subsequent toolbar/control refinement below is separate source.
 
+The separately admitted normal `619bab2` update then preserved current data before
+launch and restored that same paused PSP checkpoint and custom profiles. Actual
+folded portrait used 1080×612 at y=43.9 on a 1080×2342 drawable; unfolded used
+2076×1176.4 at y=43.9 on a 2076×2152 drawable. The inspected inner controller had
+level primary thumb areas and an adjacent D-pad. The narrow visible side strips
+were also present in the retained 480×272 snapshot before final fitting; no
+automatic crop/stretch was applied. Final progress was archived and read back,
+then app stop, keyguard locking and both physical displays off were verified
+under the held lease before release. The queued final whole-tar remote hash did
+not execute after the work deadline and is not claimed. This adds the measured
+layout/paused continuity observations, not new listening, gameplay input,
+ordinary-save, all-orientation or sustained-speed qualification. The issue owns
+the frozen APK/source/symbol bindings; later documentation does not rebind them.
+
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
 `vendor/ppsspp` submodule with its recursively pinned dependencies. Its native
 implementation, replacement assets and exact original licenses remain retained.
