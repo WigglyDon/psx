@@ -6,6 +6,12 @@ use std::time::{Duration, Instant};
 
 pub const ROW_HEIGHT: f32 = 64.;
 
+/// The shared layout already solved the selected console's picture geometry.
+/// Presentation must not fit it to a second, fixed console aspect ratio.
+pub fn game_destination(layout: &Layout, editor: Option<&Editor>) -> Rect {
+    editor.map_or(layout.game, |e| e.map(e.layout.game))
+}
+
 /// A captured toolbar press: a hold never also becomes a tap on release.
 #[derive(Default)]
 pub struct HoldPress(Option<Press>);

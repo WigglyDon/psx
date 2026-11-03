@@ -2905,11 +2905,20 @@ impl Player {
             let paused = self.activity.user_paused;
             let picture = if game.system == System::Psp {
                 let state = core.state();
-                let picture = unsafe {
-                    self.graphics
-                        .capture_game(state.frame_width, state.frame_height)
-                }
-                .map_err(|e| e.to_string())?;
+                let picture = if let Some(picture) = state.pixels {
+                    // A paused/restored CPU picture is already normalized;
+                    // reading it back as native GL would flip it a second time.
+                    picture
+                } else {
+                    unsafe {
+                        self.graphics.capture_game(
+                            state.frame_width,
+                            state.frame_height,
+                            state.hw.map(|h| h.bottom_left).unwrap_or(true),
+                        )
+                    }
+                    .map_err(|e| e.to_string())?
+                };
                 core.restore_picture(picture.clone())?;
                 Some(picture)
             } else {

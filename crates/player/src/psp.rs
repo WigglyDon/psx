@@ -16,6 +16,35 @@ pub const MAX_STATE_SIZE: usize = 128 * 1024 * 1024;
 pub const UPSTREAM: &str = "fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8";
 type Result<T> = std::result::Result<T, String>;
 
+/// GL readback retains the producer's texture row order. Durable CPU pictures
+/// use top-row-first pixels, including after upload and a cold paused restore.
+pub fn picture_from_gl(
+    width: u32,
+    height: u32,
+    mut rgba: Vec<u8>,
+    bottom_left: bool,
+) -> Result<Pixels> {
+    if width == 0
+        || height == 0
+        || width > 1024
+        || height > 1024
+        || rgba.len() != width as usize * height as usize * 4
+    {
+        return Err("The PSP checkpoint picture is invalid. Saved progress is kept.".into());
+    }
+    if bottom_left {
+        let mut rows = rgba.chunks_exact_mut(width as usize * 4);
+        while let (Some(top), Some(bottom)) = (rows.next(), rows.next_back()) {
+            top.swap_with_slice(bottom);
+        }
+    }
+    Ok(Pixels {
+        width,
+        height,
+        rgba: std::sync::Arc::new(rgba),
+    })
+}
+
 pub fn revision() -> String {
     format!(
         "{UPSTREAM}+host:{:x}",
@@ -228,6 +257,29 @@ mod tests {
         files::{Game, System},
         resume,
     };
+    #[test]
+    fn gl_picture_normalizes_rows_once_and_retains_rgba_and_dimensions() {
+        for height in [1, 2, 3, 272] {
+            let width = 480;
+            let top_down = (0..height)
+                .flat_map(|y| (0..width).flat_map(move |x| [x as u8, y as u8, 17, 255]))
+                .collect::<Vec<_>>();
+            let bottom_up = top_down
+                .chunks_exact(width as usize * 4)
+                .rev()
+                .flatten()
+                .copied()
+                .collect();
+            let normalized = picture_from_gl(width, height, bottom_up, true).unwrap();
+            assert_eq!((normalized.width, normalized.height), (width, height));
+            assert_eq!(*normalized.rgba, top_down);
+            let uploaded = picture_from_gl(width, height, top_down.clone(), false).unwrap();
+            assert_eq!(*uploaded.rgba, top_down);
+        }
+        assert!(picture_from_gl(0, 2, vec![], true).is_err());
+        assert!(picture_from_gl(1025, 1, vec![], false).is_err());
+        assert!(picture_from_gl(2, 2, vec![0; 15], true).is_err());
+    }
     #[test]
     fn actual_resume_loader_refuses_a_stale_psp_save_without_replacing_new_progress() {
         let root = std::env::temp_dir().join(format!("psx-psp-resume-{}", std::process::id()));

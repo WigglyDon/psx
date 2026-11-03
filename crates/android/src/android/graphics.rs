@@ -86,11 +86,12 @@ unsafe extern "C" fn proc_address(name: *const c_char) -> Option<unsafe extern "
 
 impl Graphics {
     /// Read the paused GL engine's current game target for a durable picture.
-    /// Texture row order is retained, so re-upload uses the same blit origin.
+    /// Normalize the native GL origin to the top-row-first CPU picture format.
     pub unsafe fn capture_game(
         &self,
         width: u32,
         height: u32,
+        bottom_left: bool,
     ) -> Result<psx_player::ps2::Pixels, RenderError> {
         if width == 0 || height == 0 || width > 1024 || height > 1024 {
             return Err(RenderError::Gl(glow::INVALID_VALUE));
@@ -135,11 +136,8 @@ impl Graphics {
         if error != glow::NO_ERROR {
             return Err(RenderError::Gl(error));
         }
-        Ok(psx_player::ps2::Pixels {
-            width,
-            height,
-            rgba: std::sync::Arc::new(rgba),
-        })
+        psx_player::psp::picture_from_gl(width, height, rgba, bottom_left)
+            .map_err(|_| RenderError::Gl(glow::INVALID_VALUE))
     }
     /// Upload completed host-owned Vulkan pixels into the same game target
     /// used by the GL core. No native image/context crosses the UI boundary.
@@ -615,7 +613,7 @@ impl Graphics {
         gl.clear(glow::COLOR_BUFFER_BIT);
         if let Some((w, h, bottom_left)) = frame {
             if w > 0 && h > 0 && w <= 1024 && h <= 1024 {
-                let r = editor.map_or_else(|| layout.game.fit(4. / 3.), |e| e.map(e.layout.game));
+                let r = psx_player::ui::game_destination(layout, editor);
                 // Round endpoints together: truncating a scaled width can
                 // leave a one-pixel strip even when the solved edge is exact.
                 let x = (self.content.x + r.x * density).round() as i32;

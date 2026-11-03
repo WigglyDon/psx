@@ -60,6 +60,11 @@ Rust accepts that PSP request on the player's existing GLES3 context and supplie
 its normal framebuffer/procedure callbacks. Rejecting it makes the donor fall
 back to software before the host refuses startup. Desktop GL and higher GLES
 requests remain refused, and PS1 keeps its existing version negotiation.
+The final blit uses the shared layout's solved rectangle, including PSP's
+aspect ratio. Paused GL readback is normalized to the shared top-row-first CPU
+picture format before publication; an already retained/restored CPU picture is
+reused without another origin conversion. Live, paused and cold-restored output
+therefore use the same presentation contract.
 
 ISO detection reads UMD/game metadata. PBP detection preserves PS1 EBOOT priority
 even when it contains a PSP bootstrap. Structurally valid unresolved CHD/CSO

@@ -1294,6 +1294,9 @@ mod psp_tests {
             }
             let editor = crate::ui::Editor::new(preset.clone(), w, h);
             assert!(editor.layout.game.same_bounds(layout.game));
+            assert!(crate::ui::game_destination(&layout, None).same_bounds(layout.game));
+            assert!(crate::ui::game_destination(&layout, Some(&editor))
+                .same_bounds(editor.map(editor.layout.game)));
             assert!(!preset.stick_click_gesture);
         }
     }
