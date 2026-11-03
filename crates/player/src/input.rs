@@ -167,7 +167,7 @@ impl Layout {
                 rails = side;
             }
         }
-        if let Some(band) = Self::controller_band(w, h, false, picture) {
+        if let Some(band) = Self::controller_band(w, h, false, false, picture) {
             if band.game.w > rails.game.w + 0.01 {
                 rails = band;
             }
@@ -335,7 +335,7 @@ impl Layout {
     pub fn element_count(&self) -> usize {
         self.controls.len() + 5 + self.sticks.len()
     }
-    fn ps2(w: f32, h: f32) -> Self {
+    fn analog_default(w: f32, h: f32) -> Self {
         // Solve both halves together. The primary thumb band contains a stick
         // and an inner column (system key above stick-click), rather than
         // adding separate full-width rows for every new PS2 input.
@@ -451,6 +451,7 @@ impl Layout {
             requested[0],
             requested[1],
             true,
+            false,
             Rect::new(0., 0., requested[0], requested[1]),
         ) {
             if compact.game.w > layout.game.w + 0.01 {
@@ -460,72 +461,24 @@ impl Layout {
         layout
     }
     fn psp(w: f32, h: f32) -> Self {
-        let requested = [w, h];
-        let (w, h) = (w.max(360.), h.max(360.));
-        let mut layout = Self::arranged(w, h, false);
+        let mut layout = Self::analog_default(w, h);
+        layout.psp_inputs();
         layout
-            .controls
-            .retain(|c| c.mask & ((1 << 12) | (1 << 13)) == 0);
-        let side = ((h - 4. - TOOLBAR_HEIGHT - 56. - 12.) / 2.)
-            .min(w / 2. - 24.)
-            .clamp(122., 184.);
-        let digital_y = h - 4. - 2. * side - 12.;
-        let stick_y = h - 4. - side;
-        layout.dpad = Rect::new(16., digital_y, side, side);
-        layout.sticks = vec![Rect::new(16., stick_y, side, side)];
-        let cap = (side - 4. * std::f32::consts::SQRT_2) / (1. + std::f32::consts::SQRT_2);
-        let step = (side - cap) / 2.;
-        let fx = w - 16. - side / 2.;
-        let fy = digital_y + side / 2.;
-        for control in &mut layout.controls {
-            control.bounds = match control.label {
-                "TRI" => Rect::new(fx - cap / 2., fy - step - cap / 2., cap, cap),
-                "O" => Rect::new(fx + step - cap / 2., fy - cap / 2., cap, cap),
-                "X" => Rect::new(fx - cap / 2., fy + step - cap / 2., cap, cap),
-                "SQ" => Rect::new(fx - step - cap / 2., fy - cap / 2., cap, cap),
-                "L1" => Rect::new(16., digital_y - 56., side, 48.),
-                "R1" => Rect::new(w - 16. - side, digital_y - 56., side, 48.),
-                "SELECT" => Rect::new(
-                    w - 16. - side,
-                    stick_y + side / 2. - 24.,
-                    (side - 8.) / 2.,
-                    48.,
-                ),
-                "START" => Rect::new(
-                    w - 16. - (side - 8.) / 2.,
-                    stick_y + side / 2. - 24.,
-                    (side - 8.) / 2.,
-                    48.,
-                ),
-                _ => unreachable!(),
-            };
-        }
-        if requested != [w, h] {
-            for i in 0..layout.element_count() {
-                let r = layout.element(i);
-                layout.set_element(
-                    i,
-                    Rect::new(
-                        r.x * requested[0] / w,
-                        r.y * requested[1] / h,
-                        r.w * requested[0] / w,
-                        r.h * requested[1] / h,
-                    ),
-                );
-            }
-        }
-        layout.anchor_toolbar(requested[0], requested[1], 0., 0., &[]);
-        layout
+    }
+    fn psp_inputs(&mut self) {
+        self.controls.retain(|c| c.mask & 0xf000 == 0);
+        self.sticks.truncate(1);
     }
     /// Budget mirrored controls after a full-width picture. Sticks remain the
     /// primary thumb areas; additional inputs use the remaining controller
     /// space without reserving a row above the picture.
-    fn controller_band(w: f32, h: f32, analog: bool, picture: Rect) -> Option<Self> {
+    fn controller_band(w: f32, h: f32, analog: bool, psp: bool, picture: Rect) -> Option<Self> {
         if w < 800. || h < 600. || w > h * 1.35 {
             return None;
         }
         let bottom = 4.;
-        let headroom = h - (picture.y + TOOLBAR_HEIGHT + w * 0.75);
+        let picture_height = if psp { w * 272. / 480. } else { w * 0.75 };
+        let headroom = h - (picture.y + TOOLBAR_HEIGHT + picture_height);
         let available = headroom - bottom;
         // Large outside sticks, raised inside digital wells, then auxiliary
         // keys below the digital wells. Use headroom after the full picture;
@@ -630,17 +583,37 @@ impl Layout {
             ];
         }
         layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., &[]);
-        layout.place_game_in(picture, false, 1., [0.5; 2]);
+        if psp {
+            layout.psp_inputs();
+        }
+        layout.place_game_in_aspect(
+            picture,
+            false,
+            1.,
+            [0.5; 2],
+            if psp { 480. / 272. } else { 4. / 3. },
+        );
         Some(layout)
     }
     /// Keep a side camera in the gap between the secondary digital cluster
     /// and primary stick, rather than moving a whole rail into the picture.
     /// Compare actual clear picture area before choosing this generated layout.
-    fn ps2_camera_rails(w: f32, h: f32, picture: Rect, cutouts: &[Rect]) -> Option<Self> {
+    fn analog_camera_rails(
+        w: f32,
+        h: f32,
+        picture: Rect,
+        cutouts: &[Rect],
+        psp: bool,
+    ) -> Option<Self> {
         if w <= h * 1.35 || h < 360. {
             return None;
         }
-        let rail = (w - picture.h * 4. / 3.) / 2.;
+        let full_height_width = if psp {
+            picture.h * 480. / 272.
+        } else {
+            picture.h * 4. / 3.
+        };
+        let rail = (w - full_height_width) / 2.;
         // Match both rails around the full picture, keeping auxiliary keys
         // beside the stick rather than in the thumb travel corridor.
         if rail < 184. {
@@ -668,7 +641,7 @@ impl Layout {
         let fx = w - outer - face / 2.;
         let fy = top + face / 2.;
         let inner = rail - 48.;
-        let mut layout = Self::ps2(w, h);
+        let mut layout = Self::analog_default(w, h);
         layout.dpad = Rect::new(outer, top, face, face);
         for c in &mut layout.controls {
             c.bounds = match c.label {
@@ -691,6 +664,9 @@ impl Layout {
             Rect::new(outer, main_y, stick, stick),
             Rect::new(w - outer - stick, main_y, stick, stick),
         ];
+        if psp {
+            layout.psp_inputs();
+        }
         layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., cutouts);
         if (0..layout.element_count())
             .any(|i| cutouts.iter().any(|c| layout.element(i).overlaps(*c)))
@@ -698,7 +674,13 @@ impl Layout {
             return None;
         }
         layout.avoid_cutouts(w, h, cutouts);
-        layout.place_game_in(picture, false, 1., [0.5; 2]);
+        layout.place_game_in_aspect(
+            picture,
+            false,
+            1.,
+            [0.5; 2],
+            if psp { 480. / 272. } else { 4. / 3. },
+        );
         Some(layout)
     }
     pub fn action_elements(&self) -> impl Iterator<Item = usize> + '_ {
@@ -894,8 +876,8 @@ impl Layout {
     /// On a short, wide surface, system/stick-click keys beside the sticks can
     /// widen both rails unnecessarily. Try a bottom row without shrinking any
     /// thumb target; retain it only when the actual clear-picture solver wins.
-    fn fit_landscape_controls(&mut self, w: f32, h: f32, picture: Rect) {
-        if w <= h * 1.35 || self.sticks.len() != 2 {
+    fn fit_landscape_controls(&mut self, w: f32, h: f32, picture: Rect, aspect: f32) {
+        if w <= h * 1.35 || self.sticks.is_empty() {
             return;
         }
         let face = self.dpad.w;
@@ -914,7 +896,9 @@ impl Layout {
         let shoulder = (face - 8.) / 2.;
         self.dpad = Rect::new(16., face_y, face, face);
         self.sticks[0] = Rect::new(16., stick_y, stick, stick);
-        self.sticks[1] = Rect::new(w - 16. - stick, stick_y, stick, stick);
+        if let Some(right) = self.sticks.get_mut(1) {
+            *right = Rect::new(w - 16. - stick, stick_y, stick, stick);
+        }
         for control in &mut self.controls {
             control.bounds = match control.label {
                 "TRI" | "O" | "X" | "SQ" => Rect::new(
@@ -934,7 +918,7 @@ impl Layout {
                 _ => control.bounds,
             };
         }
-        self.place_game_in(picture, false, 1., [0.5; 2]);
+        self.place_game_in_aspect(picture, false, 1., [0.5; 2], aspect);
         if self.game.w <= game.w + 0.01 {
             for (i, rect) in previous.into_iter().enumerate() {
                 self.set_element(i, rect);
@@ -1192,19 +1176,21 @@ impl Preset {
         let mut layout = if self.psp {
             Layout::psp(w, h)
         } else if self.analog {
-            Layout::ps2(w, h)
+            Layout::analog_default(w, h)
         } else {
             Layout::default_in(w, h, cutouts, picture)
         };
-        if !self.psp && self.elements.is_empty() && !self.allow_overlap {
-            if let Some(candidate) = Layout::controller_band(w, h, self.analog, picture) {
+        let analog = self.analog || self.psp;
+        let aspect = if self.psp { 480. / 272. } else { 4. / 3. };
+        if self.elements.is_empty() && !self.allow_overlap {
+            if let Some(candidate) = Layout::controller_band(w, h, analog, self.psp, picture) {
                 layout = candidate;
             }
         }
-        if !self.psp && self.analog && self.elements.is_empty() && !self.allow_overlap {
-            if let Some(candidate) = Layout::ps2_camera_rails(w, h, picture, cutouts) {
+        if analog && self.elements.is_empty() && !self.allow_overlap {
+            if let Some(candidate) = Layout::analog_camera_rails(w, h, picture, cutouts, self.psp) {
                 layout.avoid_cutouts(w, h, cutouts);
-                layout.place_game_in(picture, false, 1., [0.5; 2]);
+                layout.place_game_in_aspect(picture, false, 1., [0.5; 2], aspect);
                 if candidate.game.w > layout.game.w + 0.01
                     || ((candidate.game.w - layout.game.w).abs() <= 0.01
                         && candidate.sticks[0].w > layout.sticks[0].w)
@@ -1240,17 +1226,16 @@ impl Preset {
             self.allow_overlap,
             self.game_scale,
             self.game_offset,
-            if self.psp { 480. / 272. } else { 4. / 3. },
+            aspect,
         );
-        if !self.psp
-            && self.analog
+        if analog
             && self.elements.is_empty()
             && !self.allow_overlap
             && self.game_scale == 1.
             && self.game_offset == [0.5; 2]
             && cutouts.is_empty()
         {
-            layout.fit_landscape_controls(w, h, picture);
+            layout.fit_landscape_controls(w, h, picture, aspect);
         }
         layout
     }
@@ -1298,6 +1283,55 @@ mod psp_tests {
             assert!(crate::ui::game_destination(&layout, Some(&editor))
                 .same_bounds(editor.map(editor.layout.game)));
             assert!(!preset.stick_click_gesture);
+        }
+    }
+
+    #[test]
+    fn psp_uses_shared_landscape_packing_and_preserves_custom_element_identity() {
+        let (w, h) = (2280. / 2.75, 1014. / 2.75);
+        let viewport = PlayerViewport {
+            controls: [w, h],
+            picture: Rect::new(0., 0., w, 1080. / 2.75),
+            reusable_top: 0.,
+            covered_top: 0.,
+        };
+        let mut preset = ControllerSettings::default().with_psp().preset(w, h);
+        let layout = viewport.layout(&preset, &[]);
+        // Recorded separate PSP defaults capped this drawable at1425.5px.
+        assert!(layout.game.w * 2.75 > 1426., "{:?}", layout.game);
+        assert!(layout.sticks[0].w >= 104.);
+        assert!(layout
+            .controls
+            .iter()
+            .filter(|c| c.is_face())
+            .all(|c| c.bounds.w >= 48.));
+        let names = (0..layout.element_count())
+            .map(|i| layout.element_name(i).to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "Direction pad",
+                "Triangle",
+                "Circle",
+                "Cross",
+                "Square",
+                "L1",
+                "R1",
+                "Select",
+                "Start",
+                "Settings",
+                "Pause / play",
+                "Time scale",
+                "Mute",
+                "Left stick"
+            ]
+        );
+        preset.capture(&layout, w, h);
+        let custom = viewport.layout(&preset, &[]);
+        for i in 0..layout.element_count() {
+            assert_eq!(custom.element_name(i), names[i]);
+            assert!(custom.element(i).same_bounds(layout.element(i)));
         }
     }
 }
@@ -2184,7 +2218,7 @@ mod tests {
                 .iter()
                 .all(|(i, r)| layout.element(*i).same_bounds(*r)));
             let mut custom = preset.clone();
-            let mut old = Layout::ps2(w, h);
+            let mut old = Layout::analog_default(w, h);
             custom.capture(&old, w, h);
             let saved = serde_json::to_vec(&custom).unwrap();
             old.avoid_cutouts(w, h, &[camera]);
@@ -2256,7 +2290,7 @@ mod tests {
     #[test]
     fn ps2_square_dock_does_not_add_a_separate_row_for_every_input() {
         for (w, h) in [(852., 817.), (817., 852.), (852., 883.)] {
-            let layout = Layout::ps2(w, h);
+            let layout = Layout::analog_default(w, h);
             assert!(layout.game.h >= h - 410., "{w}x{h}: {:?}", layout.game);
             assert!(layout
                 .controls
@@ -2609,7 +2643,7 @@ mod tests {
         let density = 2.75;
         let (w, h) = (2280. / density, 1014. / density);
         let picture = Rect::new(0., 0., w, 1080. / density);
-        let mut before = Layout::ps2(w, h);
+        let mut before = Layout::analog_default(w, h);
         before.place_game_in(picture, false, 1., [0.5; 2]);
         assert!((before.game.h * density - 984.).abs() < 0.02);
         let layout = PlayerViewport {
@@ -2691,7 +2725,7 @@ mod tests {
         let picture = Rect::new(0., 0., w, 1080. / 2.75);
         for scale in [0.5, 0.75, 1.] {
             let offset = [0.2, 0.8];
-            let mut expected = Layout::ps2(w, h);
+            let mut expected = Layout::analog_default(w, h);
             expected.place_game_in(picture, false, scale, offset);
             let preset = Preset {
                 analog: true,
@@ -2705,7 +2739,7 @@ mod tests {
                 assert!(actual.element(i).same_bounds(expected.element(i)));
             }
         }
-        let mut original = Layout::ps2(w, h);
+        let mut original = Layout::analog_default(w, h);
         original.dpad.x += 3.;
         let mut preset = Preset {
             analog: true,

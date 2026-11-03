@@ -2,8 +2,15 @@
 
 [Issue #5](https://github.com/WigglyDon/psx/issues/5) extends the existing Rust
 player with PSP. Independent durable per-game resume is an acceptance gate.
-Current work is integration and off-device qualification, not a PSP gameplay
-or distribution claim. Preserve #2's accepted PS1/PS2 artifacts and results.
+Integration and device qualification are in progress. Preserve #2's accepted
+PS1/PS2 artifacts and results; neither they nor package checks qualify PSP.
+
+Candidate `f1b94b0` rendered Final Fantasy II's menus and opening battle, and
+the owner confirmed audible working sound. A fresh process acknowledged native
+restoration and showed the same upright paused battle picture/intent, with the
+committed machine/picture fingerprints unchanged. Unpaused continuation, ordinary
+Memory Stick save/cold load and cross-console continuity remain open. The issue
+retains exact build bindings, failed trials and verified return observations.
 
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
 `vendor/ppsspp` submodule with its recursively pinned dependencies. Its native
@@ -54,6 +61,10 @@ PSP uses its complete 480×272 picture and one stick, D-pad, shapes, L/R and
 Start/Select. Play and live editing use the same geometry. Unsupported second
 shoulders/stick clicks are absent; saved PS1/PS2 profiles retain their capabilities.
 Phone bindings and per-game overrides use the existing shared policy.
+PSP uses the shared analog placement, camera rails, bottom-band budgeting and
+landscape packing, retaining only its supported inputs. Its native picture aspect
+participates in those same space calculations. Existing custom element identities
+and rectangles remain authoritative; changing defaults does not reset them.
 
 The pinned Android adapter requests a GLES2-compatible hardware interface.
 Rust accepts that PSP request on the player's existing GLES3 context and supplies
