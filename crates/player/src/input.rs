@@ -1,4 +1,5 @@
 use crate::saves::atomic_write;
+mod picture;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -60,7 +61,7 @@ impl PlayerViewport {
         layout.anchor_toolbar(w, h, self.reusable_top, 0., cutouts);
         layout.place_game_in_aspect(
             self.picture,
-            preset.allow_overlap,
+            preset.allow_overlap || preset.picture_fit() == PictureFit::Maximum,
             preset.game_scale,
             preset.game_offset,
             if preset.psp { 480. / 272. } else { 4. / 3. },
@@ -1113,6 +1114,13 @@ fn clear_picture_aspect(w: f32, h: f32, obstacles: &[Rect], aspect: f32) -> Rect
     best
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PictureFit {
+    Maximum,
+    KeepClear,
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Preset {
     #[serde(default, skip_serializing_if = "is_false")]
@@ -1120,6 +1128,10 @@ pub struct Preset {
     #[serde(default, skip_serializing_if = "is_false")]
     pub analog: bool,
     pub allow_overlap: bool,
+    /// Missing legacy profiles retain explicit picture sizing/positioning.
+    /// Otherwise the new picture policy is independent of saved input positions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_fit: Option<PictureFit>,
     #[serde(default = "enabled")]
     pub follow_thumb: bool,
     #[serde(default = "enabled")]
@@ -1134,6 +1146,7 @@ impl Default for Preset {
             psp: false,
             analog: false,
             allow_overlap: false,
+            picture_fit: Some(PictureFit::Maximum),
             follow_thumb: true,
             stick_click_gesture: true,
             elements: Vec::new(),
@@ -1143,6 +1156,29 @@ impl Default for Preset {
     }
 }
 impl Preset {
+    pub fn picture_fit(&self) -> PictureFit {
+        self.picture_fit
+            .unwrap_or(if self.game_scale == 1. && self.game_offset == [0.5; 2] {
+                PictureFit::Maximum
+            } else {
+                PictureFit::KeepClear
+            })
+    }
+    pub fn needs_control_space(&self, layout: &Layout) -> bool {
+        !self.allow_overlap
+            && self.picture_fit() == PictureFit::Maximum
+            && layout
+                .controller_elements()
+                .any(|i| layout.element(i).overlaps(layout.game))
+    }
+    pub fn choose_control_space(&mut self, overlap: bool) {
+        self.allow_overlap = overlap;
+        self.picture_fit = Some(if overlap {
+            PictureFit::Maximum
+        } else {
+            PictureFit::KeepClear
+        });
+    }
     pub fn is_default(&self, w: f32, h: f32) -> bool {
         self.is_default_with_cutouts(w, h, &[])
     }
@@ -1154,7 +1190,8 @@ impl Preset {
             ..Self::default()
         }
         .layout_with_cutouts(w, h, cutouts);
-        !self.allow_overlap
+        self.picture_fit() == PictureFit::Maximum
+            && !self.allow_overlap
             && self.follow_thumb
             && (!self.analog || self.psp || self.stick_click_gesture)
             && layout.game.same_bounds(defaults.game)
@@ -1182,12 +1219,13 @@ impl Preset {
         };
         let analog = self.analog || self.psp;
         let aspect = if self.psp { 480. / 272. } else { 4. / 3. };
-        if self.elements.is_empty() && !self.allow_overlap {
+        let maximum = self.picture_fit() == PictureFit::Maximum;
+        if self.elements.is_empty() && !self.allow_overlap && !maximum {
             if let Some(candidate) = Layout::controller_band(w, h, analog, self.psp, picture) {
                 layout = candidate;
             }
         }
-        if analog && self.elements.is_empty() && !self.allow_overlap {
+        if analog && self.elements.is_empty() && !self.allow_overlap && !maximum {
             if let Some(candidate) = Layout::analog_camera_rails(w, h, picture, cutouts, self.psp) {
                 layout.avoid_cutouts(w, h, cutouts);
                 layout.place_game_in_aspect(picture, false, 1., [0.5; 2], aspect);
@@ -1197,6 +1235,18 @@ impl Preset {
                 {
                     layout = candidate;
                 }
+            }
+        }
+        if maximum && self.elements.is_empty() && !self.allow_overlap {
+            let fitted = clear_picture_aspect(picture.w, picture.h, &[], aspect);
+            let game = Rect::new(
+                picture.x + fitted.x,
+                picture.y + fitted.y,
+                fitted.w,
+                fitted.h,
+            );
+            if let Some(candidate) = picture::controls(w, h, game, analog, self.psp, cutouts) {
+                layout = candidate;
             }
         }
         for (i, r) in self
@@ -1223,7 +1273,7 @@ impl Preset {
         layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., cutouts);
         layout.place_game_in_aspect(
             picture,
-            self.allow_overlap,
+            self.allow_overlap || maximum,
             self.game_scale,
             self.game_offset,
             aspect,
@@ -1231,6 +1281,7 @@ impl Preset {
         if analog
             && self.elements.is_empty()
             && !self.allow_overlap
+            && !maximum
             && self.game_scale == 1.
             && self.game_offset == [0.5; 2]
             && cutouts.is_empty()
@@ -1274,8 +1325,11 @@ mod psp_tests {
             assert!(!layout.controls.iter().any(|c| c.mask & 0xf000 != 0));
             assert!((layout.game.w / layout.game.h - 480. / 272.).abs() < 0.001);
             assert!(layout.game.w > 0. && layout.game.h > 0.);
+            assert!((layout.game.w - w).abs() < 0.01 || (layout.game.h - h).abs() < 0.01);
             for i in layout.controller_elements() {
-                assert!(!layout.element(i).overlaps(layout.game));
+                if !preset.needs_control_space(&layout) {
+                    assert!(!layout.element(i).overlaps(layout.game));
+                }
             }
             let editor = crate::ui::Editor::new(preset.clone(), w, h);
             assert!(editor.layout.game.same_bounds(layout.game));
@@ -1688,6 +1742,14 @@ impl Touches {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Retain the previous solver's regressions for the explicit keep-clear
+    // alternative. Picture-first defaults have their own complete viewport table.
+    fn keep_clear_preset() -> Preset {
+        Preset {
+            picture_fit: Some(PictureFit::KeepClear),
+            ..Preset::default()
+        }
+    }
     #[test]
     fn stick_click_has_no_first_touch_delay_and_stays_held_during_movement() {
         let layout = Preset {
@@ -1774,14 +1836,14 @@ mod tests {
         assert_eq!(t.frame_mask(), 0);
     }
     #[test]
-    fn inner_thumb_pairs_are_adjacent_and_auxiliary_keys_leave_the_gap_clear() {
+    fn keep_clear_inner_thumb_pairs_are_adjacent_and_auxiliary_keys_leave_the_gap_clear() {
         let density = 2.4375;
         let (w, h, top) = (2076. / density, 1914. / density, 160. / density);
         for camera_x in [0., 1940. / density] {
             let camera = Rect::new(camera_x, -top, 136. / density, top);
             let preset = Preset {
                 analog: true,
-                ..Preset::default()
+                ..keep_clear_preset()
             };
             let layout = PlayerViewport {
                 controls: [w, h],
@@ -1851,7 +1913,7 @@ mod tests {
     }
 
     #[test]
-    fn one_player_viewport_presents_both_controller_capabilities_consistently() {
+    fn keep_clear_one_player_viewport_presents_both_controller_capabilities_consistently() {
         let density = 2.4375;
         for (width, height, top, bottom) in [
             (2076., 2152., 160., 78.),
@@ -1871,11 +1933,11 @@ mod tests {
                 reusable_top: top / density,
                 covered_top: 0.,
             };
-            let ps1 = viewport.layout(&Preset::default(), &[camera]);
+            let ps1 = viewport.layout(&keep_clear_preset(), &[camera]);
             let ps2 = viewport.layout(
                 &Preset {
                     analog: true,
-                    ..Preset::default()
+                    ..keep_clear_preset()
                 },
                 &[camera],
             );
@@ -1958,7 +2020,7 @@ mod tests {
         }
     }
     #[test]
-    fn full_display_bars_and_saved_controls_keep_the_same_picture_and_identity() {
+    fn keep_clear_full_display_bars_and_saved_controls_keep_the_same_picture_and_identity() {
         let density = 2.4375;
         for (width, height, top, bottom) in [
             (2076., 2152., 160., 78.),
@@ -1989,7 +2051,7 @@ mod tests {
                     };
                     let mut preset = Preset {
                         analog,
-                        ..Preset::default()
+                        ..keep_clear_preset()
                     };
                     let normal = viewport.layout(&preset, &[camera]);
                     preset.capture(&normal, w, h);
@@ -2060,7 +2122,8 @@ mod tests {
         }
     }
     #[test]
-    fn ps2_defaults_mirror_reachable_controls_and_clear_primary_sticks_across_fold_displays() {
+    fn keep_clear_ps2_defaults_mirror_reachable_controls_and_clear_primary_sticks_across_fold_displays(
+    ) {
         for (w, h) in [
             (360., 800.),
             (443., 961.),
@@ -2071,7 +2134,7 @@ mod tests {
         ] {
             let layout = Preset {
                 analog: true,
-                ..Preset::default()
+                ..keep_clear_preset()
             }
             .layout(w, h);
             for i in 0..layout.element_count() {
@@ -2148,14 +2211,14 @@ mod tests {
         }
     }
     #[test]
-    fn ps2_measured_fold_landscape_camera_retains_full_height_and_symmetry() {
+    fn keep_clear_ps2_measured_fold_landscape_camera_retains_full_height_and_symmetry() {
         let density = 2.4375;
         let (w, h) = (2342. / density, 1021. / density);
         for camera_x in [0., 2160. / density] {
             let camera = Rect::new(camera_x, 484. / density, 182. / density, 112. / density);
             let preset = Preset {
                 analog: true,
-                ..Preset::default()
+                ..keep_clear_preset()
             };
             let mut layout = preset.layout_with_cutouts(w, h, &[camera]);
             assert!(
@@ -2413,7 +2476,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_navigation_does_not_shorten_the_game_or_move_saved_controls() {
+    fn keep_clear_hidden_navigation_does_not_shorten_the_game_or_move_saved_controls() {
         let density = 2.4375;
         let (w, h) = (2342. / density, 1021. / density);
         let picture = Rect::new(0., 0., w, 1080. / density);
@@ -2422,7 +2485,7 @@ mod tests {
                 let camera = Rect::new(x, 484. / density, 182. / density, 112. / density);
                 let mut preset = Preset {
                     analog,
-                    ..Preset::default()
+                    ..keep_clear_preset()
                 };
                 let mut layout = preset.layout_in(w, h, &[camera], picture);
                 assert!(
@@ -2507,7 +2570,8 @@ mod tests {
         }
     }
     #[test]
-    fn larger_default_thumb_controls_keep_clear_spacing_and_full_fold_landscape_height() {
+    fn keep_clear_larger_default_thumb_controls_keep_clear_spacing_and_full_fold_landscape_height()
+    {
         for (w, h, camera, min_pad, min_face) in [
             (443., 861., None, 200., 80.),
             (852., 817., None, 128., 48.),
@@ -2525,7 +2589,7 @@ mod tests {
             ),
         ] {
             let cutouts: Vec<_> = camera.into_iter().collect();
-            let layout = Preset::default().layout_with_cutouts(w, h, &cutouts);
+            let layout = keep_clear_preset().layout_with_cutouts(w, h, &cutouts);
             assert!(layout.dpad.w.min(layout.dpad.h) >= min_pad);
             let faces: Vec<_> = layout
                 .action_elements()
@@ -2639,7 +2703,7 @@ mod tests {
     }
 
     #[test]
-    fn short_landscape_auxiliary_keys_leave_a_full_height_picture() {
+    fn keep_clear_short_landscape_auxiliary_keys_leave_a_full_height_picture() {
         let density = 2.75;
         let (w, h) = (2280. / density, 1014. / density);
         let picture = Rect::new(0., 0., w, 1080. / density);
@@ -2655,7 +2719,7 @@ mod tests {
         .layout(
             &Preset {
                 analog: true,
-                ..Preset::default()
+                ..keep_clear_preset()
             },
             &[],
         );
@@ -2720,7 +2784,7 @@ mod tests {
     }
 
     #[test]
-    fn landscape_reflow_preserves_manual_controls_and_picture_preferences() {
+    fn keep_clear_landscape_reflow_preserves_manual_controls_and_picture_preferences() {
         let (w, h) = (2280. / 2.75, 1014. / 2.75);
         let picture = Rect::new(0., 0., w, 1080. / 2.75);
         for scale in [0.5, 0.75, 1.] {
@@ -2731,7 +2795,7 @@ mod tests {
                 analog: true,
                 game_scale: scale,
                 game_offset: offset,
-                ..Preset::default()
+                ..keep_clear_preset()
             };
             let actual = preset.layout_in(w, h, &[], picture);
             assert!(actual.game.same_bounds(expected.game));
@@ -2743,7 +2807,7 @@ mod tests {
         original.dpad.x += 3.;
         let mut preset = Preset {
             analog: true,
-            ..Preset::default()
+            ..keep_clear_preset()
         };
         preset.capture(&original, w, h);
         let actual = preset.layout_in(w, h, &[], picture);
@@ -2852,13 +2916,13 @@ mod tests {
     }
 
     #[test]
-    fn primary_controls_keep_their_size_while_picture_reuses_only_clear_top_pixels() {
+    fn keep_clear_primary_controls_keep_their_size_while_picture_reuses_only_clear_top_pixels() {
         for analog in [false, true] {
             for (w, h) in [(852., 817.), (817., 852.)] {
                 let camera = Rect::new(w - 54., -62., 40., 40.);
                 let preset = Preset {
                     analog,
-                    ..Preset::default()
+                    ..keep_clear_preset()
                 };
                 let saved = serde_json::to_vec(&preset).unwrap();
                 let mut layout = preset.layout_with_cutouts(w, h, &[camera]);
@@ -3173,8 +3237,8 @@ mod tests {
     }
 
     #[test]
-    fn custom_layout_reflows_picture_and_overlap_is_explicit() {
-        let mut preset = Preset::default();
+    fn keep_clear_custom_layout_reflows_picture_and_overlap_is_explicit() {
+        let mut preset = keep_clear_preset();
         let mut layout = preset.layout(852., 883.);
         layout.dpad = Rect::new(200., 120., 240., 240.);
         preset.capture(&layout, 852., 883.);

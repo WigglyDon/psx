@@ -13,9 +13,21 @@ that restored session through the opening battle into the next story scene.
 Candidate `ac74cc0` completed PSP → PS1 → PS2 → PSP through the shared launch
 operation. The matching PS2 saved scene resumed and accepted stick movement;
 PSP returned to its paused story. Repeated delivery retained the same PSP
-session. Ordinary Memory Stick save/cold load remains open. The owner-requested
-lab release preserved newer progress and independently verified exact rollback
-and return; no complete PSP acceptance is claimed.
+session. The same candidate subsequently saved through Final Fantasy II's own
+Memory Stick menu. Explicit disc restart, process replacement at the title and
+native Load Game recovered that ordinary slot and accepted D-pad walking.
+Separately, a fresh process restored the same upright paused story with identical
+committed machine/picture fingerprints; unpausing continued execution. Return
+verification preserved normal data and the exact original installation.
+
+These are selected-title observations. Stick input did not move this title's
+character; analog gameplay and simultaneous physical touch are not qualified
+by that attempt. Broader compatibility, lifecycle and release checks remain
+separate. The subsequent shared full-display composition fits the complete
+native-aspect picture before placing controls in the spare space. Insufficient
+space requires an explicit alternative; it never silently crops, stretches or
+reduces the picture. Its new hardware qualification remains separate from the
+frozen tested candidate above.
 The issue retains exact build bindings, failed trials and verified return observations.
 
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
@@ -67,9 +79,10 @@ PSP uses its complete 480×272 picture and one stick, D-pad, shapes, L/R and
 Start/Select. Play and live editing use the same geometry. Unsupported second
 shoulders/stick clicks are absent; saved PS1/PS2 profiles retain their capabilities.
 Phone bindings and per-game overrides use the existing shared policy.
-PSP uses the shared analog placement, camera rails, bottom-band budgeting and
-landscape packing, retaining only its supported inputs. Its native picture aspect
-participates in those same space calculations. Existing custom element identities
+PSP uses the shared picture-first placement, retaining only its supported inputs.
+Its native aspect determines the maximum rectangle before controller packing.
+The explicit keep-clear alternative retains the earlier shared analog placement,
+camera rails and bottom-band budgeting. Existing custom element identities
 and rectangles remain authoritative; changing defaults does not reset them.
 Games do not select separate built-in presentation systems. Only an explicitly
 enabled per-game controller profile overrides the shared defaults; each console's

@@ -16,7 +16,9 @@ use psx_player::{
     controller_profiles::Settings as ControllerProfiles,
     engine::Core,
     files::{Game, System},
-    input::{safe_content, ControllerSettings, Layout, PlayerViewport, Preset, Rect, Touches},
+    input::{
+        safe_content, ControllerSettings, Layout, PictureFit, PlayerViewport, Preset, Rect, Touches,
+    },
     library::{self, Library},
     phone_buttons::{Bindings, Button, PhoneInput, PhoneKey},
     resume,
@@ -70,6 +72,8 @@ enum Action {
     SetTimescale(u8),
     TogglePause,
     ToggleOverlap,
+    TogglePictureFit,
+    ChooseControlSpace(bool),
     ToggleFollowThumb,
     ToggleStickClick,
     EditControls,
@@ -102,6 +106,7 @@ enum Screen {
     About,
     License(&'static str),
     Controllers,
+    ControlSpace,
     PhoneButtons,
     PhoneBinding(PhoneKey),
     Sound,
@@ -845,6 +850,19 @@ impl Player {
         if matches!(self.screen, Screen::License(_)) {
             self.refresh_menu(app);
         }
+        if self.core.is_some() && self.editor.is_none() && w >= 200. && h >= 200. {
+            if preset.needs_control_space(&self.layout) && self.menu.is_none() {
+                self.screen = Screen::ControlSpace;
+                self.touches.cancel();
+                self.phone_input.cancel();
+                self.refresh_menu(app);
+            } else if !preset.needs_control_space(&self.layout)
+                && self.screen == Screen::ControlSpace
+            {
+                self.screen = Screen::Settings;
+                self.closing_menu = self.menu.take();
+            }
+        }
         let content = self.graphics.content;
         if !previous_game.same_bounds(self.layout.game)
             || previous
@@ -1476,6 +1494,15 @@ impl Player {
                 self.refresh_menu(app);
             }
             Action::Resume => {
+                let (w, h) = self.dimensions();
+                if self
+                    .controller_settings
+                    .preset(w, h)
+                    .needs_control_space(&self.layout)
+                {
+                    self.navigate(app, Screen::ControlSpace);
+                    return Ok(());
+                }
                 self.closing_menu = self.menu.take();
                 self.platform.focus(app, true);
                 self.dirty = true;
@@ -1634,9 +1661,32 @@ impl Player {
                 let (w, h) = self.dimensions();
                 let mut preset = self.controller_settings.preset(w, h);
                 preset.allow_overlap = !preset.allow_overlap;
+                if preset.allow_overlap {
+                    preset.picture_fit = Some(PictureFit::Maximum);
+                }
                 self.save_control_preset(w, h, preset)?;
                 self.resize(app)?;
                 self.refresh_menu(app);
+            }
+            Action::TogglePictureFit => {
+                let (w, h) = self.dimensions();
+                let mut preset = self.controller_settings.preset(w, h);
+                if preset.picture_fit() == PictureFit::Maximum {
+                    preset.choose_control_space(false);
+                } else {
+                    preset.picture_fit = Some(PictureFit::Maximum);
+                }
+                self.save_control_preset(w, h, preset)?;
+                self.resize(app)?;
+                self.refresh_menu(app);
+            }
+            Action::ChooseControlSpace(overlap) => {
+                let (w, h) = self.dimensions();
+                let mut preset = self.controller_settings.preset(w, h);
+                preset.choose_control_space(overlap);
+                self.save_control_preset(w, h, preset)?;
+                self.resize(app)?;
+                self.action(app, Action::Resume)?;
             }
             Action::ResetControls => {
                 let (w, h) = self.dimensions();
@@ -1702,6 +1752,7 @@ impl Player {
                 Screen::License(_) => self.navigate(app, Screen::About),
                 Screen::Editing => return self.action(app, Action::CancelEdit),
                 Screen::Controllers => self.navigate(app, Screen::Settings),
+                Screen::ControlSpace => self.navigate(app, Screen::Controllers),
                 Screen::PhoneButtons => self.navigate(app, Screen::Controllers),
                 Screen::PhoneBinding(_) => self.navigate(app, Screen::PhoneButtons),
                 Screen::Sound | Screen::Timescale => return self.action(app, Action::Resume),
@@ -2119,6 +2170,21 @@ impl Player {
                     )
                 }
             }
+            Screen::ControlSpace => {
+                add(
+                    Action::ChooseControlSpace(true),
+                    "Keep the maximum picture".into(),
+                    "Allow controls over the game on this display".into(),
+                );
+                add(
+                    Action::ChooseControlSpace(false),
+                    "Make room for controls".into(),
+                    "Use a smaller picture, with the full image and no stretching".into(),
+                );
+                ("Controls need space".into(),
+                    "The maximum picture leaves too little room for usable touch controls here. Choose a layout, or edit the controls. Your game and saves are kept.".into(),
+                    "Edit controls".into(), Action::Controllers)
+            }
             Screen::Controllers | Screen::Editing => {
                 let (w, h) = self.dimensions();
                 let preset = self.controller_settings.preset(w, h);
@@ -2148,6 +2214,16 @@ impl Player {
                     } else {
                         "Fixed center; keeps tracking until you lift".into()
                     },
+                );
+                add(
+                    Action::TogglePictureFit,
+                    "Maximum picture".into(),
+                    if preset.picture_fit() == PictureFit::Maximum {
+                        "Full display, original aspect · controls use the space left around it"
+                    } else {
+                        "Fit the complete picture around your controls"
+                    }
+                    .into(),
                 );
                 add(
                     Action::ToggleOverlap,
@@ -2415,6 +2491,7 @@ impl Player {
                     Action::ToggleGameController => Some(self.custom_controller()),
                     Action::ToggleFollowThumb => Some(preset.follow_thumb),
                     Action::ToggleOverlap => Some(preset.allow_overlap),
+                    Action::TogglePictureFit => Some(preset.picture_fit() == PictureFit::Maximum),
                     Action::ToggleStickClick => Some(preset.stick_click_gesture),
                     _ => None,
                 };
@@ -2669,7 +2746,9 @@ impl Player {
         let checkpoint = resume::load(&self.root, &game, &identity).map_err(|e| e.to_string())?;
         if let Some(checkpoint) = checkpoint {
             let core = self.core.as_mut().unwrap();
-            let native = checkpoint.native_bytes_for(&game).map_err(|e| e.to_string())?;
+            let native = checkpoint
+                .native_bytes_for(&game)
+                .map_err(|e| e.to_string())?;
             core.restore_checkpoint(&native)?;
             // The durable card is authoritative even if the donor embeds one.
             if let Some(card) = &self.card {

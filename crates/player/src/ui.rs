@@ -1305,6 +1305,12 @@ impl Editor {
 #[cfg(test)]
 mod editor_tests {
     use super::*;
+    fn keep_clear_preset() -> Preset {
+        Preset {
+            picture_fit: Some(crate::input::PictureFit::KeepClear),
+            ..Preset::default()
+        }
+    }
 
     #[test]
     fn shoulder_pairs_move_resize_mirror_reset_and_undo_independently() {
@@ -1405,9 +1411,9 @@ mod editor_tests {
     }
 
     #[test]
-    fn action_group_drags_keep_custom_spacing_and_survive_preset_round_trip() {
+    fn keep_clear_action_group_drags_keep_custom_spacing_and_survive_preset_round_trip() {
         let (w, h) = (852., 817.);
-        let mut preset = Preset::default();
+        let mut preset = keep_clear_preset();
         let mut layout = preset.layout(w, h);
         let mut square = layout.element(4);
         square.x -= 13.;
@@ -1685,8 +1691,8 @@ mod editor_tests {
     }
 
     #[test]
-    fn resizing_picture_keeps_aspect_and_cancel_releases_the_gesture() {
-        let mut editor = Editor::new(Preset::default(), 852., 817.);
+    fn keep_clear_resizing_picture_keeps_aspect_and_cancel_releases_the_gesture() {
+        let mut editor = Editor::new(keep_clear_preset(), 852., 817.);
         editor.selected = editor.layout.element_count();
         press(&mut editor, EditorButton::Resize);
         let original = editor.layout.game;

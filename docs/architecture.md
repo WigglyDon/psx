@@ -342,12 +342,22 @@ game cards with local artwork, two-line titles, console/disc details and a
 separate 48-point options target. Embedded sheets may use up to 720 points of
 width and 86% of available height to keep more content visible. Rendering, tap/scroll geometry and responsive
 column counts share one Rust model. Its Add and Settings icons live in the app bar; primary actions stay distinct
-from back navigation. Controls occupy separate space by default;
-the largest clear 4:3 picture is computed from their rectangular targets.
-Center the picture horizontally, maximize its clear 4:3 size and keep its
-highest feasible position, leaving room below or beside it for controls.
-There is no vertical-centering step. If custom controls block the entire
-center column, retain a usable clear side region instead of an empty picture.
+from back navigation. The default first fits the complete native-aspect picture
+to the full drawable, centered horizontally at the top. PS1/PS2 use their retained
+4:3 presentation and PSP uses all 480×272 pixels. Controls and transient chrome
+cannot reduce that rectangle. Place console-capable controls in the actual spare
+bottom/side space, retaining separate face caps of at least 44 points. If that
+space cannot hold usable controls, ask explicitly between overlaying controls
+and making room with a smaller, complete picture. Editing remains available.
+The choice is saved through the existing display/per-game profile policy.
+
+The explicit keep-clear alternative retains the preceding solver: compute the
+largest high, centered picture around rectangular input targets; if a custom
+layout blocks the whole center column, retain a clear side region. Legacy manual
+picture size/offset settings retain this policy until changed. Otherwise the new
+picture policy also applies to existing custom controls without resetting their
+positions; a conflict requires the same explicit choice. Defaults need no per-game opt-in.
+The earlier keep-clear placement and its regression fixtures remain available:
 Generated controllers share the actual player canvas and input-capability
 metrics. On inner displays, adjacent thumb wells use available headroom after
 the maximum 4:3 picture; circular action caps retain clear separation and at
@@ -751,8 +761,9 @@ timer delays ordinary analog input. Older presets default to the gesture.
 The PS2 GS fills its intermediate 640×448 buffer. The Rust host alone applies
 the final 4:3 fit; fitting at both stages adds redundant side bars. This does
 not crop guest pixels or stretch the final picture. Game-drawn borders remain.
-Large separate controls and a camera can still prevent an edge-to-edge rectangle;
-the clear-picture solver keeps the largest high, centered picture around them.
+In the explicit keep-clear alternative, large separate controls and a camera can
+prevent an edge-to-edge rectangle. The default full-display fit is independent
+of those controls; unavoidable bars reflect the display and native aspect ratios.
 
 The retained GL header repair matches the donor's existing backend policy:
 non-Mali EXT syntax enables EXT even when ARM is also advertised. Previously

@@ -99,6 +99,13 @@ feasibility check is in scope; a complete iOS port is a later milestone.
 Document supported formats and failures honestly. Keep navigation, file
 errors, touch targets and interruption behavior usable from the first build.
 
+The owner's current shared layout default is picture-first for every console:
+fit the entire native-aspect image in the full drawable, then place controls in
+the spare side/bottom space. Do not stretch/crop or reserve control rails that
+silently shrink the picture. If usable controls cannot fit, offer explicit
+overlap or a smaller keep-clear picture. Preserve manual profiles and intentional
+picture size/offset choices; defaults need no per-game opt-in.
+
 ## Public source
 
 This repository is intended to be public and free software. Original work
