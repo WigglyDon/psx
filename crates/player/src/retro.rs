@@ -150,6 +150,21 @@ pub struct Callbacks {
     psp: bool,
 }
 
+fn psp_options(jit: bool) -> BTreeMap<Vec<u8>, CString> {
+    [
+        ("ppsspp_backend", "opengl"),
+        ("ppsspp_internal_resolution", "480x272"),
+        ("ppsspp_cropto16x9", "disabled"),
+        ("ppsspp_cpu_core", if jit { "JIT" } else { "IR JIT" }),
+        ("ppsspp_frameskip", "disabled"),
+        ("ppsspp_auto_frameskip", "disabled"),
+        ("ppsspp_enable_wlan", "disabled"),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.as_bytes().to_vec(), CString::new(value).unwrap()))
+    .collect()
+}
+
 thread_local! { static ACTIVE:Cell<*mut Callbacks> = const {Cell::new(std::ptr::null_mut())}; }
 
 unsafe fn with_callbacks<T>(fallback: T, f: impl FnOnce(&mut Callbacks) -> T) -> T {
@@ -478,17 +493,7 @@ impl Core {
         }
         let mut psp_log = None;
         if psp {
-            options.clear();
-            for (key, value) in [
-                ("ppsspp_backend", "opengl"),
-                ("ppsspp_internal_resolution", "480x272"),
-                ("ppsspp_cpu_core", if jit { "JIT" } else { "IR JIT" }),
-                ("ppsspp_frameskip", "0"),
-                ("ppsspp_auto_frameskip", "disabled"),
-                ("ppsspp_enable_wlan", "disabled"),
-            ] {
-                options.insert(key.as_bytes().to_vec(), CString::new(value).unwrap());
-            }
+            options = psp_options(jit);
             psp_log = Some(
                 *library
                     .get::<LogFunction>(b"psx_psp_log\0")
@@ -813,7 +818,7 @@ mod tests {
             initial_disk: None,
             system: CString::new("system").unwrap(),
             save: CString::new("save").unwrap(),
-            options: BTreeMap::new(),
+            options: psp_options(false),
             hw: None,
             proc_address: Some(lookup),
             framebuffer: 23,
@@ -839,6 +844,32 @@ mod tests {
             }
         }
         let _restore = RestoreActive(ACTIVE.with(|a| a.replace(&mut state)));
+        // Upstream advertises crop enabled by default. Its legacy declaration
+        // must not replace the player's complete-picture policy.
+        let legacy = [
+            Variable {
+                key: c"ppsspp_cropto16x9".as_ptr(),
+                value: c"Crop to 16x9; enabled|disabled".as_ptr(),
+            },
+            Variable {
+                key: std::ptr::null(),
+                value: std::ptr::null(),
+            },
+        ];
+        assert!(unsafe { environment(16, legacy.as_ptr().cast_mut().cast()) });
+        for (key, expected) in [
+            (c"ppsspp_cropto16x9", c"disabled"),
+            (c"ppsspp_internal_resolution", c"480x272"),
+            (c"ppsspp_frameskip", c"disabled"),
+            (c"ppsspp_cpu_core", c"IR JIT"),
+        ] {
+            let mut var = Variable {
+                key: key.as_ptr(),
+                value: std::ptr::null(),
+            };
+            assert!(unsafe { environment(15, (&mut var as *mut Variable).cast()) });
+            assert_eq!(unsafe { CStr::from_ptr(var.value) }, expected);
+        }
         let request = |context_type, major, minor| HwRender {
             context_type,
             major,

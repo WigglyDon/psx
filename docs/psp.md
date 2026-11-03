@@ -65,6 +65,8 @@ aspect ratio. Paused GL readback is normalized to the shared top-row-first CPU
 picture format before publication; an already retained/restored CPU picture is
 reused without another origin conversion. Live, paused and cold-restored output
 therefore use the same presentation contract.
+Rust explicitly disables the donor's default two-line 16:9 crop, so actual
+output and checkpoint pictures retain all 480×272 pixels expected by that layout.
 
 ISO detection reads UMD/game metadata. PBP detection preserves PS1 EBOOT priority
 even when it contains a PSP bootstrap. Structurally valid unresolved CHD/CSO
