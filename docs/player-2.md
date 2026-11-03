@@ -162,7 +162,12 @@ Default controls remain separate from the picture; overlap is explicit.
 
 Pause/time stay upper-left and sound/settings upper-right in every orientation.
 The normal toolbar is an 18-point strip without an extra gap below it, with
-40-point-wide ordinary targets. Non-normal time uses a horizontal readable
+40-point-wide ordinary targets. Following the owner's later PSP/Fold review,
+the shared maximum-picture policy places the complete native-aspect image
+immediately below this stable strip. It retains full width wherever that aspect
+fits, rather than stretching the image to fill the nearly square inner display.
+Roomy default controller bands prefer level primary thumb areas and adjacent
+secondary inputs; saved custom controls are not reset. Non-normal time uses a horizontal readable
 caption beside its hourglass. Visible OS status pushes toolbar controls down
 over the stable picture; it does not resize the game or controller geometry.
 Hiding decoration restores the normal strip. Physical blit endpoints round

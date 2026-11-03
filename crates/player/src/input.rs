@@ -59,13 +59,6 @@ impl PlayerViewport {
         let [w, h] = self.controls;
         let mut layout = preset.layout_in(w, h, cutouts, self.picture);
         layout.anchor_toolbar(w, h, self.reusable_top, 0., cutouts);
-        layout.place_game_in_aspect(
-            self.picture,
-            preset.allow_overlap || preset.picture_fit() == PictureFit::Maximum,
-            preset.game_scale,
-            preset.game_offset,
-            if preset.psp { 480. / 272. } else { 4. / 3. },
-        );
         if self.covered_top > 0. {
             // Transient OS decoration moves chrome over the stable picture,
             // just as the OS bar itself does. Never resize the game for it.
@@ -1220,6 +1213,25 @@ impl Preset {
         let analog = self.analog || self.psp;
         let aspect = if self.psp { 480. / 272. } else { 4. / 3. };
         let maximum = self.picture_fit() == PictureFit::Maximum;
+        let reusable_top = (-picture.y).max(0.);
+        let picture = if maximum {
+            // One stable compact row above the whole native-aspect image.
+            // This belongs in the shared solver, including editor resets.
+            layout.anchor_toolbar(w, h, reusable_top, 0., cutouts);
+            let bottom = [layout.playback, layout.speed, layout.mute, layout.pause]
+                .iter()
+                .map(|r| r.y + r.h)
+                .fold(picture.y, f32::max)
+                .min(picture.y + (picture.h - 1.).max(0.));
+            Rect::new(
+                picture.x,
+                bottom,
+                picture.w,
+                (picture.y + picture.h - bottom).max(1.),
+            )
+        } else {
+            picture
+        };
         if self.elements.is_empty() && !self.allow_overlap && !maximum {
             if let Some(candidate) = Layout::controller_band(w, h, analog, self.psp, picture) {
                 layout = candidate;
@@ -1270,7 +1282,7 @@ impl Preset {
             }
         }
         layout.avoid_cutouts(w, h, cutouts);
-        layout.anchor_toolbar(w, h, (-picture.y).max(0.), 0., cutouts);
+        layout.anchor_toolbar(w, h, reusable_top, 0., cutouts);
         layout.place_game_in_aspect(
             picture,
             self.allow_overlap || maximum,
@@ -1325,7 +1337,10 @@ mod psp_tests {
             assert!(!layout.controls.iter().any(|c| c.mask & 0xf000 != 0));
             assert!((layout.game.w / layout.game.h - 480. / 272.).abs() < 0.001);
             assert!(layout.game.w > 0. && layout.game.h > 0.);
-            assert!((layout.game.w - w).abs() < 0.01 || (layout.game.h - h).abs() < 0.01);
+            assert!(
+                (layout.game.w - w).abs() < 0.01
+                    || (layout.game.h - (h - TOOLBAR_HEIGHT)).abs() < 0.01
+            );
             for i in layout.controller_elements() {
                 if !preset.needs_control_space(&layout) {
                     assert!(!layout.element(i).overlaps(layout.game));
@@ -2443,7 +2458,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn fullscreen_keeps_recorded_fold_landscape_height_while_bars_are_revealed() {
+    fn fullscreen_uses_recorded_landscape_below_only_the_compact_toolbar() {
         let size = [2342, 1080];
         let navigation = [0, 0, 0, 59];
         let camera = [0, 0, 182, 0];
@@ -2467,7 +2482,8 @@ mod tests {
             content.h / density,
             &[hole],
         );
-        assert!((layout.game.h * density - 1021.).abs() < 0.01);
+        assert!((layout.game.h * density - (1021. - TOOLBAR_HEIGHT * density)).abs() < 0.01);
+        assert!((layout.game.y - TOOLBAR_HEIGHT).abs() < 0.01);
         assert!(!layout.game.overlaps(hole));
         assert_eq!(
             safe_edges([0, 40, 0, 0], [0, 0, 0, 78], [0, 136, 0, 0], false),

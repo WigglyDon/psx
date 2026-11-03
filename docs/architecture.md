@@ -343,13 +343,19 @@ separate 48-point options target. Embedded sheets may use up to 720 points of
 width and 86% of available height to keep more content visible. Rendering, tap/scroll geometry and responsive
 column counts share one Rust model. Its Add and Settings icons live in the app bar; primary actions stay distinct
 from back navigation. The default first fits the complete native-aspect picture
-to the full drawable, centered horizontally at the top. PS1/PS2 use their retained
-4:3 presentation and PSP uses all 480×272 pixels. Controls and transient chrome
-cannot reduce that rectangle. Place console-capable controls in the actual spare
+to the drawable below its compact 18-point application toolbar, centered
+horizontally with no extra gap. PS1/PS2 use their retained 4:3 presentation and
+PSP uses all 480×272 pixels. Controller placement and transient OS chrome cannot
+reduce that rectangle. Place console-capable controls in the actual spare
 bottom/side space, retaining separate face caps of at least 44 points. If that
 space cannot hold usable controls, ask explicitly between overlaying controls
 and making room with a smaller, complete picture. Editing remains available.
 The choice is saved through the existing display/per-game profile policy.
+Roomy bottom space prefers level primary thumb areas with secondary controls
+beside them, shoulders above and system keys in the clear center. Narrow
+surfaces retain vertical packing. The PSP stick and action cluster therefore
+use the lower space together instead of leaving one thumb far above the other.
+Saved custom input positions remain authoritative.
 
 The explicit keep-clear alternative retains the preceding solver: compute the
 largest high, centered picture around rectangular input targets; if a custom

@@ -208,6 +208,9 @@ pub(super) fn controls(
     let right_x = (game.x + game.w).clamp(0., w);
     let right = Rect::new(right_x, 0., w - right_x, h);
     let candidates = [
+        // A roomy inner display can keep the main thumb areas level, with
+        // secondary inputs beside them. Use a stack only on narrow surfaces.
+        horizontal(w, h, band, analog, psp),
         vertical(
             w,
             h,
@@ -216,7 +219,6 @@ pub(super) fn controls(
             analog,
             psp,
         ),
-        horizontal(w, h, band, analog, psp),
         vertical(w, h, left, right, analog, psp),
     ];
     candidates
@@ -231,7 +233,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_drawable_is_independent_of_console_controls_camera_and_transient_chrome() {
+    fn entire_picture_below_compact_toolbar_is_independent_of_inputs_and_transient_chrome() {
         for (w, h, top, bottom) in [
             (393., 829., 0., 24.),
             (829., 393., 0., 24.),
@@ -253,8 +255,13 @@ mod tests {
                 };
                 let layout = viewport.layout(&preset, &[hole]);
                 let aspect = if psp { 480. / 272. } else { 4. / 3. };
-                let width = w.min((h + top) * aspect);
-                let expected = Rect::new((w - width) / 2., -top, width, width / aspect);
+                let width = w.min((h + top - super::super::TOOLBAR_HEIGHT) * aspect);
+                let expected = Rect::new(
+                    (w - width) / 2.,
+                    -top + super::super::TOOLBAR_HEIGHT,
+                    width,
+                    width / aspect,
+                );
                 assert!(layout.game.same_bounds(expected));
                 assert!(PlayerViewport {
                     covered_top: 22.,
@@ -403,5 +410,26 @@ mod tests {
             .iter()
             .filter(|c| c.is_face())
             .all(|c| c.bounds.w >= KEY));
+    }
+
+    #[test]
+    fn roomy_psp_layout_levels_primary_thumbs_and_keeps_system_keys_in_the_center() {
+        // Observed unfolded surface, in logical points, with the shared row.
+        let w = 2076. / 2.4375;
+        let h = 1914. / 2.4375;
+        let game = Rect::new(0., -160. / 2.4375 + 18., w, w * 272. / 480.);
+        let layout = controls(w, h, game, true, true, &[]).unwrap();
+        assert!(fits(&layout, w, h, game, &[]));
+        let stick = layout.sticks[0];
+        let face = layout.action_bounds();
+        assert!((stick.y + stick.h / 2. - face.y - face.h / 2.).abs() < 0.01);
+        assert!(stick.w >= 160.);
+        assert!(layout.dpad.x >= stick.x + stick.w + GAP - 0.01);
+        for c in &layout.controls {
+            if matches!(c.label, "SELECT" | "START") {
+                assert!(c.bounds.x > layout.dpad.x + layout.dpad.w);
+                assert!(c.bounds.x + c.bounds.w < face.x);
+            }
+        }
     }
 }

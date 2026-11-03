@@ -40,6 +40,19 @@ These are the measured lab surfaces, not new Fold or all-device qualification.
 The original installation and normal data were restored and return verified twice.
 The issue retains exact build bindings, failed trials and verified return observations.
 
+The normal-use `d24342a` APK subsequently updated the owner-admitted Fold in
+place. Its actual preceding APK and normal progress were backed up and verified;
+normal data was byte-identical before first launch. The in-app scanner added
+Final Fantasy II, its startup/intro rendered, and a new process restored the same
+upright paused scene with an unchanged checkpoint fingerprint. PS1 title output
+and returning to that PSP scene ran through the shared launch operation. Existing
+controller profiles remained identical. An older PS2 checkpoint was correctly
+refused for a different native binding and preserved with its cards; it was not
+restarted or discarded. Final progress was backed up and psx stopped. USB loss
+prevented the lock/display check; the owner explicitly accepted release as-is.
+No new ordinary-save, listening, all-orientation or sustained-speed qualification
+is inferred. The subsequent toolbar/control refinement below is separate source.
+
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
 `vendor/ppsspp` submodule with its recursively pinned dependencies. Its native
 implementation, replacement assets and exact original licenses remain retained.
@@ -91,6 +104,12 @@ shoulders/stick clicks are absent; saved PS1/PS2 profiles retain their capabilit
 Phone bindings and per-game overrides use the existing shared policy.
 PSP uses the shared picture-first placement, retaining only its supported inputs.
 Its native aspect determines the maximum rectangle before controller packing.
+The shared compact toolbar now owns its 18-point row above that rectangle,
+without a spacer or any stretching/cropping. Roomy inner-screen defaults put
+the stick and action cluster at the same height and the D-pad beside the stick;
+narrow screens retain a stacked fallback. Existing custom controls are preserved.
+This refinement follows the owner's native-proportion choice after the normal
+update check; its new source qualification is separate from the tested APK above.
 The explicit keep-clear alternative retains the earlier shared analog placement,
 camera rails and bottom-band budgeting. Existing custom element identities
 and rectangles remain authoritative; changing defaults does not reset them.
