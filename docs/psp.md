@@ -28,6 +28,16 @@ native-aspect picture before placing controls in the spare space. Insufficient
 space requires an explicit alternative; it never silently crops, stretches or
 reduces the picture. Its new hardware qualification remains separate from the
 frozen tested candidate above.
+
+Layout candidate `3568c3c` subsequently restored that PSP progress, accepted
+D-pad walking and displayed 1080×612 at the top of a 1080×2280 portrait surface.
+On a 2280×1080 landscape surface it displayed 1905.9×1080, centered horizontally;
+the narrow remaining side space produced the explicit layout choice. Selecting
+overlay in isolated test progress retained the maximum picture and survived
+rotation and returning from PS2. PS2 used 1080×810 in portrait and 1440×1080 in
+both landscape directions, with separate controls and working stick movement.
+These are the measured lab surfaces, not new Fold or all-device qualification.
+The original installation and normal data were restored and return verified twice.
 The issue retains exact build bindings, failed trials and verified return observations.
 
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
