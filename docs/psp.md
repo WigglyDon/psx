@@ -67,6 +67,25 @@ layout/paused continuity observations, not new listening, gameplay input,
 ordinary-save, all-orientation or sustained-speed qualification. The issue owns
 the frozen APK/source/symbol bindings; later documentation does not rebind them.
 
+The separately bound `619bab2` acceptance-storage APK then completed a two-PSP
+lab check with Final Fantasy II and Pirates of the Caribbean: Dead Man's Chest.
+Pirates reached gameplay and accepted left/right stick movement and reversal,
+with movement stopped after release. Switching between the games restored each
+independent paused point; fresh committed reads matched its machine, saved-file,
+picture and pause metadata. Pirates also restored that point in a new Android
+process and accepted further stick movement after unpausing. This qualifies
+injected analog input in that title, not simultaneous physical touch.
+
+An unpaused Final Fantasy II background/foreground check retained a stable
+committed point during two background observations and returned in the same
+process with the original intent, without a cold restore. It does not measure
+exact guest-clock freezing or audible background behavior. Normal data/directory
+identity, the original installation, Home and task-owned settings were preserved;
+test progress was archived and read back, owned scratch/staging retired, and
+physical-off return verified twice without cleanup errors. This campaign adds no
+new ordinary-save, listening, launcher or sustained-speed result. A separately
+prepared owner hands-on check retains its own admission and result boundaries.
+
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
 `vendor/ppsspp` submodule with its recursively pinned dependencies. Its native
 implementation, replacement assets and exact original licenses remain retained.

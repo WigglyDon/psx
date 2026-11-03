@@ -9,6 +9,11 @@ file-block estimates can share extents or be compressed on Btrfs; do not add
 them together or call them physical reclaim. Record actual filesystem and
 allocation readings before and after cleanup.
 
+Class reports identify symbolic-link roots without traversing or counting them
+again. This includes a `target` alias whose real directory is already under
+`build`. Retention audits still require an ordinary directory and refuse linked
+roots; the report grants no permission to follow or remove them.
+
 ```sh
 cargo xtask storage
 cargo xtask storage check 3

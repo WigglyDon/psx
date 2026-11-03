@@ -580,6 +580,35 @@ fn retire_backup(root: &Path, path: &Path, dry: bool) -> Result<()> {
     Ok(())
 }
 
+fn report_root(root: &Path, name: &str) -> Result<Option<String>> {
+    let path = root.join(name);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.is_symlink() {
+        return Ok(Some(format!(
+            "{name}: symbolic link; not traversed or counted in this class"
+        )));
+    }
+    if !metadata.is_dir() {
+        return Ok(Some(format!("{name}: not a directory; not inventoried")));
+    }
+    let entries = tree(&path)?;
+    let mut seen = BTreeSet::new();
+    let bytes: u64 = entries
+        .values()
+        .filter(|v| seen.insert((v.device, v.inode)))
+        .map(|v| v.blocks * 512)
+        .sum();
+    Ok(Some(format!(
+        "{name}: {:.3} GiB allocated estimate, {} entries; Btrfs extents may be shared/compressed",
+        bytes as f64 / GIB as f64,
+        entries.len()
+    )))
+}
+
 pub fn run(root: &Path, args: &[String]) -> Result<()> {
     if args.len()
         > if args.first().map(String::as_str) == Some("check") {
@@ -647,16 +676,8 @@ pub fn run(root: &Path, args: &[String]) -> Result<()> {
         None => {
             println!("{}", serde_json::to_string_pretty(&space(root)?.value())?);
             for name in ["build", "target", ".local", "vendor", ".git"] {
-                let path = root.join(name);
-                if path.is_dir() {
-                    let entries = tree(&path)?;
-                    let mut seen = BTreeSet::new();
-                    let bytes: u64 = entries
-                        .values()
-                        .filter(|v| seen.insert((v.device, v.inode)))
-                        .map(|v| v.blocks * 512)
-                        .sum();
-                    println!("{name}: {:.3} GiB allocated estimate, {} entries; Btrfs extents may be shared/compressed",bytes as f64/GIB as f64,entries.len());
+                if let Some(report) = report_root(root, name)? {
+                    println!("{report}");
                 }
             }
             println!("storage audit verifies completed source staging; storage prune removes only verified copies. All archives, builds, private evidence and unfinished trees are retained.");
@@ -673,6 +694,40 @@ pub fn run(root: &Path, args: &[String]) -> Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::fs::{symlink, PermissionsExt};
+    #[test]
+    fn report_skips_linked_roots_without_relaxing_retention_inventory() {
+        let root = std::env::temp_dir().join(format!(
+            "psx-report-links-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("build")).unwrap();
+        fs::write(root.join("build/unique"), b"preserve").unwrap();
+        symlink("build", root.join("target")).unwrap();
+        symlink("missing", root.join("dangling")).unwrap();
+        for name in ["target", "dangling"] {
+            assert!(report_root(&root, name)
+                .unwrap()
+                .unwrap()
+                .contains("not traversed or counted"));
+            assert!(tree(&root.join(name)).is_err());
+        }
+        assert!(report_root(&root, "build")
+            .unwrap()
+            .unwrap()
+            .contains("allocated estimate"));
+        assert!(report_root(&root, "absent").unwrap().is_none());
+        assert_eq!(fs::read(root.join("build/unique")).unwrap(), b"preserve");
+        assert_eq!(
+            fs::read_link(root.join("target")).unwrap(),
+            Path::new("build")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
     struct Fixture {
         root: PathBuf,
         stage: PathBuf,
