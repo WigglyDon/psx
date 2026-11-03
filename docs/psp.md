@@ -10,7 +10,12 @@ the owner confirmed audible working sound. A fresh process acknowledged native
 restoration and showed the same upright paused battle picture/intent, with the
 committed machine/picture fingerprints unchanged. Candidate `6f048e3` continued
 that restored session through the opening battle into the next story scene.
-Ordinary Memory Stick save/cold load and cross-console continuity remain open.
+Candidate `ac74cc0` completed PSP → PS1 → PS2 → PSP through the shared launch
+operation. The matching PS2 saved scene resumed and accepted stick movement;
+PSP returned to its paused story. Repeated delivery retained the same PSP
+session. Ordinary Memory Stick save/cold load remains open. The owner-requested
+lab release preserved newer progress and independently verified exact rollback
+and return; no complete PSP acceptance is claimed.
 The issue retains exact build bindings, failed trials and verified return observations.
 
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
