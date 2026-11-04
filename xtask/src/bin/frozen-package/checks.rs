@@ -108,11 +108,22 @@ pub(super) fn permitted(
     Ok(())
 }
 pub(super) fn signer(output: &str, expected: &str) -> Result<()> {
+    let count: Vec<_> = output
+        .lines()
+        .filter_map(|l| l.strip_prefix("Number of signers: "))
+        .collect();
     let values: Vec<_> = output
         .lines()
-        .filter_map(|l| l.strip_prefix("Signer #1 certificate SHA-256 digest: "))
+        .filter_map(|l| {
+            l.strip_prefix("Signer #1 certificate SHA-256 digest: ")
+                .or_else(|| l.strip_prefix("V3.0 Signer: certificate SHA-256 digest: "))
+        })
         .collect();
-    if values.len() != 1 || values[0] != expected || output.contains("Signer #2 certificate") {
+    if count != ["1"]
+        || values.len() != 1
+        || values[0] != expected
+        || output.contains("Signer #2 certificate")
+    {
         return Err("APK signing identity differs".into());
     }
     Ok(())
@@ -211,10 +222,11 @@ mod tests {
     #[test]
     fn signer_requires_one_expected_certificate() {
         assert!(signer(
-            "Signer #1 certificate SHA-256 digest: expected\n",
+            "Number of signers: 1\nSigner #1 certificate SHA-256 digest: expected\n",
             "expected"
         )
         .is_ok());
-        for bad in ["","Signer #1 certificate SHA-256 digest: wrong\n","Signer #1 certificate SHA-256 digest: expected\nSigner #2 certificate SHA-256 digest: other"] {assert!(signer(bad,"expected").is_err());}
+        assert!(signer("Number of signers: 1\nV3.0 Signer: certificate SHA-256 digest: expected\nV3.0 Signer: public key SHA-256 digest: different\n","expected").is_ok());
+        for bad in ["","Number of signers: 1\nSigner #1 certificate SHA-256 digest: wrong\n","Number of signers: 2\nV3.0 Signer: certificate SHA-256 digest: expected\n","Number of signers: 1\nSigner #1 certificate SHA-256 digest: expected\nSigner #2 certificate SHA-256 digest: other"] {assert!(signer(bad,"expected").is_err());}
     }
 }
