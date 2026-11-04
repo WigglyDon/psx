@@ -335,6 +335,21 @@ closure wait for durability. Resume validates core/disc inputs, payload integrit
 and the contemporaneous card before entering the core, then restores the durable
 card. See [formats.md](formats.md) for recovery and reset behavior.
 
+Normal checkpoint storage replaces one current record per durable game; it
+does not retain a timestamped history. Publication uses one fixed same-directory
+pending file, synchronizes it, then renames it and synchronizes the directory.
+Failure before publication keeps the preceding complete record; a directory
+sync failure after rename is reported with the complete replacement already
+visible. The bounded worker does not create another per-frame or per-checkpoint
+save directory. Machine payload limits are 64 MiB for PS1, 68 MiB for PS2 and
+128 MiB for PSP, plus a
+checked picture of at most 4 MiB and bounded metadata. PSP checkpoints bind the
+ordinary Memory Stick inventory rather than embedding another copy of those
+files. These are per-record/capture bounds, not a collection-wide quota: imported
+games, ordinary saves, native caches and the number of game entries still consume
+storage. Private qualification backups/evidence have separate host retention;
+they are not ordinary application checkpoint history.
+
 ARM64 card/payload hashing uses the pinned SHA-256 implementation's runtime
 CPU-feature detection and accelerated backend, retaining its portable fallback
 and identical digests. This reduces host verification work without weakening

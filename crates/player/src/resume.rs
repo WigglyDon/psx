@@ -282,6 +282,86 @@ pub fn seal_closed_cards(root: &Path, game: &Game, before: &[u8], after: &[u8]) 
 mod tests {
     use super::*;
     #[test]
+    fn repeated_checkpoints_bound_storage_and_failed_replacement_keeps_both_games() {
+        let root =
+            std::env::temp_dir().join(format!("psx-resume-retention-{}", std::process::id()));
+        for system in [System::Ps1, System::Ps2, System::Psp] {
+            let root = root.join(system.label());
+            let first = Game {
+                system,
+                id: "abc123".into(),
+                title: "First".into(),
+                path: "first.iso".into(),
+                discs: vec![],
+                last_disc: 0,
+            };
+            let second = Game {
+                id: "def456".into(),
+                title: "Second".into(),
+                path: "second.iso".into(),
+                ..first.clone()
+            };
+            if system == System::Ps2 {
+                for game in [&first, &second] {
+                    let directory = root.join("ps2").join(&game.id);
+                    fs::create_dir_all(&directory).unwrap();
+                    fs::write(
+                        directory.join("firmware.json"),
+                        format!(r#"{{"file":"fixture.bin","sha256":"{}"}}"#, "a".repeat(64)),
+                    )
+                    .unwrap();
+                }
+            }
+            save(&root, &second, true, b"second save", b"second machine").unwrap();
+            let second_before = fs::read(path(&root, &second.id).unwrap()).unwrap();
+            for generation in 1..=12 {
+                let state = vec![generation; usize::from(generation) * 31];
+                save(&root, &first, true, b"first save", &state).unwrap();
+                assert_eq!(
+                    load(&root, &first, b"first save").unwrap().unwrap().bytes,
+                    state
+                );
+                assert_eq!(fs::read_dir(root.join("resume")).unwrap().count(), 2);
+                assert!(!root.join("active-session.pending").exists());
+                assert_eq!(
+                    fs::read(path(&root, &second.id).unwrap()).unwrap(),
+                    second_before
+                );
+            }
+            let first_path = path(&root, &first.id).unwrap();
+            let first_before = fs::read(&first_path).unwrap();
+            let pending = first_path.with_extension("pending");
+            // A real same-directory publication failure, without filling the
+            // host disk or relying on Unix permissions (which root can bypass).
+            fs::create_dir(&pending).unwrap();
+            assert!(save(&root, &first, false, b"first save", b"new machine").is_err());
+            assert_eq!(fs::read(&first_path).unwrap(), first_before);
+            assert_eq!(
+                fs::read(path(&root, &second.id).unwrap()).unwrap(),
+                second_before
+            );
+            assert!(
+                load(&root, &first, b"first save")
+                    .unwrap()
+                    .unwrap()
+                    .metadata
+                    .paused
+            );
+            assert_eq!(active(&root).unwrap(), Some(first.id.clone()));
+            fs::remove_dir(&pending).unwrap();
+            save(&root, &first, false, b"first save", b"retry machine").unwrap();
+            let restored = load(&root, &first, b"first save").unwrap().unwrap();
+            assert_eq!(restored.bytes, b"retry machine");
+            assert!(!restored.metadata.paused);
+            assert_eq!(fs::read_dir(root.join("resume")).unwrap().count(), 2);
+            assert_eq!(
+                fs::read(path(&root, &second.id).unwrap()).unwrap(),
+                second_before
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn frozen_picture_is_atomic_checked_and_survives_card_sealing() {
         let root = std::env::temp_dir().join(format!("psx-picture-resume-{}", std::process::id()));
         let game = Game {
