@@ -103,9 +103,26 @@ Normal application source `51fff5b` has now been packaged separately using the
 same three frozen native engines and original signer. Packager/source `0943e83`
 verifies every payload entry outside the normal Rust replacement and removal
 of the acceptance marker. Its bounded host qualification and complete-source
-readback pass; these do not qualify the new normal APK on hardware. The
+readback pass. The
 [package handback](https://github.com/WigglyDon/psx/issues/5#issuecomment-6640907638)
 records its exact identities. Documentation updates do not rebind either APK.
+
+That exact normal-use APK subsequently restored the preserved PSP point through
+ordinary app storage, restored identical complete paused metadata in a new
+process, and continued visible analog gameplay in portrait. A new paused point
+committed; independent streaming readback matches its final archived checkpoint
+and the exact validated current library entry, with ordinary-file identity kept.
+The finite private recipe remains failed: its final checker compared the seed's
+old file path with the intentionally relocated normal-storage path. Focused
+retained-evidence checks explain that predicate failure without another device
+run or a product repair. Linked cleanup proved only the original root directory's
+modification time differed; correcting that timestamp reproduced the exact
+pre-test data archive digest. Original installation, directory identity, Home,
+owned-staging absence and physical-off return were verified. The
+[actual result and limits](https://github.com/WigglyDon/psx/issues/5#issuecomment-6642286543)
+keep the failed recipe, host checks and observed product behavior separate.
+This adds no new in-game ordinary save, listening, simultaneous physical-touch,
+cross-console, sustained-speed or release qualification.
 
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
 `vendor/ppsspp` submodule with its recursively pinned dependencies. Its native
