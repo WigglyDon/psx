@@ -1,6 +1,8 @@
 use crate::saves::atomic_write;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::{
@@ -268,11 +270,13 @@ fn finish_import_for(
             }
             for name in missing {
                 // Both directories are app-private on the same filesystem.
-                // Linking publishes a complete synced file and refuses a raced
-                // destination instead of replacing it or leaving a partial copy.
-                fs::hard_link(staging.join(name), directory.join(name))?;
+                // Publish a complete synced file without replacing a raced
+                // destination. Android denies app-data hard links; its normal
+                // no-replace rename needs no additional permission or copy.
+                publish_missing_file(&staging.join(name), &directory.join(name))?;
             }
             File::open(&directory)?.sync_all()?;
+            File::open(staging)?.sync_all()?;
             fs::remove_dir_all(staging)?;
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -305,6 +309,44 @@ fn finish_import_for(
         discs: Vec::new(),
         last_disc: 0,
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn publish_missing_file(source: &Path, destination: &Path) -> io::Result<()> {
+    let path = |p: &Path| {
+        std::ffi::CString::new(p.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid game file path."))
+    };
+    let source = path(source)?;
+    let destination = path(destination)?;
+    // Bionic's named wrapper starts at API 30. The syscall ABI retains our
+    // earlier Android link target without adding a newer runtime symbol.
+    // SAFETY: live NUL-terminated paths and the existing libc ABI/constants.
+    // RENAME_NOREPLACE leaves an existing destination and the source untouched.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD as libc::c_long,
+            source.as_ptr(),
+            libc::AT_FDCWD as libc::c_long,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        // Unsupported filesystems/kernels fail safely; never fall back to a
+        // replacing rename, a partial destination copy or weaker permissions.
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn publish_missing_file(source: &Path, destination: &Path) -> io::Result<()> {
+    // Preserve the existing no-overwrite operation on other host platforms.
+    // Each platform still needs its own filesystem/runtime qualification.
+    fs::hard_link(source, destination)
 }
 
 fn import_file(path: &Path) -> io::Result<File> {
@@ -399,6 +441,84 @@ mod tests {
             bytes
         );
     }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn recovery_works_when_os_forbids_hard_links() {
+        const CHILD: &str = "PSX_RELINK_DENY_LINK_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "files::tests::recovery_works_when_os_forbids_hard_links",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+        let fixture = ImportFixture::new();
+        let bytes = psp_document();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        let original = finish_import(&fixture.0, &stage, &docs).unwrap();
+        let retained = fixture.0.join("retained-original.pbp");
+        fs::rename(&original.path, &retained).unwrap();
+        // Restrict only this disposable child's current test thread. Android's
+        // observed SELinux denial is reproduced without changing host policy.
+        let statement = |code, k| libc::sock_filter {
+            code,
+            jt: 0,
+            jf: 0,
+            k,
+        };
+        let jump = |call| libc::sock_filter {
+            code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 1,
+            k: call as u32,
+        };
+        let deny = libc::SECCOMP_RET_ERRNO | libc::EACCES as u32;
+        let mut filter = [
+            statement((libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16, 0),
+            jump(libc::SYS_link),
+            statement((libc::BPF_RET | libc::BPF_K) as u16, deny),
+            jump(libc::SYS_linkat),
+            statement((libc::BPF_RET | libc::BPF_K) as u16, deny),
+            statement(
+                (libc::BPF_RET | libc::BPF_K) as u16,
+                libc::SECCOMP_RET_ALLOW,
+            ),
+        ];
+        let program = libc::sock_fprog {
+            len: filter.len() as u16,
+            filter: filter.as_mut_ptr(),
+        };
+        // SAFETY: these valid process-local restrictions only remove authority;
+        // the filter remains live throughout the synchronous prctl call.
+        unsafe {
+            assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+            assert_eq!(
+                libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program),
+                0
+            );
+        }
+        assert_eq!(
+            fs::hard_link(&retained, fixture.0.join("forbidden-link"))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EACCES)
+        );
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        let recovered = finish_relink(&fixture.0, &stage, &docs, original, 0).unwrap();
+        assert_eq!(fs::read(&recovered.path).unwrap(), bytes);
+        assert_eq!(fs::read(retained).unwrap(), bytes);
+    }
     #[test]
     fn recovery_import_never_reuses_a_different_existing_payload() {
         let fixture = ImportFixture::new();
@@ -413,6 +533,38 @@ mod tests {
             b"different existing data"
         );
         assert_eq!(fs::read(stage.join("Game.pbp")).unwrap(), bytes);
+    }
+    #[test]
+    fn publishing_a_missing_file_refuses_an_existing_destination() {
+        let fixture = ImportFixture::new();
+        let source = fixture.0.join("selected");
+        let destination = fixture.0.join("existing");
+        fs::write(&source, b"selected original").unwrap();
+        fs::write(&destination, b"keep existing").unwrap();
+        assert_eq!(
+            publish_missing_file(&source, &destination)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(&source).unwrap(), b"selected original");
+        assert_eq!(fs::read(&destination).unwrap(), b"keep existing");
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn publishing_moves_the_complete_file_without_linking_it() {
+        use std::os::unix::fs::MetadataExt;
+        let fixture = ImportFixture::new();
+        let source = fixture.0.join("selected");
+        let destination = fixture.0.join("restored");
+        fs::write(&source, b"complete original").unwrap();
+        let inode = fs::metadata(&source).unwrap().ino();
+        publish_missing_file(&source, &destination).unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), b"complete original");
+        let published = fs::metadata(destination).unwrap();
+        assert_eq!(published.ino(), inode);
+        assert_eq!(published.nlink(), 1);
     }
     #[test]
     fn relink_refuses_the_wrong_game_before_creating_a_private_copy() {

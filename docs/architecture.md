@@ -291,6 +291,17 @@ The implemented format/grant/card contract and current limits are in
 an ordinary path. Successfully imported private copies survive provider
 revocation, and recent metadata is updated only for a loaded session.
 
+Restoring a missing private import verifies the original disc identity before
+publication and checks every existing selected file before changing the folder.
+Android/Linux move each complete synced staged file with
+`renameat2(RENAME_NOREPLACE)`, then sync both directories. A raced destination
+is never replaced; an unsupported operation preserves the staged original and
+saved progress. This avoids the app-data hard-link denial observed on Android.
+Rust uses libc's syscall ABI because Bionic's
+[named wrapper requires API 30](https://android.googlesource.com/platform/bionic/+/main/libc/include/stdio.h).
+Other platforms retain their existing no-overwrite publication path and need
+separate runtime qualification.
+
 The ordinary action is to select a saved game from the local collection.
 Adding games scans platform-authorized shared volumes, validates container
 headers and CUE companions, then stores only selected entries in an atomic
