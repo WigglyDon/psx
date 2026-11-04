@@ -799,21 +799,7 @@ impl Platform {
         let (tx, rx) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let result = platform
-                .import_inner(&root, request, &intent)
-                .and_then(|selected| {
-                    if let (Some((game, index)), Some(selected)) = (relink, &selected) {
-                        psx_player::library::relink(
-                            game,
-                            index,
-                            &selected.path,
-                            &std::sync::atomic::AtomicBool::new(false),
-                        )
-                        .map(Some)
-                        .map_err(Into::into)
-                    } else {
-                        Ok(selected)
-                    }
-                })
+                .import_inner(&root, request, &intent, relink)
                 .map_err(|e| e.to_string());
             let _ = tx.send(result);
         });
@@ -825,6 +811,7 @@ impl Platform {
         root: &Path,
         request: i32,
         intent: &GlobalRef,
+        relink: Option<(Game, usize)>,
     ) -> Result<Option<Game>, Box<dyn std::error::Error>> {
         let mut env = self.vm.attach_current_thread()?;
         let resolver = env
@@ -911,10 +898,10 @@ impl Platform {
             if request == PICK_GAME
                 && !matches!(
                     files::extension(&name).as_str(),
-                    "cue" | "bin" | "chd" | "pbp" | "iso" | "exe"
+                    "cue" | "bin" | "chd" | "pbp" | "iso" | "cso" | "exe"
                 )
             {
-                return Err("Select a CHD, PBP, ISO, PS-EXE, or a CUE and its BIN tracks. Extract ZIP/7z archives first.".into());
+                return Err("Select a CHD, PBP, ISO, CSO, PS-EXE, or a CUE and its BIN tracks. Extract ZIP/7z archives first.".into());
             }
             let parcel = env
                 .call_method(
@@ -977,7 +964,12 @@ impl Platform {
             fs::remove_dir_all(staging)?;
             Ok(None)
         } else {
-            Ok(Some(files::finish_import(root, &staging, &documents)?))
+            Ok(Some(match relink {
+                Some((game, index)) => {
+                    files::finish_relink(root, &staging, &documents, game, index)?
+                }
+                None => files::finish_import(root, &staging, &documents)?,
+            }))
         }
     }
 }

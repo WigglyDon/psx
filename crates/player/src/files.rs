@@ -1,11 +1,14 @@
 use crate::saves::atomic_write;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     collections::BTreeMap,
     fs::{self, File},
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    sync::atomic::AtomicBool,
 };
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -158,6 +161,27 @@ pub fn finish_import(
     staging: &Path,
     documents: &BTreeMap<String, String>,
 ) -> io::Result<Game> {
+    finish_import_for(root, staging, documents, None)
+}
+
+/// Check the selected original disc while it is still staged. A wrong choice
+/// must not become an orphaned private import before its identity is refused.
+pub fn finish_relink(
+    root: &Path,
+    staging: &Path,
+    documents: &BTreeMap<String, String>,
+    game: Game,
+    index: usize,
+) -> io::Result<Game> {
+    finish_import_for(root, staging, documents, Some((game, index)))
+}
+
+fn finish_import_for(
+    root: &Path,
+    staging: &Path,
+    documents: &BTreeMap<String, String>,
+    recovery: Option<(Game, usize)>,
+) -> io::Result<Game> {
     let primary: Vec<_> = documents
         .keys()
         .filter(|name| {
@@ -168,7 +192,7 @@ pub fn finish_import(
         })
         .collect();
     if primary.len() != 1 {
-        return Err(io::Error::other("Select one CHD, PBP, ISO or PS-EXE, or one CUE together with all its BIN tracks. Extract ZIP/7z archives first."));
+        return Err(io::Error::other("Select one CHD, PBP, ISO, CSO or PS-EXE, or one CUE together with all its BIN tracks. Extract ZIP/7z archives first."));
     }
     let name = primary[0];
     let mut selected = BTreeMap::new();
@@ -189,6 +213,12 @@ pub fn finish_import(
             selected.insert(track, documents[actual].clone());
         }
     }
+    let recovery = recovery
+        .map(|(game, index)| {
+            crate::library::relink(game, index, &staging.join(name), &AtomicBool::new(false))
+                .map(|game| (game, index))
+        })
+        .transpose()?;
     let mut hash = Sha256::new();
     for (name, digest) in &selected {
         hash.update((name.len() as u64).to_le_bytes());
@@ -198,11 +228,68 @@ pub fn finish_import(
     let id = format!("{:x}", hash.finalize());
     let directory = root.join("games").join(&id);
     fs::create_dir_all(directory.parent().unwrap())?;
-    if directory.exists() {
-        fs::remove_dir_all(staging)?;
-    } else {
-        fs::rename(staging, &directory)?;
-        File::open(directory.parent().unwrap())?.sync_all()?;
+    // Include any case-normalized CUE companions and their directory entries
+    // in durability before publishing a newly created import directory.
+    for name in selected.keys() {
+        import_file(&staging.join(name))?.sync_all()?;
+    }
+    File::open(staging)?.sync_all()?;
+    match fs::symlink_metadata(&directory) {
+        Ok(metadata) => {
+            if !metadata.is_dir() || metadata.is_symlink() {
+                return Err(io::Error::other(
+                    "The existing game folder is unavailable. Your files and progress were kept.",
+                ));
+            }
+            let mut missing = Vec::new();
+            // Validate the complete existing set before restoring any missing
+            // entry. A changed file or redirected path is never overwritten.
+            for (name, expected) in &selected {
+                let path = directory.join(name);
+                match fs::symlink_metadata(&path) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => missing.push(name),
+                    Err(error) => return Err(error),
+                    Ok(_) => {
+                        let mut file = import_file(&path)?;
+                        let mut hash = Sha256::new();
+                        let mut buffer = [0; 64 * 1024];
+                        loop {
+                            let count = file.read(&mut buffer)?;
+                            if count == 0 {
+                                break;
+                            }
+                            hash.update(&buffer[..count]);
+                        }
+                        if format!("{:x}", hash.finalize()) != *expected {
+                            return Err(io::Error::other("The existing game copy differs from your selection. Existing files and saved progress were kept."));
+                        }
+                    }
+                }
+            }
+            for name in missing {
+                // Both directories are app-private on the same filesystem.
+                // Linking publishes a complete synced file and refuses a raced
+                // destination instead of replacing it or leaving a partial copy.
+                fs::hard_link(staging.join(name), directory.join(name))?;
+            }
+            File::open(&directory)?.sync_all()?;
+            fs::remove_dir_all(staging)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::rename(staging, &directory)?;
+            File::open(directory.parent().unwrap())?.sync_all()?;
+        }
+        Err(error) => return Err(error),
+    }
+    if let Some((mut game, index)) = recovery {
+        let path = directory.join(name);
+        if index == 0 {
+            game.path = path.clone();
+        }
+        if !game.discs.is_empty() {
+            game.discs[index].path = path;
+        }
+        return Ok(game);
     }
     Ok(Game {
         system: crate::content::inspect(&directory.join(name))
@@ -218,6 +305,24 @@ pub fn finish_import(
         discs: Vec::new(),
         last_disc: 0,
     })
+}
+
+fn import_file(path: &Path) -> io::Result<File> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.is_symlink() {
+        return Err(io::Error::other("A selected game file is redirected or unavailable. Existing files and progress were kept."));
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other(
+            "A selected game file changed during import.",
+        ));
+    }
+    Ok(file)
 }
 
 pub fn extension(name: &str) -> String {
@@ -241,6 +346,193 @@ pub(crate) fn legacy_recent(root: &Path) -> Option<Game> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct ImportFixture(PathBuf);
+    impl ImportFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "psx-import-recovery-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&root).unwrap();
+            Self(root)
+        }
+        fn stage(&self, name: &str, bytes: &[u8]) -> (PathBuf, BTreeMap<String, String>) {
+            let stage = self.0.join("importing");
+            let sha = copy_document(bytes, &stage, name).unwrap();
+            (stage, BTreeMap::from([(name.to_owned(), sha)]))
+        }
+    }
+    impl Drop for ImportFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    fn psp_document() -> Vec<u8> {
+        // Structural PSP PBP stand-in, never a proprietary game fixture.
+        let mut bytes = vec![0u8; 100];
+        bytes[..4].copy_from_slice(b"\0PBP");
+        for offset in bytes[8..40].chunks_exact_mut(4) {
+            offset.copy_from_slice(&40u32.to_le_bytes());
+        }
+        bytes[36..40].copy_from_slice(&64u32.to_le_bytes());
+        bytes[40..44].copy_from_slice(b"~PSP");
+        bytes
+    }
+    #[test]
+    fn recovery_import_restores_a_missing_file_inside_an_existing_game_folder() {
+        let fixture = ImportFixture::new();
+        let bytes = psp_document();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        let original = finish_import(&fixture.0, &stage, &docs).unwrap();
+        assert_eq!(original.system, System::Psp);
+        fs::rename(&original.path, fixture.0.join("retained-original.pbp")).unwrap();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        let recovered = finish_import(&fixture.0, &stage, &docs).unwrap();
+        assert_eq!(recovered.id, original.id);
+        assert_eq!(fs::read(&recovered.path).unwrap(), bytes);
+        assert_eq!(
+            fs::read(fixture.0.join("retained-original.pbp")).unwrap(),
+            bytes
+        );
+    }
+    #[test]
+    fn recovery_import_never_reuses_a_different_existing_payload() {
+        let fixture = ImportFixture::new();
+        let bytes = psp_document();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        let original = finish_import(&fixture.0, &stage, &docs).unwrap();
+        fs::write(&original.path, b"different existing data").unwrap();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        assert!(finish_import(&fixture.0, &stage, &docs).is_err());
+        assert_eq!(
+            fs::read(&original.path).unwrap(),
+            b"different existing data"
+        );
+        assert_eq!(fs::read(stage.join("Game.pbp")).unwrap(), bytes);
+    }
+    #[test]
+    fn relink_refuses_the_wrong_game_before_creating_a_private_copy() {
+        let fixture = ImportFixture::new();
+        let bytes = psp_document();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        let original = finish_import(&fixture.0, &stage, &docs).unwrap();
+        let mut wrong = bytes.clone();
+        wrong[99] = 1; // Still a structurally valid PSP document, different game identity.
+        let (stage, docs) = fixture.stage("Different.pbp", &wrong);
+        assert!(
+            finish_relink(&fixture.0, &stage, &docs, original.clone(), 0)
+                .unwrap_err()
+                .to_string()
+                .contains("do not match")
+        );
+        assert_eq!(fs::read_dir(fixture.0.join("games")).unwrap().count(), 1);
+        assert_eq!(fs::read(&original.path).unwrap(), bytes);
+        assert_eq!(fs::read(stage.join("Different.pbp")).unwrap(), wrong);
+    }
+    #[test]
+    fn renamed_relink_retains_entry_checkpoint_ordinary_save_and_custom_controller() {
+        use crate::{controller_profiles, input::ControllerSettings, session::GameId};
+        let fixture = ImportFixture::new();
+        let bytes = psp_document();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        let mut original = finish_import(&fixture.0, &stage, &docs).unwrap();
+        original.title = "My title".into();
+        let id = GameId::parse(&original.id).unwrap();
+        let stick = fixture.0.join("psp").join(id.as_str()).join("memstick");
+        fs::create_dir_all(&stick).unwrap();
+        fs::write(stick.join("save.bin"), b"ordinary progress").unwrap();
+        let identity = crate::psp_saves::identity(&stick).unwrap();
+        crate::resume::save(&fixture.0, &original, true, &identity, b"machine-state").unwrap();
+        let state = fixture
+            .0
+            .join("resume")
+            .join(format!("{}.state", original.id));
+        let checkpoint = fs::read(&state).unwrap();
+        let controls = ControllerSettings::default().with_psp();
+        let mut profiles = controller_profiles::Settings::default();
+        profiles
+            .set_custom(&fixture.0, &id, true, &controls)
+            .unwrap();
+        let profile_path = fixture.0.join("controller-profiles.json");
+        let profile = fs::read(&profile_path).unwrap();
+        fs::rename(&original.path, fixture.0.join("retained.pbp")).unwrap();
+        let (stage, docs) = fixture.stage("Renamed.pbp", &bytes);
+        let recovered = finish_relink(&fixture.0, &stage, &docs, original.clone(), 0).unwrap();
+        assert_eq!(recovered.id, original.id);
+        assert_eq!(recovered.title, original.title);
+        assert_eq!(recovered.system, System::Psp);
+        assert_eq!(recovered.last_disc, original.last_disc);
+        assert_eq!(fs::read(&recovered.path).unwrap(), bytes);
+        assert_eq!(recovered.path.file_name().unwrap(), "Renamed.pbp");
+        assert_eq!(fs::read(&state).unwrap(), checkpoint);
+        assert_eq!(fs::read(&profile_path).unwrap(), profile);
+        assert_eq!(
+            fs::read(stick.join("save.bin")).unwrap(),
+            b"ordinary progress"
+        );
+        assert!(controller_profiles::Settings::load(&fixture.0)
+            .unwrap()
+            .custom(&id));
+        let loaded = crate::resume::load(&fixture.0, &recovered, &identity)
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.bytes, b"machine-state");
+        assert!(loaded.metadata.paused);
+    }
+    #[test]
+    fn missing_cue_track_is_repaired_but_conflicting_payload_prevents_partial_repair() {
+        let fixture = ImportFixture::new();
+        let cue = b"FILE \"track.bin\" BINARY\n TRACK 01 MODE2/2352\n";
+        let stage_tracks = || {
+            let (stage, mut docs) = fixture.stage("Game.cue", cue);
+            docs.insert(
+                "TRACK.BIN".into(),
+                copy_document(&b"synthetic track"[..], &stage, "TRACK.BIN").unwrap(),
+            );
+            (stage, docs)
+        };
+        let (stage, docs) = stage_tracks();
+        let original = finish_import(&fixture.0, &stage, &docs).unwrap();
+        let directory = original.path.parent().unwrap();
+        fs::remove_file(directory.join("track.bin")).unwrap();
+        let (stage, docs) = stage_tracks();
+        let repaired = finish_import(&fixture.0, &stage, &docs).unwrap();
+        assert_eq!(repaired.id, original.id);
+        assert_eq!(
+            fs::read(directory.join("track.bin")).unwrap(),
+            b"synthetic track"
+        );
+        fs::remove_file(&original.path).unwrap();
+        fs::write(directory.join("track.bin"), b"keep different track").unwrap();
+        let (stage, docs) = stage_tracks();
+        assert!(finish_import(&fixture.0, &stage, &docs).is_err());
+        assert!(!original.path.exists());
+        assert_eq!(
+            fs::read(directory.join("track.bin")).unwrap(),
+            b"keep different track"
+        );
+        assert!(stage.join("Game.cue").is_file());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn redirected_existing_imports_are_refused_without_touching_their_targets() {
+        let fixture = ImportFixture::new();
+        let bytes = psp_document();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        let original = finish_import(&fixture.0, &stage, &docs).unwrap();
+        let retained = fixture.0.join("retained.pbp");
+        fs::rename(&original.path, &retained).unwrap();
+        std::os::unix::fs::symlink(&retained, &original.path).unwrap();
+        let (stage, docs) = fixture.stage("Game.pbp", &bytes);
+        assert!(finish_import(&fixture.0, &stage, &docs).is_err());
+        assert_eq!(fs::read(&retained).unwrap(), bytes);
+        assert!(fs::symlink_metadata(&original.path).unwrap().is_symlink());
+        assert!(stage.join("Game.pbp").is_file());
+    }
     #[test]
     fn legacy_records_keep_their_ps1_identity_and_serialized_fields() {
         let old =

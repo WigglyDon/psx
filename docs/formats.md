@@ -27,7 +27,7 @@ placeholder identifies the entry. These are local thumbnails, not downloaded
 box covers; no artwork database or network lookup is involved.
 
 **Browse files** is optional and uses Android's document picker. Select one
-CHD, PBP, ISO or PS-EXE, or one CUE together with **every BIN track it names**.
+CHD, PBP, ISO, CSO or PS-EXE, or one CUE together with **every BIN track it names**.
 Android's picker supports multiple selection by holding a file, then selecting
 the rest. A document grant gives no access to neighboring files. Missing
 CUE companions are reported before launch. CUE companions currently require
@@ -132,6 +132,14 @@ The entry ID, cards, checkpoint and remembered disc stay attached. An unknown
 restored shortcut never resolves by a similar title. Collection taps and
 shortcuts open the remembered disc directly; runtime PS1 disc replacement
 remains available. PS2 runtime disc replacement is not yet supported.
+
+Recovery validates the staged selection before committing its private copy.
+Reimporting restores missing files inside an existing import folder only after
+every existing selected file matches. Conflicting or redirected files are
+preserved and reported; they are never overwritten. A renamed original can be
+relinked without changing the entry's identity or its saved progress. These
+import/relink guarantees have focused source regression coverage; the updated
+Android document-picker flow still requires device qualification.
 
 The qualified PS2 route currently uses compatible user-supplied 4 MiB firmware;
 its separate Settings import remains private. ROMDIR/ROMVER discovery selects
