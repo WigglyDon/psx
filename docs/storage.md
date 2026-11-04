@@ -59,6 +59,31 @@ If another job consumes the margin, stop new writes and report pressure.
 No storage check performs balance, snapshots cleanup, package changes or
 filesystem repair. Read-only verification and retention remain available.
 
+### Frozen package phase
+
+`frozen-package` is a separate Linux64 operation for the fixed441 acceptance
+APK and independently compiled normal51 frontend. It cannot run Cargo, CMake,
+resource generation or a native build. The full APK build keeps its8GiB
+growth allowance. This distinct method uses2GiB plus the same12GiB reserve
+and allocation checks under the existing project lock.
+
+Its known copies total less than428MB; the conservative budget also covers
+alignment, signing, temporary files, verification and preserved failures.
+The operator monitors the entire new stage below1GiB, bounds child-created
+files to128MiB, captures/logs and command duration/count, and stops its own
+process group at a failed boundary. Monitoring is sampled, rather than a
+filesystem quota; fixed trusted inputs/tools and the copy envelope remain
+part of the qualification. Every failed stage is preserved. Verified success
+retires only recorded generated intermediates; all frozen inputs, symbols,
+source, signed output and failure evidence remain.
+
+Normal-flavor source and payload coherence are mandatory: only Rust-library
+replacement and removal of the acceptance marker may change payload bytes.
+Signature regeneration is checked separately. A changed runtime, manifest,
+shim, resource generator, native engine, feature profile or unknown ZIP entry
+refuses this fixed method. Its host qualification does not grant runtime,
+16KiB-device or release acceptance.
+
 An independently admitted removable build workspace may be selected with
 `PSX_BUILD_WORKSPACE`, `PSX_BUILD_VOLUME_UUID`, `PSX_BUILD_VOLUME_MOUNT` and
 `PSX_BUILD_CAPACITY_LEASE`. All four are required together. The build verifies

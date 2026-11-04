@@ -2,6 +2,7 @@ use sha2::{Digest, Sha256};
 #[cfg(test)]
 mod android_packet;
 mod minimal;
+mod package_checks;
 mod ps2;
 mod psp;
 mod storage;
@@ -942,121 +943,13 @@ fn verify_apk() -> Result<()> {
     ] {
         let path = artifact(&format!("build/apk/package/lib/arm64-v8a/{name}"));
         let headers = output(&mut command(&readelf, ["-h", "-lW", "-d", &path]))?;
-        if !headers.contains("AArch64") {
-            return Err(format!("Wrong ABI in {name}").into());
-        }
-        if name == "libpsx.so" && !headers.contains("Shared library: [libEGL.so]") {
-            return Err("The Rust host must declare its Android EGL dependency.".into());
-        }
-        for line in headers
-            .lines()
-            .filter(|l| l.trim_start().starts_with("LOAD"))
-        {
-            let alignment = line.split_whitespace().last().unwrap_or("");
-            let value = u64::from_str_radix(alignment.trim_start_matches("0x"), 16)?;
-            if value < 16384 {
-                return Err(format!("{name} contains a LOAD segment aligned below 16KB").into());
-            }
-        }
-        if headers.contains("libc++_shared.so") {
-            return Err("The APK is missing a required C++ shared runtime.".into());
-        }
-        if name == "libpsx.so" {
-            let symbols = output(&mut command(&readelf, ["--dyn-syms", "--wide", &path]))?;
-            for callback in [
-                "documentResult",
-                "audioFocusChanged",
-                "gameIntent",
-                "insetsChanged",
-            ] {
-                let required = format!("Java_com_machinerhythm_psx_PsxActivity_{callback}");
-                if !symbols.lines().any(|line| {
-                    let fields: Vec<_> = line.split_whitespace().collect();
-                    fields.len() >= 8
-                        && fields[3] == "FUNC"
-                        && fields[4] == "GLOBAL"
-                        && fields[5] == "DEFAULT"
-                        && fields[6] != "UND"
-                        && fields[7] == required
-                }) {
-                    return Err(format!(
-                        "The Rust host lacks required callback export {required}."
-                    )
-                    .into());
-                }
-            }
-        }
-        if name == "libarmsx2.so" {
-            let symbols = output(&mut command(&readelf, ["--dyn-syms", "--wide", &path]))?;
-            let stream_export = symbols.lines().any(|line| {
-                let columns: Vec<_> = line.split_whitespace().collect();
-                columns.len() >= 8
-                    && columns[3] == "FUNC"
-                    && columns[4] == "GLOBAL"
-                    && columns[5] == "DEFAULT"
-                    && columns[6] != "UND"
-                    && columns[7] == "retro_psx_observer_set_stream_callback"
-            });
-            if stream_export != ps2::observer_enabled() {
-                return Err(
-                    "PS2 stream observer export differs from the selected build capability".into(),
-                );
-            }
-            let creator_export = symbols.lines().any(|line| {
-                let c: Vec<_> = line.split_whitespace().collect();
-                c.len() >= 8
-                    && c[3] == "FUNC"
-                    && c[4] == "GLOBAL"
-                    && c[5] == "DEFAULT"
-                    && c[6] != "UND"
-                    && c[7] == "retro_psx_observer_set_output_callback"
-            });
-            if creator_export
-                != (ps2::observer_enabled()
-                    && ps2::observer_mode()? == "producer-local-output-sync")
-            {
-                return Err("Creator output capability differs from exact build mode".into());
-            }
-            let result_export = symbols.lines().any(|line| {
-                let c: Vec<_> = line.split_whitespace().collect();
-                c.len() >= 8
-                    && c[3] == "FUNC"
-                    && c[4] == "GLOBAL"
-                    && c[5] == "DEFAULT"
-                    && c[6] != "UND"
-                    && c[7] == "retro_psx_observer_set_result_callback"
-            });
-            if result_export
-                != (ps2::observer_enabled()
-                    && ps2::observer_mode()? == "producer-local-output-sync")
-            {
-                return Err("Common renderer observer capability differs from exact mode".into());
-            }
-            for required in [
-                "retro_psx_ready",
-                "retro_psx_set_paused",
-                "retro_psx_flush_cards",
-                "retro_psx_set_speed",
-                "retro_psx_set_frame_callback",
-                "retro_psx_capture_state",
-                "retro_psx_pack_state",
-                "retro_psx_free_state",
-            ] {
-                if !symbols.lines().any(|line| {
-                    let columns: Vec<_> = line.split_whitespace().collect();
-                    columns.len() >= 8
-                        && columns[3] == "FUNC"
-                        && columns[4] == "GLOBAL"
-                        && columns[5] == "DEFAULT"
-                        && columns[6] != "UND"
-                        && columns[7] == required
-                }) {
-                    return Err(
-                        format!("The PS2 library lacks required C ABI export {required}.").into(),
-                    );
-                }
-            }
-        }
+        let symbols = output(&mut command(&readelf, ["--dyn-syms", "--wide", &path]))?;
+        let observer = if ps2::observer_enabled() {
+            Some(ps2::observer_mode()?)
+        } else {
+            None
+        };
+        package_checks::elf(&headers, &symbols, name, observer)?;
         println!("{name}: AArch64; all ELF LOAD alignments >=16KB");
     }
     ps2::verify_resources(&PathBuf::from(artifact("build/psx-development.apk")))?;

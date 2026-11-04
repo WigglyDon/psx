@@ -94,6 +94,22 @@ Raw build logs and APKs stay outside Git. Development signing material stays
 under ignored `.local/signing/`; retain that key to update an installation
 without losing its data. The development key is not a store signing key.
 
+For the single frozen normal51 candidate, prepare the Rust host operator
+separately under the normal1GiB host-tool preflight/project lock with
+`cargo build --release -p xtask --bin frozen-package`. Then
+`target/release/frozen-package check` validates retained inputs and complete
+matching source without creating an APK stage. `package` performs the separately
+qualified bounded ZIP/re-sign operation described in [storage.md](storage.md).
+It replaces only the known normal Rust library, removes only the development
+test-storage marker, and verifies every other payload entry, original signer,
+native hashes, exports and ELF/ZIP alignment. Its fixed output is
+`build/frozen-normal-51fff5b-v1/psx-development.apk`; an existing stage refuses.
+The current committed packager's complete source archive must already be
+verified. The binding records application source51 separately from packager
+revision and corresponding-source identity. SDK/NDK variables above still
+select installed tools. This method never rebuilds components; the ordinary
+full build remains the general reproduction route.
+
 The fixed [PS2 observer](graphics-observer.md) uses `PSX_GRAPHICS_OBSERVER=1`
 for an explicit diagnostic build and isolated scratch progress. It exposes no
 player option and is excluded from ordinary builds. A candidate build grants
