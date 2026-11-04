@@ -86,6 +86,27 @@ physical-off return verified twice without cleanup errors. This campaign adds no
 new ordinary-save, listening, launcher or sustained-speed result. A separately
 prepared owner hands-on check retains its own admission and result boundaries.
 
+The `441637f` acceptance-storage APK subsequently completed missing-original
+recovery through Android's real document picker. A wrong game was refused
+without an orphan import or changed progress; the verified original restored
+the existing private import folder and exact library entry. Fresh reads matched
+the saved machine, ordinary-file identity, core, picture and pause metadata,
+with unchanged ordinary-file/controller manifests. A new process restored the
+same paused point, then injected stick movement continued gameplay and a new
+paused checkpoint committed. Exact original app/data/directory identity, Home
+and task settings were restored; physical-off return was verified twice.
+This adds no new in-game ordinary-save, listening or physical-touch result.
+The [narrow handback](https://github.com/WigglyDon/psx/issues/5#issuecomment-6638608695)
+retains exact tested artifact bindings and earlier failed-trial limits.
+
+Normal application source `51fff5b` has now been packaged separately using the
+same three frozen native engines and original signer. Packager/source `0943e83`
+verifies every payload entry outside the normal Rust replacement and removal
+of the acceptance marker. Its bounded host qualification and complete-source
+readback pass; these do not qualify the new normal APK on hardware. The
+[package handback](https://github.com/WigglyDon/psx/issues/5#issuecomment-6640907638)
+records its exact identities. Documentation updates do not rebind either APK.
+
 PPSSPP is pinned at `fc9ca4d1f78a5d60ae03f3311c6b8ab49273f6a8` in the
 `vendor/ppsspp` submodule with its recursively pinned dependencies. Its native
 implementation, replacement assets and exact original licenses remain retained.

@@ -137,9 +137,12 @@ Recovery validates the staged selection before committing its private copy.
 Reimporting restores missing files inside an existing import folder only after
 every existing selected file matches. Conflicting or redirected files are
 preserved and reported; they are never overwritten. A renamed original can be
-relinked without changing the entry's identity or its saved progress. These
-import/relink guarantees have focused source regression coverage; the updated
-Android document-picker flow still requires device qualification.
+relinked without changing the entry's identity or its saved progress. The
+`441637f` acceptance-storage APK exercised wrong-original refusal and correct
+original selection through Android's document picker, followed by matching
+paused restoration, a fresh process and continued gameplay. Its exact build
+and test bounds are recorded in [PSP-1](psp.md); other platforms and formats
+retain separate qualification requirements.
 
 The qualified PS2 route currently uses compatible user-supplied 4 MiB firmware;
 its separate Settings import remains private. ROMDIR/ROMVER discovery selects
